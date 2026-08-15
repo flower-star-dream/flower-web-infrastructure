@@ -5,12 +5,12 @@ YAML 配置与配置驱动中间件单元测试
 @Date: 2026/08/14 21:00
 @Description: 验证配置统一走 YAML（默认源加载 application.default.yml）、dict 入参默认值回落、
               app.web.middlewares 配置驱动中间件装配（enabled 开关/未知中间件报错）、
-              多租户/AI 等特殊场景默认不启用。
+              多租户/AI 等特殊场景默认不启用，以及 YAML 中 ${ENV:default} 环境变量占位符解析。
 """
 import pytest
 
 from web_infra import Application, create_app
-from web_infra.config import ConfigError, Settings
+from web_infra.config import ConfigError, Settings, YamlConfigSource
 from web_infra.web import AuthMiddleware, IdempotencyMiddleware, TraceIdMiddleware
 
 
@@ -103,3 +103,70 @@ def test_ai_and_tenant_disabled_by_default():
     app = create_app({"app.name": "test-app"})
     assert app.state.components["ai"] is None
     assert "mongo" not in app.state.components
+
+
+def test_yaml_source_env_placeholder(tmp_path, monkeypatch):
+    """YAML 配置源解析 ${ENV} / ${ENV:default} 占位符：已定义取环境变量、未定义取默认值、均无则保留原样"""
+    monkeypatch.setenv("TEST_DB_PASSWORD", "s3cr3t")
+    yml = tmp_path / "app.yml"
+    yml.write_text(
+        "db:\n"
+        "  password: ${TEST_DB_PASSWORD}\n"
+        "  host: ${TEST_DB_HOST:127.0.0.1}\n"
+        "  name: ${TEST_DB_UNDEFINED}\n",
+        encoding="utf-8",
+    )
+    source = YamlConfigSource(yml)
+    assert source.get("db.password") == "s3cr3t"          # 环境变量已定义 -> 取值
+    assert source.get("db.host") == "127.0.0.1"           # 未定义 -> 默认值
+    assert source.get("db.name") == "${TEST_DB_UNDEFINED}"  # 未定义且无默认值 -> 保留原样
+
+
+def test_application_yml_env_placeholder_default(tmp_path, monkeypatch):
+    """业务 application.yml 经 Settings 链路支持 ${ENV:default}：敏感配置默认值回落（不落盘明文）"""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("APP_DB_MYSQL_PASSWORD", raising=False)
+    (tmp_path / "application.yml").write_text(
+        "app:\n  db:\n    mysql:\n      password: ${APP_DB_MYSQL_PASSWORD:pwd123}\n",
+        encoding="utf-8",
+    )
+    source = Settings.default_source()
+    assert source.get("app.db.mysql.password") == "pwd123"
+
+
+def test_application_yml_env_placeholder_overridden_by_env(tmp_path, monkeypatch):
+    """环境变量优先于 yml 占位符：即使 yml 写死 ${ENV:default}，显式环境变量仍最高优先级"""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("APP_DB_MYSQL_PASSWORD", "s3cr3t")
+    (tmp_path / "application.yml").write_text(
+        "app:\n  db:\n    mysql:\n      password: ${APP_DB_MYSQL_PASSWORD:pwd123}\n",
+        encoding="utf-8",
+    )
+    source = Settings.default_source()
+    assert source.get("app.db.mysql.password") == "s3cr3t"
+
+
+def test_env_file_loaded_by_settings(tmp_path, monkeypatch):
+    """Settings 自动加载项目根 .env：yml ${ENV} 取到 .env 中的敏感值（明文不落盘）"""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("APP_DB_MYSQL_PASSWORD", raising=False)
+    (tmp_path / ".env").write_text("APP_DB_MYSQL_PASSWORD=s3cr3t\n", encoding="utf-8")
+    (tmp_path / "application.yml").write_text(
+        "app:\n  db:\n    mysql:\n      password: ${APP_DB_MYSQL_PASSWORD:pwd123}\n",
+        encoding="utf-8",
+    )
+    source = Settings.default_source()
+    assert source.get("app.db.mysql.password") == "s3cr3t"
+
+
+def test_env_file_does_not_override_existing_env(tmp_path, monkeypatch):
+    """进程环境变量优先于 .env：.env 不覆盖已存在的变量（override=False）"""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("APP_DB_MYSQL_PASSWORD", "from_process")
+    (tmp_path / ".env").write_text("APP_DB_MYSQL_PASSWORD=from_dotenv\n", encoding="utf-8")
+    (tmp_path / "application.yml").write_text(
+        "app:\n  db:\n    mysql:\n      password: ${APP_DB_MYSQL_PASSWORD:pwd123}\n",
+        encoding="utf-8",
+    )
+    source = Settings.default_source()
+    assert source.get("app.db.mysql.password") == "from_process"

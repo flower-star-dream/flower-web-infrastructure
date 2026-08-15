@@ -172,6 +172,8 @@ if __name__ == "__main__":
 
 配置统一走 YAML，优先级为「环境变量 > 项目根目录 `application.yml` > 框架默认 `application.default.yml`」。默认配置不散落在代码中，`application.py` 不内嵌默认值；中间件/多租户/AI 等特殊能力默认关闭，由业务配置显式开启。
 
+YAML 中支持 `${ENV}` / `${ENV:default}` 环境变量占位符（未定义时取默认值，未定义且无默认值保留原样），敏感配置（如数据库密码）可写为 `${APP_DB_MYSQL_PASSWORD}` 经环境变量注入，避免明文随 yml 提交仓库。框架启动时自动加载项目根 `.env`（`.env` 默认已被 `.gitignore` 忽略，复制 `.env.example` 填写即可），已存在的进程/容器环境变量优先、不被 `.env` 覆盖。
+
 `application.yml` 示例（项目根目录）：
 
 ```yaml

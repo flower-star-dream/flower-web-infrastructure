@@ -16,6 +16,7 @@ from typing import Any
 import yaml
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from web_infra.config.config_utils import resolve_env_placeholders
 from web_infra.config.nacos_properties import NacosProperties
 
 
@@ -124,18 +125,7 @@ class BaseConfig(BaseSettings):
         """加载 YAML 文件并解析环境变量占位符"""
         with open(path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
-        return cls._resolve_env_placeholders(data if isinstance(data, dict) else {})
-
-    @classmethod
-    def _resolve_env_placeholders(cls, data: Any) -> Any:
-        """递归解析 ${ENV_VAR} 或 ${ENV_VAR:default} 占位符"""
-        if isinstance(data, dict):
-            return {k: cls._resolve_env_placeholders(v) for k, v in data.items()}
-        if isinstance(data, list):
-            return [cls._resolve_env_placeholders(item) for item in data]
-        if isinstance(data, str):
-            return cls._replace_env_placeholders(data)
-        return data
+        return resolve_env_placeholders(data if isinstance(data, dict) else {})
 
     @classmethod
     def _resolve_property_placeholders(cls, data: Any, properties: dict | None = None) -> Any:
@@ -164,20 +154,7 @@ class BaseConfig(BaseSettings):
         return properties
 
     @staticmethod
-    def _replace_env_placeholders(value: str) -> str:
-        """替换 ${ENV_VAR:default} 环境变量占位符"""
-        pattern = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::([^}]*))?\}")
-
-        def replacer(match: re.Match) -> str:
-            env_value = os.getenv(match.group(1))
-            if env_value is not None:
-                return env_value
-            return match.group(2) if match.group(2) is not None else match.group(0)
-
-        return pattern.sub(replacer, value)
-
-    @classmethod
-    def _replace_property_placeholders(cls, value: str, properties: dict[str, Any]) -> str:
+    def _replace_property_placeholders(value: str, properties: dict[str, Any]) -> str:
         """替换 ${property.name:default} 属性占位符"""
         pattern = re.compile(r"\$\{([a-zA-Z_][a-zA-Z0-9_.\-]*)(?::([^}]*))?\}")
 

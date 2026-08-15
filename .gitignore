@@ -21,6 +21,8 @@ htmlcov/
 .vscode/
 *.swp
 
-# 本地敏感配置
+# 本地敏感配置（默认忽略，防止敏感信息随仓库提交；.env.example 作为模板可提交）
 .env
+.env.*
+!.env.example
 *.local

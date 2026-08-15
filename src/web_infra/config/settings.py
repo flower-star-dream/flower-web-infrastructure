@@ -19,7 +19,7 @@ from typing import Any
 from web_infra.config.composite_config_source import CompositeConfigSource
 from web_infra.config.config_error import ConfigError
 from web_infra.config.config_source_interface import ConfigSourceInterface
-from web_infra.config.config_utils import _DEFAULT_CONFIG_PATH
+from web_infra.config.config_utils import _DEFAULT_CONFIG_PATH, load_env_file
 from web_infra.config.dict_config_source import DictConfigSource
 from web_infra.config.env_config_source import EnvConfigSource
 from web_infra.config.yaml_config_source import YamlConfigSource
@@ -125,7 +125,12 @@ class Settings:
 
     @classmethod
     def default_source(cls) -> ConfigSourceInterface:
-        """构造默认配置源：环境变量 > 项目 application.yml > 框架默认配置（配置统一走 YAML）"""
+        """构造默认配置源：.env（自动加载）-> 环境变量 > 项目 application.yml > 框架默认配置。
+
+        优先加载项目根 .env 文件（已存在的环境变量不覆盖），使 yml 中 ${ENV} 占位符
+        与环境变量覆盖均能读取 .env 中的敏感配置（如数据库密码），避免明文随 yml 提交仓库。
+        """
+        load_env_file()
         return CompositeConfigSource(
             EnvConfigSource(),
             YamlConfigSource("application.yml"),
