@@ -1,0 +1,26 @@
+# 虚拟环境
+.venv/
+venv/
+env/
+
+# Python 构建产物
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.eggs/
+
+# 测试与覆盖率
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# 本地敏感配置
+.env
+*.local

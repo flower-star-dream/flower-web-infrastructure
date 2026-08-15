@@ -1,0 +1,32 @@
+"""
+向量检索模块
+
+@Author: 花海
+@Date: 2026/08/14 15:00
+@Description: 导出向量检索组件（AI 规范 §11）：文档切片、向量存储、嵌入、重排与检索器。
+"""
+from web_infra.ai.retrieval.chunk import Chunk
+from web_infra.ai.retrieval.document_chunker import DocumentChunkerInterface
+from web_infra.ai.retrieval.markdown_chunker import MarkdownChunker
+from web_infra.ai.retrieval.vector_hit import VectorHit
+from web_infra.ai.retrieval.vector_store_interface import VectorStoreInterface
+from web_infra.ai.retrieval.in_memory_vector_store import InMemoryVectorStore
+from web_infra.ai.retrieval.embedding_provider import EmbeddingProviderInterface
+from web_infra.ai.retrieval.reranker import RerankerInterface
+from web_infra.ai.retrieval.identity_reranker import IdentityReranker
+from web_infra.ai.retrieval.retrieval_result import RetrievalResult
+from web_infra.ai.retrieval.retriever import Retriever
+
+__all__ = [
+    "Chunk",
+    "DocumentChunkerInterface",
+    "MarkdownChunker",
+    "VectorHit",
+    "VectorStoreInterface",
+    "InMemoryVectorStore",
+    "EmbeddingProviderInterface",
+    "RerankerInterface",
+    "IdentityReranker",
+    "RetrievalResult",
+    "Retriever",
+]

@@ -1,0 +1,22 @@
+# 构建上下文排除项（基础镜像仅需源码与打包清单）
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.pyright/
+.ruff_cache/
+.idea/
+.vscode/
+build/
+dist/
+.git/
+.gitignore
+.github/
+docs/
+tests/
+data/
+*.log
+*.swp

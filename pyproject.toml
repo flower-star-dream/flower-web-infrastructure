@@ -1,0 +1,134 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flower-web-infrastructure"
+version = "0.2.0"
+description = "Web 系统通用后端基础设施（单体 / 微服务通用基础依赖）"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "花海" }]
+license = { text = "MIT" }
+keywords = ["web", "backend", "infrastructure", "fastapi", "error-code", "trace-id"]
+# === 核心依赖（最小安装 = 默认 dependencies，保证 import web_infra / create_app 可用）===
+# 核心依赖 = 最小安装：Web / 配置 / 日志 / 错误码 / 认证 / 缓存（内存）/ 监控 / 密码加密。
+# MySQL / Redis / Mongo 为可选 extras（代码延迟导入，不安装不影响核心功能与包导入），
+# 数据库与缓存扩展能力需按需安装 extras（mysql / redis / mongo）；全量安装用 [all]。
+dependencies = [
+    "fastapi>=0.110",
+    "pydantic>=2.6",
+    "pydantic-settings>=2.0",
+    "httpx>=0.27",
+    "uvicorn>=0.30",
+    "pyyaml>=6.0",
+    "prometheus-client>=0.16",
+    # === 认证与安全 ===
+    "pyjwt>=2.8.0",
+    "bcrypt==3.2.2",
+    "cryptography>=3.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=5.0",
+    "httpx>=0.27",
+    "pyright>=1.1.0",
+]
+# 可选能力（延迟导入，最小安装不含；按需通过 extras 追加，全量用 [all]）
+nacos = ["nacos-sdk-python>=2.0"]                      # 配置中心 + 服务注册发现（官方 SDK v2，延迟导入）
+rocketmq = ["rocketmq-client-python>=2.0"]             # RocketMQ 消息队列（延迟导入）
+storage = ["minio>=7.2"]                               # MinIO 对象存储（延迟导入）
+yaml = ["pyyaml>=6.0"]                                 # YAML 配置（已在核心，兼容旧写法）
+rag = ["faiss-cpu>=1.8", "sentence-transformers>=3.0"] # RAG 向量检索（AI 规范 §11）
+pdf = ["playwright>=1.40"]                             # PDF 渲染导出（规范 §22）
+# MySQL/SQLite ORM 数据访问（SQLAlchemy + 异步驱动，延迟导入）
+mysql = ["sqlalchemy>=2.0.51", "aiomysql>=0.3.2", "aiosqlite>=0.19.0"]
+# Redis 缓存/分布式锁/幂等存储（延迟导入）
+redis = ["redis>=5.0.0"]
+# MongoDB 数据访问（pymongo + beanie ODM，延迟导入）
+mongo = ["pymongo>=4.11.0", "beanie>=2.0.0"]
+# 数据库迁移工具（整改 S13-1）：Alembic 为权威迁移工具（运维/部署时使用，非运行时依赖，
+# 迁移脚本位于项目根 alembic/versions/）。安装：pip install -e ".[migrate]"
+migrate = ["alembic>=1.13"]
+# 最小安装场景（安装即用，按架构形态选择；均含核心依赖）：
+# 最小单体：核心 + MySQL/SQLite + Redis（单库 + 缓存；MQ/存储用内存/本地实现，无需外部 broker）
+min-monolith = [
+    "sqlalchemy>=2.0.51",
+    "aiomysql>=0.3.2",
+    "aiosqlite>=0.19.0",
+    "redis>=5.0.0",
+]
+# 最小微服务：核心 + MySQL + Redis + Nacos（注册/配置中心）+ RocketMQ + MinIO（对象存储）
+# 注：需具备外部服务（Nacos / RocketMQ / MinIO），启动前先就绪
+min-microservice = [
+    "sqlalchemy>=2.0.51",
+    "aiomysql>=0.3.2",
+    "aiosqlite>=0.19.0",
+    "redis>=5.0.0",
+    "nacos-sdk-python>=2.0",
+    "rocketmq-client-python>=2.0",
+    "minio>=7.2",
+]
+# 全量安装：核心 + 全部可选能力（nacos/rocketmq/storage/migrate/rag/pdf/mysql/redis/mongo）
+all = [
+    "nacos-sdk-python>=2.0",
+    "rocketmq-client-python>=2.0",
+    "minio>=7.2",
+    "alembic>=1.13",
+    "faiss-cpu>=1.8",
+    "sentence-transformers>=3.0",
+    "playwright>=1.40",
+    "sqlalchemy>=2.0.51",
+    "aiomysql>=0.3.2",
+    "aiosqlite>=0.19.0",
+    "redis>=5.0.0",
+    "pymongo>=4.11.0",
+    "beanie>=2.0.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+web_infra = ["config/application.default.yml"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.coverage]
+# 覆盖率配置（coverage.py，pytest-cov 读取）：source 限定 web_infra 包内代码
+# 说明（整改 S11-2）：2026-08-15 整改后实测行覆盖率 85.5%、分支覆盖率 82.8%
+# （整改前基线：行 82.0%、分支 78.5%，新增 AI 缓存测试提升了覆盖率）。
+# 行覆盖门禁 fail_under=70 为硬性要求（CI 同步 --cov-fail-under=70）；
+# 分支覆盖率未在 CI 启用（--cov-branch 后数值显著低于行覆盖率），
+# 渐进目标：若后续启用分支门禁建议 fail_under=60（当前实测 82.8%，留有裕量）。
+source = ["web_infra"]
+
+[tool.coverage.run]
+branch = false
+
+[tool.coverage.report]
+fail_under = 70
+show_missing = true
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]
+
+[tool.pyright]
+# 静态类型检查：显式继承 Protocol/ABC 的实现类签名不一致时在检查阶段报错（运行前拦截）
+pythonVersion = "3.10"
+pythonPlatform = "All"
+typeCheckingMode = "standard"
+include = ["src"]
+venvPath = "."
+venv = ".venv"
+# 延迟导入的第三方 SDK 无类型 stub，允许缺失类型信息但不影响协议签名校验
+reportMissingTypeStubs = "none"

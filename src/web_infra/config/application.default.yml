@@ -1,0 +1,195 @@
+# =====================================================================
+# flower-web-infrastructure 框架默认配置（YAML，配置统一收敛于此文件）
+# @Author: 花海
+# @Date: 2026/08/14 21:00
+# @Description: 框架默认配置统一收敛于 application.default.yml（禁止在 application.py 内嵌默认值）。
+#               业务项目通过 application.yml 或环境变量（APP_*）覆盖。
+#               中间件/多租户/AI 等特殊能力默认关闭，由业务项目按需启用。
+# =====================================================================
+app:
+  # 应用基础信息
+  name: Web Application
+  version: 1.0.0
+  logging:
+    level: INFO
+    format: text
+
+  # Web 中间件装配（配置驱动：声明即引入；enabled: false 显式关闭；trace_id 默认引入）
+  # 顺序约束：Starlette 后声明者在外层先执行，故 trace_id 必须最后声明（最先执行生成 TraceId），
+  # 统一鉴权 auth 次之（随后以 token payload 注入身份，不被外层覆盖），幂等 idempotency 最内层最后执行（此时身份已就绪）。
+  web:
+    middlewares:
+      idempotency:
+        enabled: false          # API 幂等键中间件默认不引入，需业务自行启用
+        ttl_seconds: 86400
+      auth:
+        enabled: false          # 统一鉴权中间件默认不引入，需业务自行启用
+        whitelist: ["/health", "/health/live", "/health/ready", "/metrics", "/docs", "/redoc", "/openapi.json"]
+      # 安全响应头中间件（整改 S25-1）：默认关闭（向后兼容，避免破坏既有响应头断言），推荐业务显式启用；
+      # 默认值收敛于此（与 SecurityHeadersMiddleware 类内默认一致），业务可整体覆盖
+      security_headers:
+        enabled: false
+        content_security_policy: "default-src 'self'"
+        x_content_type_options: "nosniff"
+        x_frame_options: "DENY"
+        referrer_policy: "no-referrer"
+      trace_id: {}              # 默认引入，且必须最后声明（最先执行）：先透传/生成 TraceId，再交由内层注入身份
+
+    # CORS 跨域配置（整改 S25-1，经 setup_cors(settings) 读取）：
+    # 通配源与凭证互斥——allow_origins=["*"] 时 allow_credentials 必须为 false（浏览器规范禁止带凭证的通配跨域）；
+    # 显式来源白名单时可开启 allow_credentials: true。默认值保持向后兼容：通配源 + 关闭凭证。
+    cors:
+      allow_origins: ["*"]
+      allow_credentials: false
+      allow_methods: ["*"]
+      allow_headers: ["*"]
+
+  # 多租户（特殊场景：默认不启用，需业务显式开启；启用后默认 strict 强隔离：无租户上下文拒绝数据访问）
+  tenant:
+    enabled: false
+    strict: true
+
+  # 缓存
+  cache:
+    type: memory
+    max_size: 10000
+    redis:
+      host: localhost
+      port: 6379
+      db: 0
+      password: ""
+      username: ""
+      max_connections: 50
+      decode_responses: true
+      socket_connect_timeout: 5
+      socket_timeout: 5
+      socket_keepalive: true
+      health_check_interval: 30
+      retry_on_timeout: true
+
+  # 数据库
+  db:
+    type: mysql
+    router:
+      mapping: {}
+      pattern: "tenant_{tenant_id}"
+    sqlite:
+      path: ":memory:"
+    mysql:
+      host: 127.0.0.1
+      port: 3306
+      database: ""
+      username: root
+      password: ""
+      charset: utf8mb4
+      # SSL/TLS（安全默认：开启；无证书环境可显式关闭 use_ssl: false）
+      use_ssl: true
+      check_hostname: true
+      ssl_ca: ""
+      # 三层超时（连接建立 / socket 读写 / 语句执行；语句执行超时 0 表示不启用）
+      connect_timeout: 10
+      read_timeout: 30
+      write_timeout: 30
+      statement_timeout_seconds: 0.0
+      pool_size: 8
+      max_overflow: 8
+      pool_recycle: 1800
+      pool_timeout: 8
+      echo: false
+      pool_pre_ping: true
+      slow_sql_threshold_seconds: 0.2
+      slow_sql_critical_seconds: 2.0
+      leak_detection_threshold_seconds: 10.0
+      # 多数据源（多租户独立库/Schema 模式，特殊场景默认关闭：为空字典即单数据源）
+      instances: {}
+
+  # AI 与大模型（特殊场景：默认不启用，需业务显式开启）
+  ai:
+    enabled: false
+    # 模型清单（页面化配置的 yml 等价物）：按清单自动注册供应商，默认 OpenAI 兼容协议；
+    # 字段与 ModelConfig 对齐，provider 缺省回落 openai_compatible
+    models: []
+    model_gateway:
+      default_scene: ""
+      routes: {}
+    connection_pool:
+      stream_max_connections: 16
+      stream_max_keepalive_connections: 16
+      sync_max_connections: 64
+      sync_max_keepalive_connections: 32
+      connect_timeout_seconds: 1.0
+      stream_read_timeout_seconds: 30.0
+      sync_read_timeout_seconds: 60.0
+    quota:
+      max_calls: 0
+      max_tokens: 0
+      max_cost: 0.0
+      window_seconds: 3600
+
+  # MongoDB（默认不启用）
+  mongo:
+    enabled: false
+    url: mongodb://localhost:27017
+    database: app
+    max_pool_size: 50
+    min_pool_size: 10
+    max_idle_time_ms: 600000
+    connect_timeout_ms: 10000
+    server_selection_timeout_ms: 30000
+    socket_timeout_ms: 60000
+    wait_queue_timeout_ms: 10000
+    heartbeat_frequency_ms: 10000
+    retry_writes: true
+
+  # 对象存储
+  storage:
+    type: local
+    base_dir: ./data
+    minio:
+      endpoint: localhost:9000
+      access_key: ""
+      secret_key: ""
+      secure: false
+      default_bucket: default
+      presign_expires: 600
+
+  # 消息队列
+  mq:
+    type: memory
+    rocketmq:
+      name_server: localhost:9876
+      group_name: web-producer-group
+      send_timeout: 3000
+    # Outbox 轮询投递/清理默认参数（S9-4/P0-3/S21-2）：由业务显式调用 register_outbox_tasks 装配，
+    # 默认不启用（框架不自动注册定时任务）；enabled 仅供业务配置参考
+    outbox:
+      enabled: false
+      max_retry: 3
+      retry_backoff_seconds: 30
+      dead_letter_topic: web-dlq-topic
+      publish_interval_seconds: 5
+      cleanup_interval_seconds: 3600
+      retain_days: 7
+
+  # 服务注册发现
+  registry:
+    type: memory
+    expire_seconds: 15
+    # Nacos 客户端配置（nacos-sdk-python v2：gRPC 协议，server_addresses 支持逗号分隔多地址）
+    nacos:
+      server_addresses: localhost:8848
+      namespace: ""
+      group: DEFAULT_GROUP
+      cluster: DEFAULT
+      # 认证（默认 Nacos 认证用 username/password；阿里云用 access_key/secret_key）
+      # username: nacos
+      # password: nacos
+      # access_key: ""
+      # secret_key: ""
+      # log_level: INFO
+      # grpc_timeout_ms: 5000
+      # tls_enabled: false
+      # tls_ca_file: ""
+      # tls_cert_file: ""
+      # tls_key_file: ""
+      # heartbeat_interval: 5
