@@ -81,6 +81,10 @@ class TaskExecutor:
         提交前经有界队列 gate 检查（规范 §14.2 有界队列（峰值×2））：队列已满抛
         RejectedExecutionError（不阻塞调用方），调用方按拒绝策略自行处理（丢弃/降级/告警）。
 
+        线程池任务协程运行在独立事件循环中：请勿在任务内触达 asyncio.Lock 保护的
+        内存存储（缓存/幂等/outbox 等），asyncio.Lock 不跨线程互斥；应改用
+        threading.Lock 或分布式实现（如 TaskRecordStore 内存实现已使用 threading.Lock）。
+
         :raises RejectedExecutionError: 任务队列已满拒绝执行
         :return: 任务记录（初始 PENDING；记录在任务启动时写入存储）
         """

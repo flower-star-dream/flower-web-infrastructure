@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import inspect
 import threading
 import time
@@ -76,7 +77,17 @@ class CircuitBreaker:
         with self._lock:
             self._window.append((success, slow))
             if self._state == CircuitBreakerState.HALF_OPEN:
+                # 半开探测调用完成：回收许可并决定恢复/重新熔断
                 self._half_open_inflight = max(0, self._half_open_inflight - 1)
+                if success:
+                    # 探测成功：熔断器恢复关闭并重置统计窗口（HALF_OPEN → CLOSED）
+                    self._state = CircuitBreakerState.CLOSED
+                    self._window.clear()
+                else:
+                    # 探测失败：重新熔断开启，等待下一个恢复周期
+                    self._state = CircuitBreakerState.OPEN
+                    self._open_until = time.monotonic() + self.config.wait_duration_in_open_state
+                return
 
             if self._state == CircuitBreakerState.OPEN:
                 return
@@ -124,6 +135,10 @@ class CircuitBreaker:
             if self._fallback is None:
                 raise  # 未配置 fallback：保持原始异常上抛
             return self._run_fallback(*args, **kwargs)
+        except BaseException:
+            # BaseException（如 KeyboardInterrupt）：同样记录结果以回收半开许可，再按原语义传播
+            self._record(False, time.monotonic() - start > self.config.slow_call_duration_threshold)
+            raise
         self._record(True, time.monotonic() - start > self.config.slow_call_duration_threshold)
         return result
 
@@ -134,6 +149,12 @@ class CircuitBreaker:
         start = time.monotonic()
         try:
             result = await func(*args, **kwargs)
+        except asyncio.CancelledError:
+            # 调用被取消（任务取消/客户端断开）：CancelledError 继承 BaseException，
+            # 不会被 except Exception 捕获；此处先记录结果回收半开许可，再按取消语义传播，
+            # 防止 _half_open_inflight 永久泄漏导致熔断器在 HALF_OPEN 阶段无法恢复
+            self._record(False, time.monotonic() - start > self.config.slow_call_duration_threshold)
+            raise
         except Exception:
             self._record(False, time.monotonic() - start > self.config.slow_call_duration_threshold)
             if self._fallback is None:

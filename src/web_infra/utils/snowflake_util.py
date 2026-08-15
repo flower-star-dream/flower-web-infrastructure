@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import logging
 import os
 import threading
 
@@ -65,6 +66,12 @@ class SnowflakeUtil:
 
 
 _worker_id = int(os.getenv("SNOWFLAKE_WORKER_ID", "0"))
+if _worker_id == 0:
+    # 多实例部署未区分 worker_id 时，同一毫秒内不同实例可能生成重复 ID（仅配置风险，不影响单实例）
+    logging.getLogger("web_infra").warning(
+        "SNOWFLAKE_WORKER_ID 未配置（默认 0）：多实例部署必须为每个实例配置唯一 worker_id，"
+        "否则同一毫秒内不同实例可能生成重复雪花 ID"
+    )
 _snowflake = SnowflakeUtil(worker_id=_worker_id)
 
 

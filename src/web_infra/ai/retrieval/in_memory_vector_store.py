@@ -23,11 +23,17 @@ class InMemoryVectorStore(VectorStoreInterface):
     @Stateful：进程内内存存储，单实例/单进程部署，多实例需替换为分布式实现（S1-1）。
     """
 
-    def __init__(self) -> None:
+    def __init__(self, max_vectors_per_tenant: int | None = None) -> None:
+        """初始化内存向量存储。
+
+        :param max_vectors_per_tenant: 单租户向量条数上限（None 表示不限制，默认兼容旧行为；
+            生产建议配置上限并定期重建，防止向量无限累积导致内存增长）
+        """
         # 租户命名空间：{tenant_id: {vector_id: vector}}，每个租户独立存储
         self._store: dict[str, dict[str, list[float]]] = {}
         # 租户写入顺序：{tenant_id: [vector_id, ...]}，供邻居扩展定位相邻块
         self._order: dict[str, list[str]] = {}
+        self._max_vectors_per_tenant = max_vectors_per_tenant
         self._lock = Lock()
 
     @staticmethod
@@ -43,7 +49,7 @@ class InMemoryVectorStore(VectorStoreInterface):
         return dot / (norm_a * norm_b)
 
     def add(self, tenant_id: str, ids: list[str], vectors: list[list[float]]) -> None:
-        """批量写入向量（仅写入指定租户命名空间）"""
+        """批量写入向量（仅写入指定租户命名空间；超出容量上限时淘汰最旧写入的向量）"""
         if len(ids) != len(vectors):
             raise ValueError("ids 与 vectors 长度不一致")
         with self._lock:
@@ -53,6 +59,12 @@ class InMemoryVectorStore(VectorStoreInterface):
                 if vid not in data:
                     order.append(vid)
                 data[vid] = vector
+            # 容量上限：超限后按写入顺序淘汰最旧向量（防内存无限增长）
+            if self._max_vectors_per_tenant is not None and len(data) > self._max_vectors_per_tenant:
+                overflow = len(data) - self._max_vectors_per_tenant
+                for old_vid in order[:overflow]:
+                    data.pop(old_vid, None)
+                del order[:overflow]
 
     def delete(self, tenant_id: str, ids: list[str]) -> None:
         """批量删除指定租户下的向量"""

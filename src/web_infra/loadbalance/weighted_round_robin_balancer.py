@@ -9,6 +9,8 @@
 """
 from __future__ import annotations
 
+import threading
+
 from web_infra.loadbalance.load_balancer_interface import LoadBalancerInterface
 from web_infra.registry.service_instance import ServiceInstance
 
@@ -21,6 +23,8 @@ class WeightedRoundRobinBalancer(LoadBalancerInterface):
         self._current_weight: dict[str, float] = {}
         # 实例集合签名（标识 + 权重），用于检测实例列表变化并重置状态
         self._signature: frozenset[tuple[str, float]] = frozenset()
+        # 线程安全：choose 中读改写共享状态，需互斥保护（对齐 TokenBucketRateLimiter/CircuitBreaker）
+        self._lock = threading.Lock()
 
     @staticmethod
     def _key(instance: ServiceInstance) -> str:
@@ -28,7 +32,7 @@ class WeightedRoundRobinBalancer(LoadBalancerInterface):
         return instance.host
 
     def _reset_if_changed(self, instances: list[ServiceInstance]) -> None:
-        """实例集合或权重变化时重置当前权重，避免状态漂移"""
+        """实例集合或权重变化时重置当前权重，避免状态漂移（调用方必须持有 _lock）"""
         signature = frozenset((self._key(i), i.weight) for i in instances)
         if signature != self._signature:
             self._signature = signature
@@ -40,14 +44,15 @@ class WeightedRoundRobinBalancer(LoadBalancerInterface):
         actives = [i for i in instances if i.weight > 0]
         if not actives:
             raise ValueError("没有可用的服务实例")
-        self._reset_if_changed(actives)
+        with self._lock:
+            self._reset_if_changed(actives)
 
-        total = sum(i.weight for i in actives)
-        # 1. 各实例当前权重累加配置权重
-        for inst in actives:
-            self._current_weight[self._key(inst)] += inst.weight
-        # 2. 选择当前权重最大的实例（并列取首个）
-        best = max(actives, key=lambda i: self._current_weight[self._key(i)])
-        # 3. 被选中实例当前权重减去总权重
-        self._current_weight[self._key(best)] -= total
-        return best
+            total = sum(i.weight for i in actives)
+            # 1. 各实例当前权重累加配置权重
+            for inst in actives:
+                self._current_weight[self._key(inst)] += inst.weight
+            # 2. 选择当前权重最大的实例（并列取首个）
+            best = max(actives, key=lambda i: self._current_weight[self._key(i)])
+            # 3. 被选中实例当前权重减去总权重
+            self._current_weight[self._key(best)] -= total
+            return best

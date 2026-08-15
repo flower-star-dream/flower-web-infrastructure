@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from collections import defaultdict
 from typing import Any
 
@@ -34,6 +35,8 @@ class UsageAccounting:
         self._aggregates: dict[tuple[str, ...], dict[str, float]] = defaultdict(
             lambda: {"prompt_tokens": 0.0, "completion_tokens": 0.0, "total_tokens": 0.0, "cost": 0.0, "calls": 0.0}
         )
+        # 线程安全：record（写）与 aggregate（读）可能被不同线程/事件循环并发调用
+        self._lock = threading.Lock()
 
     def record(
         self,
@@ -80,14 +83,15 @@ class UsageAccounting:
             "ai_usage model=%s tenant=%s scene=%s prompt_tokens=%s completion_tokens=%s total_tokens=%s cost=%s",
             model_code, tenant_id, scene, prompt_tokens, completion_tokens, total_tokens, cost,
         )
-        # 内存聚合（供统计查询）
-        for keys in self._aggregate_keys(record):
-            agg = self._aggregates[keys]
-            agg["prompt_tokens"] += prompt_tokens
-            agg["completion_tokens"] += completion_tokens
-            agg["total_tokens"] += total_tokens
-            agg["cost"] += cost
-            agg["calls"] += 1
+        # 内存聚合（供统计查询；线程安全互斥）
+        with self._lock:
+            for keys in self._aggregate_keys(record):
+                agg = self._aggregates[keys]
+                agg["prompt_tokens"] += prompt_tokens
+                agg["completion_tokens"] += completion_tokens
+                agg["total_tokens"] += total_tokens
+                agg["cost"] += cost
+                agg["calls"] += 1
 
         # 持久化（配置 store 时异步写入；无事件循环时降级为日志提示）
         if self._record_store is not None:
@@ -117,13 +121,14 @@ class UsageAccounting:
         :param group_by: 分组维度（单元素元组），取值 model_code/provider/tenant_id/scene
         :return: 聚合结果列表（含维度字段 + 各项累计）
         """
-        results: list[dict[str, Any]] = []
-        for (name, value), agg in self._aggregates.items():
-            if name not in group_by:
-                continue
-            item: dict[str, Any] = {name: value}
-            item.update({k: round(v, 4) for k, v in agg.items()})
-            results.append(item)
+        with self._lock:
+            results: list[dict[str, Any]] = []
+            for (name, value), agg in self._aggregates.items():
+                if name not in group_by:
+                    continue
+                item: dict[str, Any] = {name: value}
+                item.update({k: round(v, 4) for k, v in agg.items()})
+                results.append(item)
         return results
 
     # ------------------------------------------------------------------

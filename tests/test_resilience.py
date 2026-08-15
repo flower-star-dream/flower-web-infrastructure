@@ -218,3 +218,85 @@ async def test_feign_client_without_circuit_breaker_unchanged():
             await client.request("svc", "GET", "/x")
     finally:
         await client.close()
+
+
+def test_circuit_breaker_recovers_after_half_open_success():
+    """半开探测成功：熔断器恢复关闭（HALF_OPEN → CLOSED），不再永久停留在半开"""
+    import time
+
+    from web_infra.resilience import CircuitBreakerState
+
+    cb = CircuitBreaker(
+        "test",
+        CircuitBreakerConfig(
+            minimum_number_of_calls=3,
+            wait_duration_in_open_state=0.05,
+            permitted_calls_in_half_open_state=2,
+        ),
+    )
+
+    def fail():
+        raise RuntimeError("fail")
+
+    def ok():
+        return "ok"
+
+    # 失败样本达标触发熔断开启
+    for _ in range(3):
+        with pytest.raises(RuntimeError):
+            cb.execute(fail)
+    assert cb.state == CircuitBreakerState.OPEN
+
+    # 轮询等待 OPEN 到期（规避 sleep 粒度不足的时序抖动），由 execute 触发进入 HALF_OPEN
+    deadline = time.monotonic() + 1.0
+    while time.monotonic() < deadline and time.monotonic() < cb._open_until:
+        time.sleep(0.005)
+    # 半开探测成功 → 熔断器恢复 CLOSED
+    assert cb.execute(ok) == "ok"
+    assert cb.state == CircuitBreakerState.CLOSED
+
+
+@pytest.mark.asyncio
+async def test_circuit_breaker_half_open_license_recovered_on_cancel():
+    """半开探测调用被取消：半开许可被回收（CancelledError 不泄漏），熔断器仍可恢复"""
+    import asyncio
+    import time
+
+    from web_infra.resilience import CircuitBreakerState
+
+    cb = CircuitBreaker(
+        "test",
+        CircuitBreakerConfig(
+            minimum_number_of_calls=3,
+            wait_duration_in_open_state=0.05,
+            permitted_calls_in_half_open_state=1,
+        ),
+    )
+
+    async def never_finish():
+        await asyncio.sleep(10)
+
+    # 失败样本达标触发熔断开启
+    for _ in range(3):
+        with pytest.raises(RuntimeError):
+            cb.execute(lambda: (_ for _ in ()).throw(RuntimeError("fail")))
+    assert cb.state == CircuitBreakerState.OPEN
+
+    # 轮询等待 OPEN 到期（规避 sleep 粒度不足的时序抖动），由探测任务触发进入 HALF_OPEN
+    deadline = time.monotonic() + 1.0
+    while time.monotonic() < deadline and time.monotonic() < cb._open_until:
+        time.sleep(0.005)
+    # 半开探测调用被取消：CancelledError 需按失败记录回收许可（修复前许可永久泄漏）
+    task = asyncio.create_task(cb.execute_async(never_finish))
+    await asyncio.sleep(0.02)
+    assert cb.state == CircuitBreakerState.HALF_OPEN  # 探测任务已进入半开并持有许可
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    # 取消已按失败记录（半开失败重新 OPEN）；等待到期后再次探测成功应恢复 CLOSED
+    deadline = time.monotonic() + 1.0
+    while time.monotonic() < deadline and time.monotonic() < cb._open_until:
+        time.sleep(0.005)
+    assert cb.execute(lambda: "ok") == "ok"
+    assert cb.state == CircuitBreakerState.CLOSED

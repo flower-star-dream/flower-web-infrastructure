@@ -74,3 +74,17 @@ async def test_concurrent_execution_count():
 
     await asyncio.gather(*(worker() for _ in range(5)))
     assert peak <= 2
+
+
+@pytest.mark.asyncio
+async def test_queue_slot_released_on_execution_timeout():
+    """执行槽超时时已持有的排队槽名额归还：排队容量不泄漏，后续请求仍可正常获取"""
+    guard = ConcurrencyGuard(max_concurrency=1, queue_capacity=1, wait_timeout_seconds=0.05)
+    await guard.acquire()  # 占用唯一执行槽
+    with pytest.raises(BizException):
+        await guard.acquire()  # 排队后执行槽超时快速失败
+    guard.release()  # 释放执行槽
+    # 若排队名额泄漏（BoundedSemaphore 计数归零），此处排队槽已满会立即超时失败；
+    # 名额已归还时应正常获取成功
+    await guard.acquire()
+    guard.release()

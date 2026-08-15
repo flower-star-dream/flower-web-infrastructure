@@ -27,6 +27,9 @@ class InMemoryQuotaStore(QuotaStoreInterface):
     async def incr(self, key: str, *, calls: int, tokens: int, cost: float, window_seconds: int) -> QuotaCounter:
         async with self._lock:
             now = time.monotonic()
+            # 惰性清理窗口已过期的计数键（按不同 key 维度隔离计数，防键集合无限增长）
+            for expired in [k for k, (_, expire_at) in self._store.items() if expire_at <= now]:
+                self._store.pop(expired, None)
             item = self._store.get(key)
             if item is None or item[1] <= now:  # 无记录或窗口已过期：重置
                 counter = QuotaCounter(calls=calls, tokens=tokens, cost=cost)

@@ -19,6 +19,7 @@ class InMemoryServiceRegistry(ServiceRegistryInterface):
     """内存服务注册发现实现（ServiceRegistryInterface SPI）
 
     @Stateful：进程内内存存储，单实例/单进程部署，多实例需替换为分布式实现（S1-1）。
+    仅限单事件循环访问（asyncio.Lock 不跨线程互斥），跨线程/跨循环场景请改用线程安全或分布式实现。
     """
 
     def __init__(self, instance_expire_seconds: int = 15) -> None:

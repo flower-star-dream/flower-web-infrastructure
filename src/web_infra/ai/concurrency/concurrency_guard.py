@@ -39,8 +39,15 @@ class ConcurrencyGuard:
             # 1. 排队槽（有界）：队列满且超时未进入则快速失败
             if self._queue_slots is not None:
                 await asyncio.wait_for(self._queue_slots.acquire(), timeout=self._wait_timeout_seconds)
-            # 2. 执行槽：等待并发执行位置
-            await asyncio.wait_for(self._execution_slots.acquire(), timeout=self._wait_timeout_seconds)
+            # 2. 执行槽：等待并发执行位置（获取失败/取消时归还已持有的排队槽，防名额泄漏）
+            try:
+                await asyncio.wait_for(self._execution_slots.acquire(), timeout=self._wait_timeout_seconds)
+            except BaseException:
+                # 执行槽超时/被取消：排队槽名额已成功持有，必须归还后再上抛，
+                # 否则 BoundedSemaphore 名额永久泄漏，排队容量耗尽后所有请求快速失败且无法自愈
+                if self._queue_slots is not None:
+                    self._queue_slots.release()
+                raise
         except asyncio.TimeoutError:
             raise BizException(CommonErrorCode.RATE_LIMITED, message="模型调用并发超限，请稍后重试")
 

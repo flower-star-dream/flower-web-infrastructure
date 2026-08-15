@@ -19,17 +19,22 @@ class _NoOpLock:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
+        self._acquired = False
 
     def acquire(self, timeout: float | None = None) -> bool:
         """获取锁；timeout 秒内未获取到返回 False（None 保持阻塞，规范 §16.2）"""
         if timeout is None:
             self._lock.acquire()
-            return True
-        return self._lock.acquire(timeout=timeout)
+        elif not self._lock.acquire(timeout=timeout):
+            return False
+        self._acquired = True
+        return True
 
     def release(self) -> None:
-        """释放锁"""
-        self._lock.release()
+        """释放锁；未持有锁时为安全的 no-op（与 FileLock.release 契约一致）"""
+        if self._acquired:
+            self._lock.release()
+            self._acquired = False
 
 
 class _FcntlLock:

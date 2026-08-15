@@ -18,6 +18,7 @@ class InMemoryMessageIdempotencyStore(MessageIdempotencyStoreInterface):
     """内存消息消费幂等键存储（默认实现）
 
     @Stateful：进程内内存存储，单实例/单进程部署，多实例需替换为分布式实现（S1-1）。
+    仅限单事件循环访问（asyncio.Lock 不跨线程互斥），跨线程/跨循环场景请改用线程安全或分布式实现。
     """
 
     def __init__(self) -> None:

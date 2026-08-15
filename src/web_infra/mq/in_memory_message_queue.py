@@ -158,6 +158,9 @@ class InMemoryMessageQueue(MessagePublisherInterface, MessageConsumerInterface):
                 except Exception as exc:  # noqa: BLE001 - 汇聚异常统一治理
                     last_exc = exc
             if last_exc is None:
+                # 消费成功：清理该消息的退避重试计数，防止曾失败过又成功的 message_id
+                # 永久驻留 _retry_counts 导致内存无限增长
+                self._retry_counts.pop(message.message_id, None)
                 MqMetrics.record_consumed(message.topic)
                 continue
             MqMetrics.record_error(message.topic, "consume")
