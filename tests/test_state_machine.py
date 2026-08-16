@@ -425,3 +425,20 @@ def test_base_status_router_missing_entity():
     with pytest.raises(BizException) as ei:
         engine.fire(BaseStatus.ENABLE, StartStopEvent.START_OR_STOP, StateRouteParams.create())
     assert ei.value.code == "E4-STATE-002"
+
+
+def test_web_infra_top_level_exports():
+    """web_infra 顶层导出状态机核心类"""
+    import web_infra
+
+    assert web_infra.StateMachine is StateMachine
+    assert web_infra.StateMachineEngine is StateMachineEngine
+    assert web_infra.StateRouter is StateRouter
+    assert web_infra.StateMachineRegistry is StateMachineRegistry
+    assert web_infra.BaseState is BaseState
+    assert web_infra.BaseEvent is BaseEvent
+    assert web_infra.StateRouteParams is StateRouteParams
+    assert web_infra.StateMachineErrorCode is StateMachineErrorCode
+    assert web_infra.BaseStatus is BaseStatus
+    assert web_infra.BaseStatusRouter is BaseStatusRouter
+    assert web_infra.StartStopEvent is StartStopEvent

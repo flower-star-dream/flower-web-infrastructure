@@ -218,7 +218,7 @@ from web_infra.registry import (
     InMemoryServiceRegistry,
 )
 from web_infra.loadbalance import LoadBalancerInterface, RandomBalancer, RoundRobinBalancer, WeightedRoundRobinBalancer
-from web_infra.http import FeignClient
+from web_infra.http import FeignClient, FeignClientConfig, build_feign_client, default_service_fallback
 from web_infra.security import (
     JWTUtil,
     TokenVerifyStatus,
@@ -237,8 +237,36 @@ from web_infra.security import (
     OAuth2ClientRegistry,
     InMemoryOAuth2ClientRegistry,
     OAuth2TokenService,
+    JwtTokenStore,
+    InMemoryJwtTokenStore,
+    RedisJwtTokenStore,
+    JwtKeyProvider,
+    EnvJwtKeyProvider,
+    SocialPlatform,
+    SocialAccessToken,
+    SocialUserInfo,
+    SocialBinding,
+    SocialBindingStore,
+    InMemorySocialBindingStore,
+    SocialPlatformRegistry,
+    DemoSocialPlatform,
+    SocialLoginResult,
+    SocialLoginService,
 )
 from web_infra.task import TaskStatus, TaskRecord, TaskRecordStoreInterface, InMemoryTaskRecordStore, TaskExecutor
+from web_infra.state_machine import (
+    BaseState,
+    BaseEvent,
+    BaseStatus,
+    StartStopEvent,
+    BaseStatusRouter,
+    StateRouteParams,
+    StateRouter,
+    StateMachine,
+    StateMachineEngine,
+    StateMachineRegistry,
+    StateMachineErrorCode,
+)
 from web_infra.monitoring import (
     PhaseTimer,
     init_ai_metrics,
@@ -324,13 +352,24 @@ __all__ = [
     # 服务注册发现与负载均衡
     "ServiceInstance", "ServiceRegistryInterface", "NacosDiscoveryClient", "NacosRegistration", "InMemoryServiceRegistry",
     "LoadBalancerInterface", "RandomBalancer", "RoundRobinBalancer", "WeightedRoundRobinBalancer", "FeignClient",
+    "FeignClientConfig", "build_feign_client",
+    "default_service_fallback",
     # 安全
     "JWTUtil", "TokenVerifyStatus", "PasswordEncoder", "SecureConfigLoader", "PrivacyGuard",
     "PiiResult", "PiiMatch", "CaptchaStoreInterface", "InMemoryCaptchaStore", "RedisCaptchaStore",
     "CaptchaService", "LoginFailLockService", "PermissionGuard",
     "OAuth2Client", "OAuth2ClientRegistry", "InMemoryOAuth2ClientRegistry", "OAuth2TokenService",
+    "JwtTokenStore", "InMemoryJwtTokenStore", "RedisJwtTokenStore",
+    "JwtKeyProvider", "EnvJwtKeyProvider",
+    "SocialPlatform", "SocialAccessToken", "SocialUserInfo", "SocialBinding",
+    "SocialBindingStore", "InMemorySocialBindingStore", "SocialPlatformRegistry",
+    "DemoSocialPlatform", "SocialLoginResult", "SocialLoginService",
     # 异步任务
     "TaskStatus", "TaskRecord", "TaskRecordStoreInterface", "InMemoryTaskRecordStore", "TaskExecutor",
+    # 通用状态机
+    "BaseState", "BaseEvent", "BaseStatus", "StartStopEvent", "BaseStatusRouter",
+    "StateRouteParams", "StateRouter", "StateMachine", "StateMachineEngine",
+    "StateMachineRegistry", "StateMachineErrorCode",
     # 监控与工具
     "PhaseTimer", "init_ai_metrics", "record_ai_call", "record_ai_ttft", "record_ai_duration",
     "record_ai_tokens", "record_ai_cost",

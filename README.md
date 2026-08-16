@@ -151,7 +151,7 @@ pip install -e "f:\baseProject\flower-web-infrastructure[all]"
 推荐通过 `create_app` 启动项目，自动装配日志、中间件、异常处理与各组件：
 
 ```python
-from web_infra import create_app, Result, BizException, CommonErrorCode
+from web_infra import create_app, Result, CommonErrorCode
 
 # settings 参数为可选覆盖层（dict 优先级高于 YAML），配置主来源仍是 application.yml
 app = create_app({"app.name": "demo"})
@@ -159,7 +159,7 @@ app = create_app({"app.name": "demo"})
 @app.get("/v1/orders/{order_id}")
 def get_order(order_id: str):
     if order_id == "0":
-        raise BizException(CommonErrorCode.COMMON_NOT_FOUND)
+        raise CommonErrorCode.COMMON_NOT_FOUND.to_exception()
     return Result.success(data={"orderId": order_id})
 
 if __name__ == "__main__":
@@ -239,14 +239,14 @@ app:
 ### 7.1 统一响应与业务异常
 
 ```python
-from web_infra import Result, PageResult, BizException, CommonErrorCode
+from web_infra import Result, PageResult, CommonErrorCode
 
 # 成功
 return Result.success(data={"orderId": "1001"})
 # 分页（data.list + data.total）
 return PageResult.success(records=[...], total=100)
-# 业务异常（全局异常处理自动转换为统一错误响应）
-raise BizException(CommonErrorCode.PARAM_INVALID, message="订单号不能为空")
+# 业务异常（统一抛出约定：错误码.to_exception()，全局异常处理自动转换为统一错误响应）
+raise CommonErrorCode.PARAM_INVALID.to_exception(message="订单号不能为空")
 ```
 
 ### 7.2 日志与请求上下文
@@ -555,6 +555,95 @@ done = await upload.list_uploaded_parts(task.upload_id)     # 断点续传：查
 object_key = await upload.complete(task.upload_id, expected_md5=md5)  # 合并校验后返回对象 Key
 ```
 
+### 7.11 状态机
+
+框架级通用状态机组件（`web_infra/state_machine/`），设计对齐 flower-spring-cloud 的
+`StateMachine`。引擎只做「流转合法性校验 + 事件分发」，不触碰持久层（持久化由路由处理器完成）。
+
+**声明状态与事件**：状态/事件为**任意 hashable 值**（不限枚举）；`BaseState`/`BaseEvent` 是推荐便捷基类
+（成员 value 即业务码，`description` 为中文名，`of(code)` 反查）：
+
+```python
+from web_infra import BaseState, BaseEvent
+
+class OrderStatus(BaseState):
+    PENDING_PAYMENT = (1, "待支付")
+    PAID = (2, "已支付")
+    CANCELLED = (3, "已取消")
+
+class OrderEvent(BaseEvent):
+    PAY = (1, "支付")
+    CANCEL = (2, "取消")
+```
+
+**声明流转路由**：两张声明表——合法流转（仅做合法性校验，不强制目标一致）+ 事件处理器
+（签名 `handler(current_state, params)`，同一事件可按当前状态分叉；持久化在此完成）：
+
+```python
+from web_infra import StateRouter, StateMachineRegistry, StateRouteParams
+
+@StateMachineRegistry.register
+class OrderStateRouter(StateRouter[OrderStatus, OrderEvent, OrderEO]):
+    def get_state_event_target_config(self):
+        return {
+            OrderStatus.PENDING_PAYMENT: {OrderEvent.PAY: OrderStatus.PAID,
+                                          OrderEvent.CANCEL: OrderStatus.CANCELLED},
+        }
+
+    def get_event_dispatcher(self):
+        return {OrderEvent.PAY: self._pay, OrderEvent.CANCEL: self._cancel}
+
+    def _pay(self, current_state, params):
+        order = params.get_param("order")
+        order.status = OrderStatus.PAID
+        self.session.add(order)
+        return OrderStatus.PAID
+```
+
+**触发流转**：非法流转 / 空状态 / 空参数抛 `E4-STATE-000~004` 业务异常：
+
+```python
+fsm = StateMachineRegistry.get(OrderStatus, OrderEvent, OrderEO)
+new_status = fsm.fire(order.status, OrderEvent.PAY, StateRouteParams.create().add_param("order", order))
+# 异步处理器：await fsm.fire_async(...)
+```
+
+**扩展/无限状态场景**：状态值不限于枚举。重试/累加类「无限状态」可用组合值表达，迁移表可程序化生成：
+
+```python
+class RetryRouter(StateRouter[tuple, str, OrderEO]):
+    def get_state_event_target_config(self):
+        return {(f"RETRYING_{n}"): {"RETRY": f"RETRYING_{n + 1}"} for n in range(3)}
+
+    def get_event_dispatcher(self):
+        return {"RETRY": lambda current_state, params: f"RETRYING_{int(current_state.split('_')[1]) + 1}"}
+```
+
+真正的「无界状态流/工作流」不属于本组件范畴，应使用工作流/任务编排引擎。
+
+**引擎 SPI（可替换为第三方状态机库）**：`StateMachineEngine` 为引擎契约（`fire`/`fire_async`），
+默认实现为自研 `StateMachine`。如需基于其他成熟状态机库（如 transitions）实现，可自定义引擎并注册替换
+（须在 `get` 之前）：
+
+```python
+from web_infra import StateMachineEngine, StateMachineRegistry
+
+class TransitionsEngine(StateMachineEngine[OrderStatus, OrderEvent]):
+    def fire(self, current_state, event, params=None):
+        ...  # 适配第三方库逻辑
+    async def fire_async(self, current_state, event, params=None):
+        ...  # 适配第三方库逻辑
+
+StateMachineRegistry.register_engine_factory(OrderStatus, OrderEvent, OrderEO, TransitionsEngine)
+```
+
+**并发与事务约定**：引擎只计算状态、不写库。多实例并发触发同一实体流转（如支付成功 + 超时取消同时发生）
+会状态错乱，**并发控制由调用方负责**：优先用数据库乐观锁（version 字段 CAS 更新，写入失败则本次流转失败重试），
+或使用框架 `DistributedLock` 包住 fire。事务边界在路由处理器内用框架 `provide_db_session` 自行管理，引擎不介入。
+
+**开箱即用**：启用/禁用互转无需声明，直接使用 `BaseStatus` / `StartStopEvent` / `BaseStatusRouter`
+（状态翻转后自行落库）。
+
 ## 8. 项目结构
 
 数据库脚本（DDL/DML）按规范 §13.2 存放于项目根 `db/` 目录（与代码一同纳入版本控制）：基线脚本 `db/init/ddl|dml/`（命名 `序号-模块-init-ddl/dml.sql`，如 `001-mq-init-ddl.sql`），增量脚本 `db/versions/`（命名 `V{版本号}-模块-{变更描述}-ddl/dml.sql`）。
@@ -685,6 +774,7 @@ GitHub Actions 工作流位于 `.github/workflows/ci.yml`，推送 `main` / 版�
 | [使用说明](./docs/使用说明.md)              | 业务项目接入指南：最小/全量/按需安装、快速开始、配置说明、能力与依赖对照表                                  |
 | [CI/CD 文档](./docs/CI-CD.md)              | CI 流水线触发时机、门禁策略、镜像推送开启方式、本地复现                                                    |
 | [SPI 扩展点文档](./docs/SPI-Extensions.md) | 框架预留的全部 SPI 扩展点：接口清单、方法契约、默认实现与扩展接入方式（自定义供应商/存储/缓存/消息队列等） |
+| [常量与错误码](./docs/常量与错误码.md) | **框架常量与错误码的单一权威清单**：全部常量（含 HTTP 状态码 `HttpStatusConstant`）与错误码总览，业务新增/引用前先查阅本文档，防止冲突或重复定义 |
 | [规范符合性审查报告](./docs/规范符合性审查报告.md) | 对照通用架构规范 v1.2 + 多租户/AI 扩展的逐章审查结果与整改清单                                     |
 
 ## 13. 版本与兼容性
