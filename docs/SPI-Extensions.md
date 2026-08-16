@@ -642,6 +642,9 @@
 
 - 默认实现：`InMemoryPaymentGateway`（单机/测试）；微信渠道：`WeChatPayProvider`（`web_infra.payment.provider.wechat`）。
 - 注册：`PaymentGatewayRegistry.register(name, gateway)`。
+- 微信平台证书：`platform_cert` 模式下可开启 `cert_auto_download`（配置 `app.payment.wechat.cert_auto_download: true`），
+  应答验签遇未知证书序列号时自动调用 `GET /v3/certificates` 下载平台证书并缓存至 `platform_cert_dir`（默认关闭，首次可用
+  `WeChatPayClient.download_certificates()` 主动预热）。
 
 ### 15.2 PaymentCallbackVerifier —— 支付回调验签解密接口
 
@@ -654,6 +657,7 @@
 | `async parse(headers: Mapping[str, str], body: str) -> PaymentCallback \| None` | 验签+解密+解析；失败返回 None |
 
 - 默认实现：`InMemoryPaymentCallbackVerifier`（单机/测试）；微信渠道：`WeChatCallbackVerifier`（平台证书/微信支付公钥两种模式，AES-256-GCM 解密）。
+- 平台证书自动下载：构造时注入 `WeChatPayClient` 且开启 `cert_auto_download` 后，回调验签遇未知序列号自动下载平台证书并缓存。
 
 ### 15.3 PaymentCallbackHandler —— 支付回调业务处理器接口
 
