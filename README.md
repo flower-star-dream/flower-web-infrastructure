@@ -172,7 +172,7 @@ if __name__ == "__main__":
 
 配置统一走 YAML，优先级为「环境变量 > 项目根目录 `application.yml` > 框架默认 `application.default.yml`」。默认配置不散落在代码中，`application.py` 不内嵌默认值；中间件/多租户/AI 等特殊能力默认关闭，由业务配置显式开启。
 
-YAML 中支持 `${ENV}` / `${ENV:default}` 环境变量占位符（未定义时取默认值，未定义且无默认值保留原样），敏感配置（如数据库密码）可写为 `${APP_DB_MYSQL_PASSWORD}` 经环境变量注入，避免明文随 yml 提交仓库。框架启动时自动加载项目根 `.env`（`.env` 默认已被 `.gitignore` 忽略，复制 `.env.example` 填写即可），已存在的进程/容器环境变量优先、不被 `.env` 覆盖。
+YAML 中支持 `${ENV}` / `${ENV:default}` 环境变量占位符（未定义时取默认值，未定义且无默认值保留原样），敏感配置（如数据库密码）可写为 `${APP_DB_MYSQL_PASSWORD}` 经环境变量注入，避免明文随 yml 提交仓库。**推荐做法（框架已内置）**：框架默认配置中的敏感项（MySQL/Redis/MongoDB 账号密码、MinIO/Nacos 访问密钥）均已用 `${ENV:default}` 引用环境变量，业务项目只需将敏感值写入项目根 `.env`（如 `APP_DB_MYSQL_PASSWORD=xxx`）即可生效，无需修改 yml。框架启动时自动加载项目根 `.env`（`.env` 默认已被 `.gitignore` 忽略，复制 `.env.example` 填写即可），已存在的进程/容器环境变量优先、不被 `.env` 覆盖。
 
 `application.yml` 示例（项目根目录）：
 
@@ -199,8 +199,9 @@ app:
       host: 127.0.0.1
       port: 3306
       database: demo
-      username: root
-      password: ""
+      # 敏感配置（账号/密码）推荐写入环境变量/.env，yml 中以 ${ENV:default} 引用
+      username: ${APP_DB_MYSQL_USERNAME:root}
+      password: ${APP_DB_MYSQL_PASSWORD:}
   storage:
     type: local              # local / minio
     base_dir: ./data
@@ -565,7 +566,7 @@ object_key = await upload.complete(task.upload_id, expected_md5=md5)  # 合并�
 数据库结构变更以 **Alembic** 为权威变更管理工具（规范 §13.1：脚本纳入版本控制、有版本校验，保证多环境一致性），迁移脚本位于项目根 `alembic/versions/`（命名 `{序号}_{变更描述}.py`）。`db/init/` 与 `db/versions/` 手工 SQL 保留作为参考（非 Python 环境 / DBA 手工执行 / 快速建库），**新变更一律优先编写 Alembic 迁移**。
 
 - **基线/增量对应关系**：迁移链 `0001_message_outbox`（基线，等价 `db/init/ddl/001-mq-init-ddl.sql`）→ `0002_add_next_retry_at`（等价 `db/versions/V0.2.0-mq-outbox-next-retry-ddl.sql` 语义：新增 `next_retry_at` 列 + `idx_status_next_retry` 索引）。`alembic upgrade head` 后的表结构与基线 SQL 文件当前形态等价。Alembic 迁移不承载数据回填，存量数据修正 DML 见 `db/versions/` 手工脚本（如 `V0.2.0-mq-outbox-next-retry-dml.sql`）。
-- **数据库 URL**：由 `alembic/env.py` 注入，优先级 `DATABASE_URL` 环境变量 > `alembic.ini` 的 `sqlalchemy.url`（留空）。支持异步驱动（`mysql+aiomysql` / `sqlite+aiosqlite`，项目 MySQL 默认异步）与同步驱动（`mysql+pymysql` / `sqlite`）。
+- **数据库 URL**：由 `alembic/env.py` 注入，优先级 进程/容器环境变量 `DATABASE_URL` > 项目根 `.env`（`alembic/env.py` 复用框架 `load_env_file` 自动加载，迁移命令单独执行时同样生效，无需在 shell 预先导出）> `alembic.ini` 的 `sqlalchemy.url`（留空）。支持异步驱动（`mysql+aiomysql` / `sqlite+aiosqlite`，项目 MySQL 默认异步）与同步驱动（`mysql+pymysql` / `sqlite`）。
 - **依赖**：Alembic 属运维工具，非运行时依赖，安装 `pip install -e ".[migrate]"`（optional `migrate` 组，见 `pyproject.toml`）。
 
 ```bash
@@ -643,7 +644,7 @@ docker run -d -p 8000:8000 -v "$(pwd)/application.yml:/app/application.yml" flow
 # 就绪探针 curl http://localhost:8000/health/ready（依赖连通性 + 启动完成）
 ```
 
-> 镜像标签规范（整改 S20-3）：测试版 `<分支名>-<时间戳>-<构建号>`、正式版 SemVer、`latest` 仅限最新正式版，详见 [CI/CD 文档](./docs/CI-CD.md)。
+> 镜像标签规范（整改 S20-3）：push `main` 推测试标签 `main-<时间戳>-<构建号>` 并更新 `latest`；版本 tag `v*` 推 SemVer + `latest`，详见 [CI/CD 文档](./docs/CI-CD.md)。
 
 业务项目继承示例（`Dockerfile`）：
 
@@ -658,12 +659,12 @@ CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
 ## 11. CI/CD
 
-GitHub Actions 工作流位于 `.github/workflows/ci.yml`，推送 `main` / 提交 PR 时自动执行：
+GitHub Actions 工作流位于 `.github/workflows/ci.yml`，推送 `main` / 版本 tag `v*` / 提交 PR 时自动执行：
 
 - **test**：静态类型检查（pyright，容忍既有基线）+ 单元测试（pytest，硬性门禁）；
-- **build-image**：Docker 基础镜像构建 + `/health/live` 存活冒烟验证（镜像推送步骤按需开启，标签规范见 CI/CD 文档）。
+- **build-image**：Docker 基础镜像构建 + Trivy 漏洞扫描 + cosign 签名（可选）+ `/health/live` 存活冒烟验证 + GHCR 推送（push `main` 推测试标签与 `latest`，版本 tag 推 SemVer + `latest`，PR 不推送）。
 
-详细说明（触发时机、门禁策略、镜像推送开启方式、本地复现）见 [CI/CD 文档](./docs/CI-CD.md)。
+详细说明（触发时机、门禁策略、镜像推送、本地复现）见 [CI/CD 文档](./docs/CI-CD.md)。
 
 ## 12. 相关文档
 
