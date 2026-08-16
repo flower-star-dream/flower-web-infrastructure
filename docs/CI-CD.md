@@ -40,9 +40,9 @@ CI
 
 | 步骤 | 行为 |
 | ---- | ---- |
-| 构建基础镜像 | `docker build -t flower-web-infrastructure:ci .`，基于 `Dockerfile`（整改 S20-2 多阶段构建：build 阶段安装依赖，runtime 阶段仅拷贝 site-packages + 源码） |
+| 构建基础镜像 | `docker build -t flower-web-infrastructure:ci .`，基于 `Dockerfile`（整改 S20-2 多阶段构建：build 阶段安装依赖 `min-monolith + migrate` extras，runtime 阶段仅拷贝 site-packages + 源码，并清理基础镜像自带构建期工具 pip/setuptools/wheel——消除 Trivy 高危漏洞，如 setuptools 内置 wheel/jaraco.context、pip 内置 setuptools/msgpack） |
 | 镜像漏洞扫描 | Trivy 扫描（`HIGH,CRITICAL`，`exit-code=1`），存在高危/严重漏洞即阻断（规范 §20.2） |
-| 镜像签名 | cosign 签名（规范 §20.4 供应链防篡改）：`COSIGN_PRIVATE_KEY` 已配置时对 `flower-web-infrastructure:ci` 签名；密钥缺失自动跳过不阻断。正式版发布必须启用签名，且部署侧配套 `cosign verify` 校验后才拉取镜像（详见 ci.yml 对应步骤注释） |
+| 镜像签名 | cosign **keyless（OIDC）** 签名（规范 §20.4 供应链防篡改）：使用 GitHub Actions OIDC 身份自动签名（Job 声明 `id-token: write`），**无需配置密钥/Secret**；签名绑定镜像 digest，推送重打 tag 不影响有效性。部署侧必须配套 `cosign verify` 校验签名后才拉取镜像（校验命令见 ci.yml 对应步骤注释） |
 | 冒烟验证 | 启动容器并轮询 `GET /health/live`（30 次 × 1s，存活探针，整改 S19-1），失败时输出容器日志 |
 | 推送镜像（GHCR） | 已启用：push `main` 推测试标签 + `latest`；版本 tag `v*` 推 SemVer + `latest`；PR 不推送。详见 [4. 镜像推送](#4-镜像推送已启用) |
 
@@ -54,7 +54,7 @@ CI
 | 代码行覆盖率（pytest-cov） | 硬性 | `--cov-fail-under=70`：低于 70% 即阻断（规范 §11.2） |
 | 静态类型检查（pyright） | 软性 | 既有 16 项基线错误不阻塞；新增代码须本地保持 0 错误（本地门禁） |
 | 镜像漏洞扫描（Trivy） | 硬性 | 存在高危/严重漏洞即阻断镜像留存（规范 §20.2） |
-| 镜像签名（cosign） | 正式版硬性 | `COSIGN_PRIVATE_KEY` 未配置时自动跳过；正式版发布必须启用并部署侧 `cosign verify`（规范 §20.4） |
+| 镜像签名（cosign keyless） | 硬性 | 基于 GitHub Actions OIDC 身份签名，无需密钥；部署侧必须 `cosign verify`（OIDC issuer / identity 匹配）通过后才拉取镜像（规范 §20.4） |
 | 镜像构建 + `/health/live` 冒烟 | 硬性 | 基础镜像必须可启动且存活探针通过（整改 S19-1：就绪探测 `/health/ready` 由编排层使用） |
 
 ### 3.1 本地复现
@@ -124,10 +124,34 @@ docker rm -f web-infra-smoke
 | 修改镜像内容 | 编辑 `Dockerfile`，注意 `HEALTHCHECK` 依赖 `/health/live` 存活端点（整改 S19-1）；就绪探测 `/health/ready` 由编排层配置 |
 | 版本发布 | 遵循 SemVer，同步更新 `pyproject.toml` 与 `README.md` 版本号，然后打 `v<版本>` tag 触发正式版镜像推送（SemVer + `latest`） |
 | 变更推送策略（如目标仓库） | `build-image` Job 的登录与推送步骤，同步更新本文档 [4. 镜像推送](#4-镜像推送已启用) |
+| 配置/变更 Secret 或包权限 | 见 [8. 仓库配置（Settings / Secrets）](#8-仓库配置settings--secrets) |
 
 ## 7. 常见问题
 
 - **pytest 失败**：`test` Job 中断，镜像不构建。按 `pytest` 输出定位失败用例，修复后重新推送/更新 PR。
+- **Trivy 扫描失败（高危/严重漏洞）**：镜像漏洞扫描失败会阻断镜像留存（`exit-code=1`）。历史根因：基础镜像 `python:3.11-slim` 自带构建期工具（pip/setuptools/wheel 及其 vendored 依赖）被整包带入 runtime 层（如 setuptools 内置 wheel 0.45.1 / jaraco.context 5.3.0、pip 内置 setuptools 70.3.0 / msgpack 1.1.2）。Dockerfile 已做两处清理：build 阶段卸载构建期工具、runtime 阶段删除基础镜像自带残留；若后续新增 Python 依赖引入新的高危漏洞，升级依赖版本后重新构建即可。
 - **冒烟验证超时**：容器 30 秒内 `/health/live` 不可达。查看 Job 输出的 `docker logs`，常见原因：依赖安装缺失、启动端口被占、`application.default.yml` 配置异常。
 - **pyright 报新增错误**：不阻塞流水线，但应在本地修复（`pyright` 输出定位），保持新增代码 0 错误。
 - **GHCR 推送失败（403 / denied）**：确认 `build-image` Job 的 `permissions.packages: write` 已声明；首次推送时需在 GitHub Settings → Packages 中授权该镜像包（Package visibility 至少设为 private，并为本组织成员配置读权限）。
+- **keyless 签名失败（OIDC token / 5xx）**：确认 `build-image` Job 的 `permissions.id-token: write` 已声明；签名需要访问 `token.actions.githubusercontent.com` 与 Rekor 日志服务，自托管 runner / 受限网络需放行这两个域名。
+
+## 8. 仓库配置（Settings / Secrets）
+
+流水线所需配置项一览。`GITHUB_TOKEN` 由 GitHub 自动注入（`build-image` Job 已声明 `packages: write`，GHCR 登录/推送无需额外配置）；镜像签名采用 **cosign keyless（OIDC）**，基于 GitHub Actions 的 OIDC 身份（`id-token: write` 权限已在 ci.yml 声明），**无需配置任何密钥/Secret**。Secret 名称必须与 `ci.yml` 中的引用（`secrets.XXX`）完全一致。
+
+| 配置项 | 类型 | 配置位置 | 必需性 | 用途与说明 |
+| ---- | ---- | ---- | ---- | ---- |
+| 镜像包可见性与权限 | 包设置 | 本仓库 Settings → Packages → flower-web-infrastructure | 首次推送后配置 | 首次 CI 推送成功后在 GitHub 生成镜像包，设置可见性（public/private）与成员读权限。**私有包拉取方**（如脚手架仓库 CI、部署环境）需在包设置中授权读权限 |
+| `GITHUB_TOKEN` | 自动注入 | 无需配置 | — | GHCR 登录与推送凭据（`packages: write` 已在 ci.yml 声明） |
+| OIDC 身份（keyless 签名） | 自动注入 | 无需配置 | — | `id-token: write` 权限已在 ci.yml 声明，cosign 自动获取 Actions OIDC token 签名 |
+
+**镜像签名与校验**（规范 §20.4）：
+
+- CI 侧：`cosign sign --yes flower-web-infrastructure:ci`（cosign v2 默认 keyless，`sigstore/cosign-installer@v3` 安装）。
+- 部署侧（拉取镜像前必须校验签名）：`cosign verify --certificate-oidc-issuer https://token.actions.githubusercontent.com --certificate-identity-regexp "https://github.com/flower-star-dream/flower-web-infrastructure/.github/workflows/ci.yml@refs/.*" ghcr.io/flower-star-dream/flower-web-infrastructure:<版本>`
+
+**配置顺序建议**（首次接入时按序执行）：
+
+1. 推送本仓库 `main`，确认流水线通过、镜像已签名并推送；
+2. 到 Settings → Packages 设置镜像包可见性（private 时为本组织成员配置读权限）；
+3. （如需脚手架跨仓库拉取）在包设置中授权脚手架仓库或设为 public（见脚手架 CI/CD 文档 §9）。

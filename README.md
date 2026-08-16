@@ -632,7 +632,7 @@ src/web_infra/
 
 ## 10. Docker 镜像
 
-项目提供基础镜像（`Dockerfile`，整改 S20-2 多阶段构建）：安装 `web_infra` 依赖并默认启动 `create_app()`（含 `/health/live` `/health/ready` `/health` `/metrics`），业务项目 `FROM` 继承后挂载 `application.yml` 并覆盖启动命令。
+项目提供基础镜像（`Dockerfile`，整改 S20-2 多阶段构建）：安装 `web_infra` 依赖（`min-monolith + migrate` extras，含 MySQL/SQLite ORM、Redis、Alembic）并默认启动 `create_app()`（含 `/health/live` `/health/ready` `/health` `/metrics`），业务项目 `FROM` 继承后挂载 `application.yml` 并覆盖启动命令。
 
 构建与运行：
 
@@ -654,7 +654,8 @@ FROM flower-web-infrastructure:latest
 COPY app ./app          # 业务代码
 COPY application.yml ./application.yml
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# 基础镜像只拷贝 site-packages（无 uvicorn 控制台脚本），启动用 python -m uvicorn
+CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 ```
 
 ## 11. CI/CD
@@ -662,7 +663,7 @@ CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 GitHub Actions 工作流位于 `.github/workflows/ci.yml`，推送 `main` / 版本 tag `v*` / 提交 PR 时自动执行：
 
 - **test**：静态类型检查（pyright，容忍既有基线）+ 单元测试（pytest，硬性门禁）；
-- **build-image**：Docker 基础镜像构建 + Trivy 漏洞扫描 + cosign 签名（可选）+ `/health/live` 存活冒烟验证 + GHCR 推送（push `main` 推测试标签与 `latest`，版本 tag 推 SemVer + `latest`，PR 不推送）。
+- **build-image**：Docker 基础镜像构建 + Trivy 漏洞扫描 + cosign keyless 签名（OIDC，无需密钥）+ `/health/live` 存活冒烟验证 + GHCR 推送（push `main` 推测试标签与 `latest`，版本 tag 推 SemVer + `latest`，PR 不推送）。
 
 详细说明（触发时机、门禁策略、镜像推送、本地复现）见 [CI/CD 文档](./docs/CI-CD.md)。
 
