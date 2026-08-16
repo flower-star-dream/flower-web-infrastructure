@@ -15,8 +15,24 @@ name: CI
 on:
   push:
     branches: [main]
-    tags: ["v*"]
+    tags: ["v*"]          # 版本 tag 无条件触发：发布正式版镜像，不受 paths-ignore 影响
+    paths-ignore:         # 仅文档/非代码变更不触发（不参与单元测试与镜像构建）
+      - "*.md"
+      - "docs/**"
+      - "LICENSE"
+      - ".gitignore"
+      - ".env.example"
+      - "db/**"
+      - "data/**"
   pull_request:
+    paths-ignore:
+      - "*.md"
+      - "docs/**"
+      - "LICENSE"
+      - ".gitignore"
+      - ".env.example"
+      - "db/**"
+      - "data/**"
 
 jobs:
   test:
