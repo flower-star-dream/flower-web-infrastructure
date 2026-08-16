@@ -3,8 +3,7 @@
 
 @Author: 花海
 @Date: 2026/08/16 16:00
-@Description: 状态机注册表：按 (状态类, 事件类, 数据类) 注册与获取，引擎实例缓存；
-              替代 flower-spring-cloud 的 Spring 容器机制（StateMachineFactory/AutoInjector）。
+@Description: 状态机注册表：按 (状态类, 事件类, 数据类) 注册与获取，引擎实例缓存。
               支持两种路由注册方式：@register 类装饰器（get 时无参惰性实例化）与
               register_instance 实例注册（构造注入场景）；构建期静态校验路由配置（P0）；
               支持 register_engine_factory 注册自定义引擎（SPI，可换第三方状态机库实现）。

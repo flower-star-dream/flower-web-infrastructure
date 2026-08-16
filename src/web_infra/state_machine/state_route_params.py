@@ -3,7 +3,7 @@
 
 @Author: 花海
 @Date: 2026/08/16 16:00
-@Description: 状态路由参数容器，承载任意数量/任意类型的参数，对应 flower-spring-cloud StateRouteParams。
+@Description: 状态路由参数容器，承载任意数量/任意类型的参数。
 """
 from __future__ import annotations
 

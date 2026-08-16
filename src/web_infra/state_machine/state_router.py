@@ -3,7 +3,7 @@
 
 @Author: 花海
 @Date: 2026/08/16 16:00
-@Description: 状态路由抽象基类，对应 flower-spring-cloud IStateRouter；业务侧实现两张声明表
+@Description: 状态路由抽象基类；业务侧实现两张声明表
               （状态×事件→目标、事件→处理器）即可，route 为统一分发入口。
               设计要点：S/E 不强制继承 BaseState/BaseEvent（支持扩展/动态状态值，须可 hash），
               处理器签名统一为 handler(current_state, params)，同一事件可按当前状态分叉。

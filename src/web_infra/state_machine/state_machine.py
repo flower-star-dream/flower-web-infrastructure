@@ -3,7 +3,7 @@
 
 @Author: 花海
 @Date: 2026/08/16 16:00
-@Description: 状态机引擎默认实现，对应 flower-spring-cloud StateMachine；实现 StateMachineEngine SPI，
+@Description: 状态机引擎默认实现；实现 StateMachineEngine SPI，
               只做流转合法性校验 + 事件分发，不触碰持久层（持久化由路由处理器自行完成）。
               校验顺序：状态非空 → 参数非空 → 组合表合法性 → 事件分发 → 目标状态非空。
 """

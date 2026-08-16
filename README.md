@@ -557,8 +557,7 @@ object_key = await upload.complete(task.upload_id, expected_md5=md5)  # 合并�
 
 ### 7.11 状态机
 
-框架级通用状态机组件（`web_infra/state_machine/`），设计对齐 flower-spring-cloud 的
-`StateMachine`。引擎只做「流转合法性校验 + 事件分发」，不触碰持久层（持久化由路由处理器完成）。
+框架级通用状态机组件（`web_infra/state_machine/`）。引擎只做「流转合法性校验 + 事件分发」，不触碰持久层（持久化由路由处理器完成）。
 
 **声明状态与事件**：状态/事件为**任意 hashable 值**（不限枚举）；`BaseState`/`BaseEvent` 是推荐便捷基类
 （成员 value 即业务码，`description` 为中文名，`of(code)` 反查）：

@@ -3,7 +3,7 @@
 
 @Author: 花海
 @Date: 2026/08/16 16:00
-@Description: 开箱即用的启用/禁用基础状态机，对应 flower-spring-cloud BaseRouter/BaseStatus/BaseEvent；
+@Description: 开箱即用的启用/禁用基础状态机；
               状态翻转计算在此完成，持久化由调用方负责（引擎不触碰持久层）。
               使用约定：params 需携带 key="entity" 的实体（须有 status 字段，值为 BaseStatus）。
 """

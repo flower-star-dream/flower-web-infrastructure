@@ -4,7 +4,7 @@
 @Author: 花海
 @Date: 2026/08/16 16:00
 @Description: 事件枚举基类（推荐便捷基类，非强制——引擎不要求事件必须继承本类），
-              对应 flower-spring-cloud IBaseEvent；成员 value 即业务码（get_code()），
+              成员 value 即业务码（get_code()），
               description 返回中文名，of(code) 反查（未知码抛 UNKNOWN_STATE）。
 """
 from __future__ import annotations
