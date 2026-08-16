@@ -29,6 +29,7 @@ class WechatPayConfig(BaseModel):
     refund_notify_url: str = Field(default="", description="退款结果回调地址")
     verify_mode: Literal["platform_cert", "public_key"] = Field(default="platform_cert", description="回调验签凭据模式")
     platform_cert_dir: str = Field(default="./cert", description="微信支付平台证书 PEM 文件目录（文件名=<证书序列号>.pem）")
+    cert_auto_download: bool = Field(default=False, description="平台证书自动下载（platform_cert 模式：验签遇未知序列号时自动调用 /v3/certificates 获取并缓存）")
     public_key_id: str = Field(default="", description="微信支付公钥 ID（public_key 模式）")
     public_key: str = Field(default="", description="微信支付公钥 PEM 内容（public_key 模式）")
     connect_timeout: float = Field(default=5.0, description="连接超时（秒）")

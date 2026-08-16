@@ -195,6 +195,8 @@ app:
       refund_notify_url: ${APP_PAYMENT_WECHAT_REFUND_NOTIFY_URL:}
       verify_mode: platform_cert
       platform_cert_dir: ./cert
+      # 平台证书自动下载：platform_cert 模式下验签遇未知序列号自动调用 /v3/certificates 获取并缓存（默认关闭，需显式开启）
+      cert_auto_download: false
       public_key_id: ${APP_PAYMENT_WECHAT_PUBLIC_KEY_ID:}
       public_key: ${APP_PAYMENT_WECHAT_PUBLIC_KEY:}
       connect_timeout: 5
