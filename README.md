@@ -1,13 +1,18 @@
 # flower web 通用框架（flower-web-infrastructure）
 
+[![version](https://img.shields.io/badge/version-v0.2.0-blue)](https://github.com/flower-star-dream/flower-web-infrastructure)
+[![python](https://img.shields.io/badge/python-3.10%2B-blue)](https://github.com/flower-star-dream/flower-web-infrastructure)
+[![license](https://img.shields.io/badge/license-MIT-green)](https://github.com/flower-star-dream/flower-web-infrastructure)
+[![CI](https://img.shields.io/github/actions/workflow/status/flower-star-dream/flower-web-infrastructure/ci.yml?label=CI&logo=github)](https://github.com/flower-star-dream/flower-web-infrastructure/actions)
+
 > 配置驱动的 Web 系统通用后端基础设施 —— 单体 / 微服务通用基础依赖，开箱即用。
 
-|          |                                             |
-| -------- | ------------------------------------------- |
-| 当前版本 | v0.2.0                                      |
-| Python   | >= 3.10                                     |
-| License  | MIT                                         |
-| 构建     | [GitHub Actions](./.github/workflows/ci.yml) |
+| 项目     | 值                                              |
+| -------- | ----------------------------------------------- |
+| 当前版本 | v0.2.0                                          |
+| Python   | >= 3.10                                         |
+| License  | MIT                                             |
+| 构建     | [GitHub Actions](./.github/workflows/ci.yml)    |
 
 ## 目录
 
@@ -664,6 +669,12 @@ GitHub Actions 工作流位于 `.github/workflows/ci.yml`，推送 `main` / 版�
 
 - **test**：静态类型检查（pyright，容忍既有基线）+ 单元测试（pytest，硬性门禁）；
 - **build-image**：Docker 基础镜像构建 + Trivy 漏洞扫描 + cosign keyless 签名（OIDC，无需密钥）+ `/health/live` 存活冒烟验证 + GHCR 推送（push `main` 推测试标签与 `latest`，版本 tag 推 SemVer + `latest`，PR 不推送）。
+
+**触发规则**：
+
+- **非代码变更不触发**：仅修改文档与非代码文件（`*.md`、`docs/**`、`LICENSE`、`.gitignore`、`.env.example`、`db/**`、`data/**`）时，push `main` 与 PR 均不运行流水线（`paths-ignore`）；
+- **版本 tag 无条件触发**：`v*` 版本 tag 不受 `paths-ignore` 影响，保证正式版镜像必发布；
+- **镜像签名**：cosign keyless（OIDC）签名，先推送 GHCR 再签名（cosign 只能签名仓库中的镜像，本地 `:ci` 标签会被解析到 Docker Hub 导致 401），部署侧必须配套 `cosign verify` 校验后再拉取镜像。
 
 详细说明（触发时机、门禁策略、镜像推送、本地复现）见 [CI/CD 文档](./docs/CI-CD.md)。
 
