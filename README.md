@@ -636,6 +636,11 @@ class TransitionsEngine(StateMachineEngine[OrderStatus, OrderEvent]):
 StateMachineRegistry.register_engine_factory(OrderStatus, OrderEvent, OrderEO, TransitionsEngine)
 ```
 
+**并发模型与线程安全**：引擎层无状态（`fire` 只读声明表、不修改共享状态），多线程/多协程并发调用安全；
+`StateMachineRegistry` 为**进程内单例**，注册/获取的 check-then-act 由类级锁保护（并发首次 `get` 只构建一次、
+并发注册仅一个成功），但**建议注册集中在启动期完成**、运行期只读 `get`。跨进程/多实例并发流转同一实体的
+互斥由乐观锁或分布式锁负责（见下）。
+
 **并发与事务约定**：引擎只计算状态、不写库。多实例并发触发同一实体流转（如支付成功 + 超时取消同时发生）
 会状态错乱，**并发控制由调用方负责**：优先用数据库乐观锁（version 字段 CAS 更新，写入失败则本次流转失败重试），
 或使用框架 `DistributedLock` 包住 fire。事务边界在路由处理器内用框架 `provide_db_session` 自行管理，引擎不介入。

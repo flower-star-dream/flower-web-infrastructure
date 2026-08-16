@@ -4,8 +4,11 @@
 @Author: 花海
 @Date: 2026/08/16 16:00
 @Description: 覆盖错误码、枚举基类、参数容器、路由、引擎 SPI 与默认实现（fire/fire_async）、
-              注册表（静态校验/引擎工厂）、基础启停状态机与顶层导出，全 Mock 不触网。
+              注册表（静态校验/引擎工厂/并发安全）、基础启停状态机与顶层导出，全 Mock 不触网。
 """
+import threading
+from types import new_class
+
 import pytest
 
 from web_infra.error.biz_exception import BizException
@@ -388,6 +391,80 @@ def test_registry_engine_factory_spi():
     assert isinstance(engine, _ThirdPartyEngine)
     assert engine.fire(_DemoStatus.PENDING, _DemoEvent.SUBMIT, StateRouteParams.create()) is _DemoStatus.DONE
     assert engine.calls == 1
+
+
+class _ConcurrentEntity:
+    """用于并发首次 get 测试的数据实体"""
+
+
+class _ConcurrentEntity2:
+    """用于并发 register 测试的数据实体"""
+
+
+@StateMachineRegistry.register
+class _ConcurrentRouter(StateRouter[_DemoStatus, _DemoEvent, _ConcurrentEntity]):
+    """用于并发首次 get 测试的演示路由"""
+
+    def get_state_event_target_config(self):
+        return {_DemoStatus.PENDING: {_DemoEvent.SUBMIT: _DemoStatus.DONE}}
+
+    def get_event_dispatcher(self):
+        return {_DemoEvent.SUBMIT: lambda current_state, params: _DemoStatus.DONE}
+
+
+def test_registry_concurrent_first_get_same_instance():
+    """并发首次 get 同一 key：所有线程返回同一引擎实例（双重检查锁消除重复构建）"""
+    results = []
+    errors = []
+
+    def worker():
+        try:
+            results.append(StateMachineRegistry.get(_DemoStatus, _DemoEvent, _ConcurrentEntity))
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert not errors
+    assert len(results) == 8
+    assert all(r is results[0] for r in results)
+
+
+def test_registry_concurrent_register_single_success():
+    """并发 register 同一 key：仅一个线程注册成功，其余抛 ValueError"""
+    successes = []
+    errors = []
+
+    def worker(i):
+        cls = new_class(
+            f"_ConcurrentRouter{i}",
+            (StateRouter[_DemoStatus, _DemoEvent, _ConcurrentEntity2],),
+            {},
+        )
+        cls.get_state_event_target_config = lambda self: {
+            _DemoStatus.PENDING: {_DemoEvent.SUBMIT: _DemoStatus.DONE}
+        }
+        cls.get_event_dispatcher = lambda self: {
+            _DemoEvent.SUBMIT: lambda current_state, params: _DemoStatus.DONE
+        }
+        try:
+            StateMachineRegistry.register(cls)
+            successes.append(i)
+        except ValueError:
+            errors.append(i)
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(6)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert len(successes) == 1
+    assert len(errors) == 5
 
 
 class _StatusEntity:

@@ -7,10 +7,13 @@
               支持两种路由注册方式：@register 类装饰器（get 时无参惰性实例化）与
               register_instance 实例注册（构造注入场景）；构建期静态校验路由配置（P0）；
               支持 register_engine_factory 注册自定义引擎（SPI，可换第三方状态机库实现）。
+              并发安全：注册表为进程内单例，注册/获取的 check-then-act 由类级 RLock 保护
+              （构建为纯 CPU 微秒级操作，短暂阻塞事件循环可接受）；引擎 fire 为无状态操作不加锁。
 """
 from __future__ import annotations
 
-from typing import Callable, TypeVar, get_args, get_origin
+from threading import RLock
+from typing import Callable, ClassVar, TypeVar, get_args, get_origin
 
 from web_infra.state_machine.state_machine import StateMachine
 from web_infra.state_machine.state_machine_engine import StateMachineEngine
@@ -26,9 +29,11 @@ _MachineKey = tuple[type, type, type]
 class StateMachineRegistry:
     """状态机注册表：按 (状态类, 事件类, 数据类) 注册与获取；实例缓存，重复注册抛 ValueError"""
 
-    _engines: dict[_MachineKey, StateMachineEngine] = {}
-    _router_classes: dict[_MachineKey, type] = {}
-    _engine_factories: dict[_MachineKey, Callable[[], StateMachineEngine]] = {}
+    _engines: ClassVar[dict[_MachineKey, StateMachineEngine]] = {}
+    _router_classes: ClassVar[dict[_MachineKey, type]] = {}
+    _engine_factories: ClassVar[dict[_MachineKey, Callable[[], StateMachineEngine]]] = {}
+    # 类级锁：保护注册/获取的 check-then-act（并发首次 get 只构建一次、并发注册仅一个成功）
+    _lock: ClassVar[RLock] = RLock()
 
     @classmethod
     def _resolve_generics(cls, router_cls: type) -> _MachineKey:
@@ -71,10 +76,11 @@ class StateMachineRegistry:
         :return: 原类（可直接用作装饰器）
         :raises ValueError: 同 key 已注册
         """
-        key = cls._resolve_generics(router_cls)
-        if key in cls._router_classes or key in cls._engines:
-            raise ValueError(f"状态机已注册: {key}")
-        cls._router_classes[key] = router_cls
+        with cls._lock:
+            key = cls._resolve_generics(router_cls)
+            if key in cls._router_classes or key in cls._engines:
+                raise ValueError(f"状态机已注册: {key}")
+            cls._router_classes[key] = router_cls
         return router_cls
 
     @classmethod
@@ -85,11 +91,12 @@ class StateMachineRegistry:
         :return: 该实例
         :raises ValueError: 同 key 已注册 或 路由配置不合法
         """
-        key = cls._resolve_generics(type(router))
-        if key in cls._engines or key in cls._router_classes:
-            raise ValueError(f"状态机已注册: {key}")
-        cls._validate_router(router)
-        cls._engines[key] = StateMachine(router)
+        with cls._lock:
+            key = cls._resolve_generics(type(router))
+            if key in cls._engines or key in cls._router_classes:
+                raise ValueError(f"状态机已注册: {key}")
+            cls._validate_router(router)
+            cls._engines[key] = StateMachine(router)
         return router
 
     @classmethod
@@ -111,10 +118,11 @@ class StateMachineRegistry:
         :param factory: 无参引擎工厂（返回 StateMachineEngine 实例）
         :raises ValueError: 同 key 已存在引擎实例
         """
-        key = (state_cls, event_cls, data_cls)
-        if key in cls._engines:
-            raise ValueError(f"状态机引擎已存在: {key}")
-        cls._engine_factories[key] = factory
+        with cls._lock:
+            key = (state_cls, event_cls, data_cls)
+            if key in cls._engines:
+                raise ValueError(f"状态机引擎已存在: {key}")
+            cls._engine_factories[key] = factory
 
     @classmethod
     def get(cls, state_cls: type, event_cls: type, data_cls: type) -> StateMachineEngine:
@@ -129,15 +137,19 @@ class StateMachineRegistry:
         key = (state_cls, event_cls, data_cls)
         engine = cls._engines.get(key)
         if engine is None:
-            factory = cls._engine_factories.get(key)
-            if factory is not None:
-                engine = factory()
-            else:
-                router_cls = cls._router_classes.get(key)
-                if router_cls is None:
-                    raise KeyError(f"未注册的状态机: {key}")
-                router = router_cls()
-                cls._validate_router(router)
-                engine = StateMachine(router)
-            cls._engines[key] = engine
+            # 双重检查锁定：快路径无锁读（GIL 保证单次读写原子），未命中才加锁构建，锁内二次确认
+            with cls._lock:
+                engine = cls._engines.get(key)
+                if engine is None:
+                    factory = cls._engine_factories.get(key)
+                    if factory is not None:
+                        engine = factory()
+                    else:
+                        router_cls = cls._router_classes.get(key)
+                        if router_cls is None:
+                            raise KeyError(f"未注册的状态机: {key}")
+                        router = router_cls()
+                        cls._validate_router(router)
+                        engine = StateMachine(router)
+                    cls._engines[key] = engine
         return engine
