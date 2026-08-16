@@ -57,13 +57,14 @@
   - [13.1 TaskRecordStoreInterface —— 任务记录存储接口](#131-taskrecordstoreinterface--任务记录存储接口)
 - [14. Web 模块（web）](#14-web-模块web)
   - [14.1 IdempotencyStoreInterface —— API 幂等键存储接口](#141-idempotencystoreinterface--api-幂等键存储接口)
-- [15. 扩展接入指引](#15-扩展接入指引)
-  - [15.1 接入步骤](#151-接入步骤)
-  - [15.2 自定义模型供应商示例（参照 `OpenAICompatibleProvider`）](#152-自定义模型供应商示例参照-openaicompatibleprovider)
-  - [15.3 自定义对象存储实现示例（参照 `MinioStorage`）](#153-自定义对象存储实现示例参照-miniostorage)
-  - [15.4 自定义指标分组示例（参照 `metric_group_provider_interface.py`）](#154-自定义指标分组示例参照-metricgroupproviderinterfacepy)
-  - [15.5 常见替换对照](#155-常见替换对照)
-- [16. 维护指南](#16-维护指南)
+- [15. 支付模块（payment）](#15-支付模块payment)
+- [16. 扩展接入指引](#16-扩展接入指引)
+  - [16.1 接入步骤](#161-接入步骤)
+  - [16.2 自定义模型供应商示例（参照 `OpenAICompatibleProvider`）](#162-自定义模型供应商示例参照-openaicompatibleprovider)
+  - [16.3 自定义对象存储实现示例（参照 `MinioStorage`）](#163-自定义对象存储实现示例参照-miniostorage)
+  - [16.4 自定义指标分组示例（参照 `metric_group_provider_interface.py`）](#164-自定义指标分组示例参照-metricgroupproviderinterfacepy)
+  - [16.5 常见替换对照](#165-常见替换对照)
+- [17. 维护指南](#17-维护指南)
 
 ## 1. SPI 机制概述
 
@@ -123,6 +124,9 @@
 | storage | `UploadStoreInterface` | Protocol | `InMemoryUploadStore` | Redis/MySQL |
 | task | `TaskRecordStoreInterface` | ABC | `InMemoryTaskRecordStore` | MySQL（乐观锁） |
 | web | `IdempotencyStoreInterface` | Protocol | `InMemoryIdempotencyStore` | Redis/DB |
+| payment | `PaymentGateway` | Protocol | `InMemoryPaymentGateway` | 微信/支付宝等渠道 |
+| payment | `PaymentCallbackVerifier` | Protocol | `InMemoryPaymentCallbackVerifier` | 微信回调验签（平台证书/公钥） |
+| payment | `PaymentCallbackHandler` | ABC | 无（业务必选） | 支付/退款回调业务处理 |
 
 ## 3. 配置模块（config）
 
@@ -620,16 +624,59 @@
 
 - 默认实现：`InMemoryIdempotencyStore`（`in_memory_idempotency_store.py`）；Redis 实现：`RedisIdempotencyStore`（`redis_idempotency_store.py`）。
 
-## 15. 扩展接入指引
+## 15. 支付模块（payment）
 
-### 15.1 接入步骤
+### 15.1 PaymentGateway —— 支付网关统一抽象接口
+
+- 文件：`src/web_infra/payment/payment_gateway_interface.py`
+- 定位：渠道统一抽象（下单/查单/关单/退款/查退款），业务代码只依赖本接口，金额统一 `Decimal`（元），渠道差异内部屏蔽。
+- 类型：`Protocol`（`@runtime_checkable`）
+
+| 方法 | 说明 |
+| ---- | ---- |
+| `async prepay(request: PaymentPrepayRequest) -> PaymentPrepayResponse` | 下单：按场景返回 prepay_id/调起参数/code_url/h5_url |
+| `async query_order(out_trade_no: str) -> PaymentOrder \| None` | 查单；不存在返回 None |
+| `async close_order(out_trade_no: str) -> None` | 关闭订单 |
+| `async refund(request: PaymentRefundRequest) -> PaymentRefundResponse` | 申请退款（out_refund_no 幂等） |
+| `async query_refund(out_refund_no: str) -> PaymentRefundResponse \| None` | 查退款；不存在返回 None |
+
+- 默认实现：`InMemoryPaymentGateway`（单机/测试）；微信渠道：`WeChatPayProvider`（`web_infra.payment.provider.wechat`）。
+- 注册：`PaymentGatewayRegistry.register(name, gateway)`。
+
+### 15.2 PaymentCallbackVerifier —— 支付回调验签解密接口
+
+- 文件：`src/web_infra/payment/payment_callback_verifier_interface.py`
+- 定位：解析渠道回调 headers+body 为统一回调结构；验签/解密失败返回 None（回调入口回 401，渠道自动重试）。
+- 类型：`Protocol`（`@runtime_checkable`）
+
+| 方法 | 说明 |
+| ---- | ---- |
+| `async parse(headers: Mapping[str, str], body: str) -> PaymentCallback \| None` | 验签+解密+解析；失败返回 None |
+
+- 默认实现：`InMemoryPaymentCallbackVerifier`（单机/测试）；微信渠道：`WeChatCallbackVerifier`（平台证书/微信支付公钥两种模式，AES-256-GCM 解密）。
+
+### 15.3 PaymentCallbackHandler —— 支付回调业务处理器接口
+
+- 文件：`src/web_infra/payment/payment_callback_handler_interface.py`
+- 定位：业务实现处理支付成功/退款结果回调；回调幂等由业务保证。
+- 类型：`ABC`（业务必选，无默认实现）
+
+| 方法 | 说明 |
+| ---- | ---- |
+| `async handle(callback: PaymentCallback) -> None` | 处理一条支付/退款回调 |
+
+- 装配：`PaymentCallbackDispatcher.register(handler)`；`dispatch` 顺序调用全部注册处理器，无处理器时静默兜底（日志告警）。
+
+## 16. 扩展接入指引
+
+### 16.1 接入步骤
 
 1. 确定目标 SPI 接口（见第 2 节总览表），实现其全部抽象方法。
    - `Protocol` 类型：结构子类型，类无需继承接口，方法签名匹配即可；`ABC` 类型：继承接口并实现 `@abstractmethod`。
 2. 通过注册表显式注册（或配置声明装配）。
 3. 多实例/跨进程场景，默认内存实现需替换为共享存储实现（Redis/MySQL 等）。
 
-### 15.2 自定义模型供应商示例（参照 `OpenAICompatibleProvider`）
+### 16.2 自定义模型供应商示例（参照 `OpenAICompatibleProvider`）
 
 ```python
 # my_provider.py
@@ -650,7 +697,7 @@ class MyProvider(ModelProviderInterface):
 ModelProviderRegistry.register(MyProvider())
 ```
 
-### 15.3 自定义对象存储实现示例（参照 `MinioStorage`）
+### 16.3 自定义对象存储实现示例（参照 `MinioStorage`）
 
 ```python
 # my_storage.py
@@ -674,7 +721,7 @@ class MyObjectStorage(ObjectStorageInterface):
         ...
 ```
 
-### 15.4 自定义指标分组示例（参照 `metric_group_provider_interface.py`）
+### 16.4 自定义指标分组示例（参照 `metric_group_provider_interface.py`）
 
 ```python
 # my_metrics_group.py
@@ -698,7 +745,7 @@ class OrderMetricsGroup(MetricGroupProviderInterface):
 MetricGroupProviderRegistry.register(OrderMetricsGroup())
 ```
 
-### 15.5 常见替换对照
+### 16.5 常见替换对照
 
 | 场景 | 默认实现 | 替换实现 |
 | ---- | ---- | ---- |
@@ -709,7 +756,7 @@ MetricGroupProviderRegistry.register(OrderMetricsGroup())
 | 本地 MQ -> 分布式 MQ | `InMemoryMessageQueue` | `RocketMqPublisher`（已内置） |
 | 接入新模型供应商 | `OpenAICompatibleProvider` | 自定义 `ModelProviderInterface` 实现 |
 
-## 16. 维护指南
+## 17. 维护指南
 
 | 场景 | 操作位置 |
 | ---- | ---- |
@@ -717,3 +764,4 @@ MetricGroupProviderRegistry.register(OrderMetricsGroup())
 | 新增默认实现 | 提供默认实现类并在总览表登记；同步补充单元测试 |
 | 修改接口方法 | 同步修改全部实现类与本文档对应方法表 |
 | 涉及数据库存储实现 | 同步更新 `db/init/ddl/001-mq-init-ddl.sql` 及对应 DML |
+| 新增支付渠道 | 在 `src/web_infra/payment/provider/` 实现 `PaymentGateway` 并注册 `PaymentGatewayRegistry`，同步更新本文档 §15.1 |
