@@ -14,7 +14,7 @@ from typing import Any, Callable
 
 from web_infra.constants.auth_constant import AuthConstant
 from web_infra.context import RequestContext
-from web_infra.error import BizException, CommonErrorCode
+from web_infra.error import CommonErrorCode
 
 
 class PermissionGuard:
@@ -37,8 +37,7 @@ class PermissionGuard:
                 return  # 超级管理员通配（§6.6 Scope 最小化：admin 仅超级管理员）
             missing = set(permissions) - granted
             if missing:
-                raise BizException(
-                    CommonErrorCode.PERM_DENIED,
+                raise CommonErrorCode.PERM_DENIED.to_exception(
                     message=f"缺少权限: {', '.join(sorted(missing))}",
                 )
 

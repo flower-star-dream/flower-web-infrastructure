@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from web_infra.error import BizException, CommonErrorCode
+from web_infra.error import CommonErrorCode
 from web_infra.security.jwt_util import JWTUtil
 from web_infra.security.oauth2.oauth2_client_registry import OAuth2ClientRegistry
 from web_infra.security.token_verify_status_enum import TokenVerifyStatus
@@ -47,7 +47,7 @@ class OAuth2TokenService:
         """
         client = self._registry.get(client_id)
         if client is None or client.client_secret != client_secret:
-            raise BizException(CommonErrorCode.AUTH_UNAUTHENTICATED, message="OAuth2 客户端认证失败")
+            raise CommonErrorCode.AUTH_UNAUTHENTICATED.to_exception(message="OAuth2 客户端认证失败")
         scope = " ".join(scopes) if scopes else " ".join(client.scopes)
         # 规范 §6.3：凭证声明时效与实际 exp 必须一致——签发时显式传入与 expires_in 相同的 TTL（秒），
         # 统一以本服务的 access_token_ttl_minutes（默认 15 分钟）为唯一来源，避免声明与签发不一致
@@ -76,12 +76,12 @@ class OAuth2TokenService:
         """
         payload, status = await JWTUtil.verify_token(token)
         if status == TokenVerifyStatus.EXPIRED:
-            raise BizException(CommonErrorCode.AUTH_EXPIRED, message="OAuth2 凭证已过期")
+            raise CommonErrorCode.AUTH_EXPIRED.to_exception(message="OAuth2 凭证已过期")
         # 即将过期（EXPIRING）与有效一致放行：规范 §6.1 静默刷新，凭证本身未过期，不应拒绝
         if status not in (TokenVerifyStatus.VALID, TokenVerifyStatus.EXPIRING):
-            raise BizException(CommonErrorCode.AUTH_INVALID, message="OAuth2 凭证非法或已被撤销")
+            raise CommonErrorCode.AUTH_INVALID.to_exception(message="OAuth2 凭证非法或已被撤销")
         if payload is None:
-            raise BizException(CommonErrorCode.AUTH_INVALID, message="OAuth2 凭证非法或已被撤销")
+            raise CommonErrorCode.AUTH_INVALID.to_exception(message="OAuth2 凭证非法或已被撤销")
         return payload
 
     async def invalidate_token(self, token: str) -> bool:

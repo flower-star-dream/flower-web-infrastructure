@@ -10,7 +10,7 @@
 from __future__ import annotations
 
 from web_infra.context import RequestContext
-from web_infra.error import BizException, CommonErrorCode
+from web_infra.error import CommonErrorCode
 
 # 无租户占位（兼容单体/非租户场景，配合 strict 开关使用）
 NO_TENANT = "no-tenant"
@@ -38,8 +38,7 @@ class TenantGuard:
         if tid:
             return tid
         if strict:
-            raise BizException(
-                CommonErrorCode.PERM_DENIED,
+            raise CommonErrorCode.PERM_DENIED.to_exception(
                 message="无租户上下文，禁止执行租户隔离数据访问（多租户规范 §2）",
             )
         return NO_TENANT

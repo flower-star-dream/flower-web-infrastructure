@@ -15,7 +15,7 @@ from typing import Any, Sequence
 from web_infra.ai.chat_message import ChatMessage
 from web_infra.ai.chat_role_enum import ChatRole
 from web_infra.ai.prompt.prompt_template_filler import PromptTemplateFiller
-from web_infra.error import BizException, CommonErrorCode
+from web_infra.error import CommonErrorCode
 
 
 class PromptAssembler:
@@ -73,4 +73,4 @@ class PromptAssembler:
         whitelist_set = set(whitelist)
         illegal = [name for name in tool_names if name not in whitelist_set]
         if illegal:
-            raise BizException(CommonErrorCode.PARAM_INVALID, message=f"工具调用不在白名单内：{illegal}")
+            raise CommonErrorCode.PARAM_INVALID.to_exception(message=f"工具调用不在白名单内：{illegal}")

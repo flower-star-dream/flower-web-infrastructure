@@ -9,7 +9,6 @@
 from __future__ import annotations
 
 from web_infra.ai.model_gateway.model_gateway_config import RouteEntry
-from web_infra.error import BizException
 from web_infra.error.ai_error_code import AiErrorCode
 
 
@@ -36,5 +35,5 @@ class ModelRouter:
         if entry is None and self._default_scene:
             entry = self._routes.get(self._default_scene)
         if entry is None:
-            raise BizException(AiErrorCode.AI_NOT_CONFIGURED, message=f"场景 {scene} 未配置模型路由")
+            raise AiErrorCode.AI_NOT_CONFIGURED.to_exception(message=f"场景 {scene} 未配置模型路由")
         return entry

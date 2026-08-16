@@ -20,10 +20,9 @@ from urllib.parse import urlparse
 
 import httpx
 
-from web_infra.constants import AuthConstant
+from web_infra.constants import AuthConstant, HttpStatusConstant
 from web_infra.context import RequestContext
 from web_infra.constants.infra_constant import InfraConstant
-from web_infra.error.biz_exception import BizException
 from web_infra.error.common_error_code import CommonErrorCode
 from web_infra.loadbalance import LoadBalancerInterface, RoundRobinBalancer
 from web_infra.registry.service_registry_interface import ServiceRegistryInterface
@@ -52,17 +51,36 @@ def default_url_validator(url: str) -> None:
         raise ValueError(f"禁止访问内网/保留网段地址: {host}")
 
 
+def default_service_fallback(service_name: str) -> httpx.Response:
+    """框架默认服务降级兜底（规范 §7.4）：返回统一"服务不可用"响应（HTTP 503 + SYS_UNAVAILABLE）。
+
+    供 FeignClient 启用熔断且未显式传 fallback 时使用，避免业务反复实现兜底；
+    业务需自定义降级（如返回缓存数据）时，在构造 FeignClient 时传 fallback 参数覆盖即可。
+
+    :param service_name: 目标服务名（熔断按服务维度隔离，兜底响应中携带以定位）
+    :return: 统一降级响应（code=E5-SYS-002 / message=服务 <name> 暂不可用 / HTTP 503）
+    """
+    return httpx.Response(
+        CommonErrorCode.SYS_UNAVAILABLE.http_status,
+        json={
+            "code": CommonErrorCode.SYS_UNAVAILABLE.code,
+            "message": f"服务 {service_name} 暂不可用",
+        },
+    )
+
+
 class FeignClient:
-    """Feign 风格 HTTP 客户端：服务发现 + 负载均衡 + 重试 + 连接池 + 熔断降级"""
+    """Feign 风格 HTTP 客户端：服务发现 + 负载均衡 + 重试 + 连接池 + 熔断降级（未传 fallback 时默认兜底）"""
 
     def __init__(
         self,
         registry: ServiceRegistryInterface,
         load_balancer: Optional[LoadBalancerInterface] = None,
         timeout: float = InfraConstant.INFRA_HTTP_TIMEOUT_SECONDS,
-        retries: int = 3,
-        retry_delay_base: float = 0.5,
-        retry_delay_max: float = 8.0,
+        # 尝试次数 = 1 次首次 + INFRA_CALL_MAX_RETRIES 次重试（规范 §7.2 默认最多重试 2 次）
+        retries: int = InfraConstant.INFRA_CALL_MAX_RETRIES + 1,
+        retry_delay_base: float = InfraConstant.INFRA_CALL_RETRY_DELAY_BASE_SECONDS,
+        retry_delay_max: float = InfraConstant.INFRA_CALL_RETRY_DELAY_MAX_SECONDS,
         max_connections: int = InfraConstant.INFRA_HTTP_MAX_CONNECTIONS,
         max_keepalive_connections: int = InfraConstant.INFRA_HTTP_MAX_KEEPALIVE_CONNECTIONS,
         circuit_breaker_config: Optional[CircuitBreakerConfig] = None,
@@ -79,7 +97,8 @@ class FeignClient:
         :param max_connections/max_keepalive_connections: 连接池上限
         :param circuit_breaker_config: 熔断参数；None 表示不启用熔断（默认）
         :param fallback: 降级回调 `fallback(service_name)`（可同步或异步，返回 httpx.Response 或 None），
-            仅熔断开启时生效；未提供时熔断开启抛异常
+            仅熔断开启时生效；未提供时采用框架默认兜底 default_service_fallback
+            （统一 HTTP 503 + SYS_UNAVAILABLE"服务不可用"响应），业务可按需传参自定义降级
         :param url_validator: 目标地址校验钩子（规范 §25.3 SSRF 防护，如 default_url_validator）；
             缺省 None 不校验（保持既有内网服务调用兼容），业务按需注入更强校验
         """
@@ -89,7 +108,8 @@ class FeignClient:
         self.retry_delay_base = retry_delay_base
         self.retry_delay_max = retry_delay_max
         self._circuit_breaker_config = circuit_breaker_config
-        self._fallback = fallback
+        # 降级兜底：未显式传 fallback 时使用框架默认实现（统一 503 服务不可用），避免业务反复实现
+        self._fallback = fallback or default_service_fallback
         self._url_validator = url_validator
         self._breakers: dict[str, CircuitBreaker] = {}
         limits = httpx.Limits(max_connections=max_connections, max_keepalive_connections=max_keepalive_connections)
@@ -114,8 +134,10 @@ class FeignClient:
         return breaker
 
     def _calculate_retry_delay(self, attempt: int) -> float:
-        """指数退避 + 抖动"""
-        jitter = random.uniform(0.7, 1.0)
+        """指数退避 + 抖动（退避 = min(base * 2^attempt * jitter, max)，规范 §7.2）"""
+        jitter = random.uniform(
+            InfraConstant.INFRA_CALL_RETRY_JITTER_MIN, InfraConstant.INFRA_CALL_RETRY_JITTER_MAX
+        )
         return min(self.retry_delay_base * (2 ** attempt) * jitter, self.retry_delay_max)
 
     def _is_retriable_error(self, exc: Exception) -> bool:
@@ -123,7 +145,10 @@ class FeignClient:
         if isinstance(exc, (httpx.TimeoutException, httpx.ConnectError)):
             return True
         if isinstance(exc, httpx.HTTPStatusError):
-            return exc.response.status_code >= 500 or exc.response.status_code == 429
+            return (
+                exc.response.status_code >= HttpStatusConstant.HTTP_SERVER_ERROR_MIN
+                or exc.response.status_code == HttpStatusConstant.HTTP_TOO_MANY_REQUESTS
+            )
         return False
 
     async def request(
@@ -162,7 +187,7 @@ class FeignClient:
             try:
                 instances = await self.registry.get_instances(service_name)
                 if not instances:
-                    raise BizException(CommonErrorCode.SYS_UNAVAILABLE, message=f"服务 {service_name} 无可用实例")
+                    raise CommonErrorCode.SYS_UNAVAILABLE.to_exception(message=f"服务 {service_name} 无可用实例")
                 instance = self.load_balancer.choose(instances)
                 url = f"{instance.url}{path}"
                 # 目标地址校验（规范 §25.3 SSRF 防护）：业务注入 url_validator 时校验，默认不启用
@@ -178,7 +203,7 @@ class FeignClient:
                     break
                 await asyncio.sleep(self._calculate_retry_delay(attempt))
 
-        raise BizException(CommonErrorCode.SYS_INTERNAL, message=f"服务 {service_name} 调用失败: {last_error}")
+        raise CommonErrorCode.SYS_INTERNAL.to_exception(message=f"服务 {service_name} 调用失败: {last_error}")
 
     def _build_service_headers(self, headers: dict | None) -> dict | None:
         """构造服务间调用请求头（规范 §6.4 服务内部调用链路头）：

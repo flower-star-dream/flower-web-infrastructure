@@ -19,6 +19,7 @@ from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, Response
 
+from web_infra.constants import HttpStatusConstant
 from web_infra.logging import get_logger
 from web_infra.monitoring.metrics_html import render_metrics_html, should_render_html
 from web_infra.monitoring.runtime_metrics import record_runtime_metrics
@@ -100,7 +101,7 @@ def register_health_endpoints(
         不探测任何依赖（组件 DOWN 不影响存活判定），供 Docker HEALTHCHECK / K8s livenessProbe 使用。
         """
         return BigIntJSONResponse(
-            status_code=200,
+            status_code=HttpStatusConstant.HTTP_OK,
             content={"status": HEALTH_STATUS_UP, "service": service_name},
         )
 
@@ -113,7 +114,7 @@ def register_health_endpoints(
         """
         statuses, all_healthy = await _probe_components(components)
         return BigIntJSONResponse(
-            status_code=200 if all_healthy else 503,
+            status_code=HttpStatusConstant.HTTP_OK if all_healthy else HttpStatusConstant.HTTP_SERVICE_UNAVAILABLE,
             content={
                 "status": HEALTH_STATUS_UP if all_healthy else HEALTH_STATUS_DOWN,
                 "service": service_name,
@@ -129,7 +130,7 @@ def register_health_endpoints(
         """
         statuses, all_healthy = await _probe_components(components)
         return BigIntJSONResponse(
-            status_code=200 if all_healthy else 503,
+            status_code=HttpStatusConstant.HTTP_OK if all_healthy else HttpStatusConstant.HTTP_SERVICE_UNAVAILABLE,
             content={
                 "status": HEALTH_STATUS_UP if all_healthy else HEALTH_STATUS_DOWN,
                 "service": service_name,

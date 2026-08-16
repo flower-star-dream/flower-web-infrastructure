@@ -209,7 +209,8 @@ app:
     # Nacos 客户端配置（nacos-sdk-python v2：gRPC 协议，server_addresses 支持逗号分隔多地址）
     nacos:
       server_addresses: localhost:8848
-      namespace: ""
+      # 命名空间默认与 NacosProperties 模型默认一致（public；空串在 SDK 中同样表示默认命名空间）
+      namespace: public
       group: DEFAULT_GROUP
       cluster: DEFAULT
       # 认证（默认 Nacos 认证用 username/password；阿里云用 access_key/secret_key；

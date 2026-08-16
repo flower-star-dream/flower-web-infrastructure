@@ -49,6 +49,10 @@
   - [10.3 ThreadPoolMetrics —— 线程池指标注册表（SPI 风格）](#103-threadpoolmetrics--线程池指标注册表spi-风格)
 - [11. 安全模块（security）](#11-安全模块security)
   - [11.1 CaptchaStoreInterface —— 验证码存储接口](#111-captchastoreinterface--验证码存储接口)
+  - [11.2 SocialPlatform —— 三方平台适配接口](#112-socialplatform--三方平台适配接口)
+  - [11.3 SocialBindingStore —— 三方账号绑定存储接口](#113-socialbindingstore--三方账号绑定存储接口)
+  - [11.4 JwtTokenStore —— JWT Token 状态存储接口](#114-jwttokenstore--jwt-token-状态存储接口)
+  - [11.5 JwtKeyProvider —— JWT 签名密钥/算法接口](#115-jwtkeyprovider--jwt-签名密钥算法接口)
 - [12. 存储模块（storage）](#12-存储模块storage)
   - [12.1 ObjectStorageInterface —— 对象存储统一抽象接口](#121-objectstorageinterface--对象存储统一抽象接口)
   - [12.2 PartStorageInterface —— 分片存储接口](#122-partstorageinterface--分片存储接口)
@@ -60,10 +64,11 @@
 - [15. 支付模块（payment）](#15-支付模块payment)
 - [16. 扩展接入指引](#16-扩展接入指引)
   - [16.1 接入步骤](#161-接入步骤)
-  - [16.2 自定义模型供应商示例（参照 `OpenAICompatibleProvider`）](#162-自定义模型供应商示例参照-openaicompatibleprovider)
-  - [16.3 自定义对象存储实现示例（参照 `MinioStorage`）](#163-自定义对象存储实现示例参照-miniostorage)
-  - [16.4 自定义指标分组示例（参照 `metric_group_provider_interface.py`）](#164-自定义指标分组示例参照-metricgroupproviderinterfacepy)
-  - [16.5 常见替换对照](#165-常见替换对照)
+  - [16.2 三方平台接入步骤（参照 `DemoSocialPlatform`）](#162-三方平台接入步骤参照-demosocialplatform)
+  - [16.3 自定义模型供应商示例（参照 `OpenAICompatibleProvider`）](#163-自定义模型供应商示例参照-openaicompatibleprovider)
+  - [16.4 自定义对象存储实现示例（参照 `MinioStorage`）](#164-自定义对象存储实现示例参照-miniostorage)
+  - [16.5 自定义指标分组示例（参照 `metric_group_provider_interface.py`）](#165-自定义指标分组示例参照-metricgroupproviderinterfacepy)
+  - [16.6 常见替换对照](#166-常见替换对照)
 - [17. 维护指南](#17-维护指南)
 
 ## 1. SPI 机制概述
@@ -124,6 +129,10 @@
 | storage | `UploadStoreInterface` | Protocol | `InMemoryUploadStore` | Redis/MySQL |
 | task | `TaskRecordStoreInterface` | ABC | `InMemoryTaskRecordStore` | MySQL（乐观锁） |
 | web | `IdempotencyStoreInterface` | Protocol | `InMemoryIdempotencyStore` | Redis/DB |
+| security | `SocialPlatform` | Protocol | `DemoSocialPlatform` | 微信/GitHub/钉钉等 |
+| security | `SocialBindingStore` | Protocol | `InMemorySocialBindingStore` | Redis/MySQL |
+| security | `JwtTokenStore` | Protocol | `InMemoryJwtTokenStore` / `RedisJwtTokenStore` | 共享存储 |
+| security | `JwtKeyProvider` | Protocol | `EnvJwtKeyProvider` | RS256/KMS 托管 |
 | payment | `PaymentGateway` | Protocol | `InMemoryPaymentGateway` | 微信/支付宝等渠道 |
 | payment | `PaymentCallbackVerifier` | Protocol | `InMemoryPaymentCallbackVerifier` | 微信回调验签（平台证书/公钥） |
 | payment | `PaymentCallbackHandler` | ABC | 无（业务必选） | 支付/退款回调业务处理 |
@@ -537,6 +546,66 @@
 
 - 默认实现：`InMemoryCaptchaStore`（`in_memory_captcha_store.py`）；多实例实现：`RedisCaptchaStore`（`redis_captcha_store.py`）。
 
+### 11.2 SocialPlatform —— 三方平台适配接口
+
+- 文件：`src/web_infra/security/social/social_platform_interface.py`
+- 定位：三方登录平台适配 SPI（规范 §6.8 认证域），业务实现具体平台（微信/GitHub/钉钉等）后注册进 `SocialPlatformRegistry`。
+- 类型：`Protocol`（`@runtime_checkable`）
+
+| 成员 | 说明 |
+| ---- | ---- |
+| `provider: str` | 平台标识（注册表键），如 wechat_open / github / demo |
+| `async build_authorize_url(state: str, redirect_uri: str) -> str` | 生成授权跳转 URL（state 由调用方生成用于防 CSRF） |
+| `async exchange_token(code: str, redirect_uri: str) -> SocialAccessToken` | 授权码换取平台 token |
+| `async fetch_userinfo(token: SocialAccessToken) -> SocialUserInfo` | 拉取三方用户信息（token 内含 access_token/openid/raw，供微信等需 openid 的接口使用） |
+
+- 默认实现：`DemoSocialPlatform`（`demo_social_platform.py`，模拟平台不触网，测试/演示/回落）。
+
+### 11.3 SocialBindingStore —— 三方账号绑定存储接口
+
+- 文件：`src/web_infra/security/social/social_binding_store.py`
+- 定位：三方账号 ↔ 本地用户绑定存储 SPI（唯一键 provider + openid，一用户可绑多平台多账号）。
+- 类型：`Protocol`（`@runtime_checkable`）；辅助结构 `SocialBinding(provider, openid, user_id, bound_at)`
+
+| 方法 | 说明 |
+| ---- | ---- |
+| `async find_by_platform(provider: str, openid: str) -> SocialBinding \| None` | 按平台 + openid 查绑定 |
+| `async find_all_by_user_id(user_id: str) -> list[SocialBinding]` | 查用户全部三方绑定 |
+| `async bind(binding: SocialBinding) -> None` | 绑定（provider+openid 唯一，已存在抛 COMMON_CONFLICT） |
+| `async unbind(provider: str, openid: str) -> bool` | 解绑，返回是否实际删除 |
+
+- 默认实现：`InMemorySocialBindingStore`（`in_memory_social_binding_store.py`，单实例）；多实例需业务扩展 Redis/DB 实现。
+
+### 11.4 JwtTokenStore —— JWT Token 状态存储接口
+
+- 文件：`src/web_infra/security/jwt_token_store_interface.py`
+- 定位：JWT Token 状态存储 SPI（规范 §6.2 同设备凭证复用、§6.7 凭证撤销）。
+- 类型：`Protocol`（`@runtime_checkable`）
+
+| 方法 | 说明 |
+| ---- | ---- |
+| `async save(user_id, jti, ttl_seconds, client_id, device_id) -> str \| None` | 保存有效凭证；返回被同设备复用替换的旧 jti（无则 None） |
+| `async exists(user_id, jti) -> bool` | 查询凭证是否有效（撤销/过期/复用替换后 False） |
+| `async revoke(user_id, jti) -> bool` | 撤销凭证（登出） |
+| `async current_jti(user_id, client_id, device_id) -> str \| None` | 查询同设备当前有效 jti |
+
+- 默认实现：框架启用 Redis（`app.cache.type=redis`，Application 装配自动注入）时默认 `RedisJwtTokenStore`（分布式，Key 经 CacheKeyBuilder 生成）；未启用 Redis 回落 `InMemoryJwtTokenStore`（单实例）。
+- 注入：`JWTUtil.configure(token_store=..., key_provider=...)` 注入自定义实现（**优先级最高**，覆盖框架默认）；`JWTUtil.set_redis(redis)` 显式指定 Redis 客户端；均未注入时按"Redis 默认 → 内存回落"自动选择。
+
+### 11.5 JwtKeyProvider —— JWT 签名密钥/算法接口
+
+- 文件：`src/web_infra/security/jwt_key_provider_interface.py`
+- 定位：JWT 签名密钥与算法 SPI（规范 §6.1 单独密钥段防混用、S15-3 密钥轮换），开发者可替换为 RS256/KMS 托管等。
+- 类型：`Protocol`（`@runtime_checkable`）
+
+| 方法 | 说明 |
+| ---- | ---- |
+| `access_secret() -> str` | access token 签名密钥 |
+| `refresh_secret() -> str` | refresh token 单独密钥段（与 access 双向防混用） |
+| `algorithm() -> str` | 签名算法（如 HS256/RS256） |
+
+- 默认实现：`EnvJwtKeyProvider`（`env_jwt_key_provider.py`，环境变量密钥 + HS256）。
+
 ## 12. 存储模块（storage）
 
 ### 12.1 ObjectStorageInterface —— 对象存储统一抽象接口
@@ -680,7 +749,15 @@
 2. 通过注册表显式注册（或配置声明装配）。
 3. 多实例/跨进程场景，默认内存实现需替换为共享存储实现（Redis/MySQL 等）。
 
-### 16.2 自定义模型供应商示例（参照 `OpenAICompatibleProvider`）
+### 16.2 三方平台接入步骤（参照 `DemoSocialPlatform`）
+
+1. 实现 `SocialPlatform`（`build_authorize_url` / `exchange_token` / `fetch_userinfo`，Protocol 结构子类型，无需继承）。
+2. `SocialPlatformRegistry.register(platform)` 显式注册。
+3. 构造 `SocialLoginService(registry, binding_store)`，在业务 Controller 中编排跳转/回调登录/绑定/解绑。
+4. 登录成功由 `SocialLoginService.login` 复用 `JWTUtil` 签发框架自有 JWT，后续鉴权走 `AuthMiddleware`。
+5. 多实例部署时替换绑定存储：实现 `SocialBindingStore` 的 Redis/DB 版并注入。
+
+### 16.3 自定义模型供应商示例（参照 `OpenAICompatibleProvider`）
 
 ```python
 # my_provider.py
@@ -701,7 +778,7 @@ class MyProvider(ModelProviderInterface):
 ModelProviderRegistry.register(MyProvider())
 ```
 
-### 16.3 自定义对象存储实现示例（参照 `MinioStorage`）
+### 16.4 自定义对象存储实现示例（参照 `MinioStorage`）
 
 ```python
 # my_storage.py
@@ -725,7 +802,7 @@ class MyObjectStorage(ObjectStorageInterface):
         ...
 ```
 
-### 16.4 自定义指标分组示例（参照 `metric_group_provider_interface.py`）
+### 16.5 自定义指标分组示例（参照 `metric_group_provider_interface.py`）
 
 ```python
 # my_metrics_group.py
@@ -749,7 +826,7 @@ class OrderMetricsGroup(MetricGroupProviderInterface):
 MetricGroupProviderRegistry.register(OrderMetricsGroup())
 ```
 
-### 16.5 常见替换对照
+### 16.6 常见替换对照
 
 | 场景 | 默认实现 | 替换实现 |
 | ---- | ---- | ---- |

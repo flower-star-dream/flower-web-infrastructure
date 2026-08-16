@@ -18,6 +18,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from web_infra.constants import HttpStatusConstant
 from web_infra.error.common_error_code import CommonErrorCode
 from web_infra.error.error_code import converge_error_code
 from web_infra.error.web_infra_exception import WebInfraException
@@ -69,9 +70,9 @@ def register_global_exception_handlers(app: FastAPI) -> None:
     async def handle_http_exception(request: Request, exc: StarletteHTTPException) -> JSONResponse:
         # Starlette 抛出的 HTTP 异常（如 404/405）转统一结构
         code = CommonErrorCode.SYS_INTERNAL.code
-        if exc.status_code == 404:
+        if exc.status_code == HttpStatusConstant.HTTP_NOT_FOUND:
             code = CommonErrorCode.COMMON_NOT_FOUND.code
-        elif exc.status_code == 405:
+        elif exc.status_code == HttpStatusConstant.HTTP_METHOD_NOT_ALLOWED:
             code = CommonErrorCode.HTTP_METHOD_NOT_ALLOWED.code
         return _converged_response(code, exc.detail or "", exc.status_code)
 

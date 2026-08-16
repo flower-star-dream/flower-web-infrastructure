@@ -20,6 +20,11 @@ class InfraConstant:
     # 远程调用韧性默认值（规范 §7.1 / §7.2）
     INFRA_CALL_CONNECT_TIMEOUT_SECONDS = 1       # 连接超时（规范 §7.1）
     INFRA_CALL_MAX_RETRIES = 2                   # 最大重试次数（规范 §7.2）
+    # 指数退避参数（规范 §7.2：退避 = min(base * 2^attempt * jitter, max)）
+    INFRA_CALL_RETRY_DELAY_BASE_SECONDS = 0.5    # 重试退避初始延迟（秒）
+    INFRA_CALL_RETRY_DELAY_MAX_SECONDS = 8.0     # 重试退避最大延迟（秒）
+    INFRA_CALL_RETRY_JITTER_MIN = 0.7            # 退避抖动下界（避免惊群）
+    INFRA_CALL_RETRY_JITTER_MAX = 1.0            # 退避抖动上界
 
     # 分布式锁（规范 §16.4）
     INFRA_LOCK_DEFAULT_TIMEOUT_SECONDS = 3       # 锁获取超时

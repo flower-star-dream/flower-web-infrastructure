@@ -30,7 +30,7 @@ from web_infra.ai.finish_reason_enum import FinishReason
 from web_infra.ai.model_config import ModelConfig
 from web_infra.ai.model_provider_interface import ModelProviderInterface
 from web_infra.ai.usage import Usage
-from web_infra.error import BizException
+from web_infra.constants import HttpStatusConstant
 from web_infra.error.ai_error_code import AiErrorCode
 
 
@@ -82,7 +82,7 @@ class OpenAICompatibleProvider(ModelProviderInterface):
         try:
             data = await asyncio.wait_for(self._post("/chat/completions", payload), total_timeout)
         except asyncio.TimeoutError as e:
-            raise BizException(AiErrorCode.THIRD_TIMEOUT, message=f"模型调用超时：{self.name}") from e
+            raise AiErrorCode.THIRD_TIMEOUT.to_exception(message=f"模型调用超时：{self.name}") from e
         return self._parse_chat_response(data)
 
     async def stream_chat(self, request: ChatRequest) -> AsyncIterator[ChatStreamChunk]:
@@ -96,9 +96,9 @@ class OpenAICompatibleProvider(ModelProviderInterface):
         try:
             response = await asyncio.wait_for(client.send(raw_request, stream=True), total_timeout)
         except asyncio.TimeoutError as e:
-            raise BizException(AiErrorCode.THIRD_TIMEOUT, message=f"模型流式调用超时：{self.name}") from e
+            raise AiErrorCode.THIRD_TIMEOUT.to_exception(message=f"模型流式调用超时：{self.name}") from e
         except httpx.TimeoutException as e:
-            raise BizException(AiErrorCode.THIRD_TIMEOUT, message=f"模型流式调用超时：{self.name}") from e
+            raise AiErrorCode.THIRD_TIMEOUT.to_exception(message=f"模型流式调用超时：{self.name}") from e
         self._raise_for_status(response)
 
         async def _raw() -> AsyncIterator[ChatStreamChunk]:
@@ -113,7 +113,7 @@ class OpenAICompatibleProvider(ModelProviderInterface):
                     try:
                         data = json.loads(raw)
                     except json.JSONDecodeError as e:
-                        raise BizException(AiErrorCode.AI_GENERATION_FAILED, message="流式响应解析失败") from e
+                        raise AiErrorCode.AI_GENERATION_FAILED.to_exception(message="流式响应解析失败") from e
                     choice = (data.get("choices") or [{}])[0]
                     delta = (choice.get("delta") or {}) or {}
                     yield ChatStreamChunk(
@@ -129,19 +129,19 @@ class OpenAICompatibleProvider(ModelProviderInterface):
         try:
             first = await asyncio.wait_for(iterator.__anext__(), ttft_timeout)
         except asyncio.TimeoutError as e:
-            raise BizException(AiErrorCode.THIRD_TIMEOUT, message=f"模型首 Token 超时（TTFT）：{self.name}") from e
+            raise AiErrorCode.THIRD_TIMEOUT.to_exception(message=f"模型首 Token 超时（TTFT）：{self.name}") from e
         yield first
         deadline = time.monotonic() + total_timeout
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise BizException(AiErrorCode.THIRD_TIMEOUT, message=f"模型全量生成超时：{self.name}")
+                raise AiErrorCode.THIRD_TIMEOUT.to_exception(message=f"模型全量生成超时：{self.name}")
             try:
                 chunk = await asyncio.wait_for(iterator.__anext__(), remaining)
             except StopAsyncIteration:
                 return
             except asyncio.TimeoutError as e:
-                raise BizException(AiErrorCode.THIRD_TIMEOUT, message=f"模型全量生成超时：{self.name}") from e
+                raise AiErrorCode.THIRD_TIMEOUT.to_exception(message=f"模型全量生成超时：{self.name}") from e
             yield chunk
 
     async def embedding(self, request: EmbeddingRequest) -> EmbeddingResponse:
@@ -197,20 +197,20 @@ class OpenAICompatibleProvider(ModelProviderInterface):
         try:
             response = await self._get_client().post(self._endpoint(path), json=payload)
         except httpx.TimeoutException as e:
-            raise BizException(AiErrorCode.THIRD_TIMEOUT, message=f"模型调用超时：{self.name}") from e
+            raise AiErrorCode.THIRD_TIMEOUT.to_exception(message=f"模型调用超时：{self.name}") from e
         self._raise_for_status(response)
         try:
             return response.json()
         except json.JSONDecodeError as e:
-            raise BizException(AiErrorCode.AI_GENERATION_FAILED, message=f"模型响应解析失败：{self.name}") from e
+            raise AiErrorCode.AI_GENERATION_FAILED.to_exception(message=f"模型响应解析失败：{self.name}") from e
 
     def _raise_for_status(self, response: httpx.Response) -> None:
         """HTTP 错误码映射（429 限流、其他第三方不可用）"""
-        if response.status_code == 200:
+        if response.status_code == HttpStatusConstant.HTTP_OK:
             return
-        if response.status_code == 429:
-            raise BizException(AiErrorCode.THIRD_RATE_LIMITED, message=f"模型供应商限流：{self.name}")
-        raise BizException(AiErrorCode.THIRD_UNAVAILABLE, message=f"模型供应商返回 {response.status_code}：{self.name}")
+        if response.status_code == HttpStatusConstant.HTTP_TOO_MANY_REQUESTS:
+            raise AiErrorCode.THIRD_RATE_LIMITED.to_exception(message=f"模型供应商限流：{self.name}")
+        raise AiErrorCode.THIRD_UNAVAILABLE.to_exception(message=f"模型供应商返回 {response.status_code}：{self.name}")
 
     def _endpoint(self, path: str) -> str:
         """拼接端点（api_base 去尾部斜杠）"""

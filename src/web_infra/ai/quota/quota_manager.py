@@ -16,7 +16,7 @@ import logging
 from web_infra.ai.quota.quota_config import QuotaConfig
 from web_infra.ai.quota.quota_store import QuotaStoreInterface
 from web_infra.ai.quota.in_memory_quota_store import InMemoryQuotaStore
-from web_infra.error import BizException, CommonErrorCode
+from web_infra.error import CommonErrorCode
 from web_infra.error.ai_error_code import AiErrorCode
 
 logger = logging.getLogger("web_infra.ai.quota")
@@ -61,11 +61,11 @@ class QuotaManager:
         counter = await self._store.incr(key, calls=1, tokens=tokens, cost=cost, window_seconds=cfg.window_seconds)
 
         if cfg.max_calls and counter.calls > cfg.max_calls:
-            raise BizException(CommonErrorCode.RATE_LIMITED, message=f"调用次数配额超限（{scope}:{scope_value}）")
+            raise CommonErrorCode.RATE_LIMITED.to_exception(message=f"调用次数配额超限（{scope}:{scope_value}）")
         if cfg.max_tokens and counter.tokens > cfg.max_tokens:
-            raise BizException(CommonErrorCode.RATE_LIMITED, message=f"Token 配额超限（{scope}:{scope_value}）")
+            raise CommonErrorCode.RATE_LIMITED.to_exception(message=f"Token 配额超限（{scope}:{scope_value}）")
         if cfg.max_cost and counter.cost > cfg.max_cost:
-            raise BizException(AiErrorCode.AI_QUOTA_EXHAUSTED, message=f"成本预算已耗尽（{scope}:{scope_value}）")
+            raise AiErrorCode.AI_QUOTA_EXHAUSTED.to_exception(message=f"成本预算已耗尽（{scope}:{scope_value}）")
 
     async def consume_usage(
         self,

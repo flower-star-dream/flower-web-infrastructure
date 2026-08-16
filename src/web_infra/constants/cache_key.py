@@ -20,6 +20,7 @@ class CacheKeyBuilder:
     # 认证域
     AUTH_TOKEN = "web:auth:v1:token:{user_id}:{jti}"
     AUTH_USER_TOKENS = "web:auth:v1:user_tokens:{user_id}"
+    AUTH_DEVICE_TOKEN = "web:auth:v1:device_token:{user_id}:{client_id}:{device_id}"
     LOGIN_FAIL_COUNT = "web:auth:v1:login_fail_count:{username}"
     LOGIN_LOCK = "web:auth:v1:login_lock:{username}"
     LOGIN_IP_FAIL_COUNT = "web:auth:v1:login_fail_count_ip:{ip}"

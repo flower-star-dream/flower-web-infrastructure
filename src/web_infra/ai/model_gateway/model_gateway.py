@@ -37,7 +37,6 @@ from web_infra.ai.usage import Usage
 from web_infra.ai.usage_accounting import UsageAccounting
 from web_infra.constants import INFRA_CALL_CONNECT_TIMEOUT_SECONDS, INFRA_CALL_MAX_RETRIES
 from web_infra.context.request_context import RequestContext
-from web_infra.error import BizException
 from web_infra.error.ai_error_code import AiErrorCode
 from web_infra.error.web_infra_exception import WebInfraException
 from web_infra.monitoring.ai_metrics import (
@@ -168,8 +167,8 @@ class ModelGateway:
                 return response
         # 主备全部失败：降级计数已由 _record_success 缺失体现，统一抛第三方不可用
         if last_error is not None:
-            raise BizException(AiErrorCode.THIRD_UNAVAILABLE, message=f"模型调用失败：{last_error}")
-        raise BizException(AiErrorCode.AI_NOT_CONFIGURED, message="无可用模型")
+            raise AiErrorCode.THIRD_UNAVAILABLE.to_exception(message=f"模型调用失败：{last_error}")
+        raise AiErrorCode.AI_NOT_CONFIGURED.to_exception(message="无可用模型")
 
     async def stream_chat(
         self,
@@ -223,7 +222,7 @@ class ModelGateway:
                                 output_buffer += chunk.delta
                                 result = self._content_guard.check_output(output_buffer)
                                 if result.blocked:
-                                    raise BizException(AiErrorCode.AI_CONTENT_REJECTED, message=result.message)
+                                    raise AiErrorCode.AI_CONTENT_REJECTED.to_exception(message=result.message)
                             started = True
                             yield chunk
                             if chunk.finish_reason is not None and chunk.usage is not None:
@@ -257,7 +256,7 @@ class ModelGateway:
                         continue
                     break  # 非可重试或已达最大重试：降级到备用
         if last_error is not None:
-            raise BizException(AiErrorCode.THIRD_UNAVAILABLE, message=f"模型流式调用失败：{last_error}")
+            raise AiErrorCode.THIRD_UNAVAILABLE.to_exception(message=f"模型流式调用失败：{last_error}")
 
     async def embed(
         self,
@@ -414,7 +413,7 @@ class ModelGateway:
         text = "\n".join(message.content for message in request.messages)
         result = self._content_guard.check_input(text)
         if result.blocked:
-            raise BizException(AiErrorCode.AI_CONTENT_REJECTED, message=result.message)
+            raise AiErrorCode.AI_CONTENT_REJECTED.to_exception(message=result.message)
 
     def _check_output(self, response: ChatResponse) -> None:
         """输出内容审核：BLOCK 抛 E4-AI-002（AI 规范 §7.2）"""
@@ -422,7 +421,7 @@ class ModelGateway:
             return
         result = self._content_guard.check_output(response.message.content)
         if result.blocked:
-            raise BizException(AiErrorCode.AI_CONTENT_REJECTED, message=result.message)
+            raise AiErrorCode.AI_CONTENT_REJECTED.to_exception(message=result.message)
 
     def _get_guard(self, model_name: str) -> ConcurrencyGuard:
         """获取单供应商并发控制器（按模型懒创建）"""

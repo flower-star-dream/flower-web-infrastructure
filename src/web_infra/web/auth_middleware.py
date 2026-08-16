@@ -17,8 +17,9 @@ from typing import Any, Awaitable, Callable
 from starlette.datastructures import Headers
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from web_infra.constants import HttpStatusConstant
 from web_infra.context import RequestContext
-from web_infra.error import BizException
+from web_infra.error import BizException, CommonErrorCode
 from web_infra.monitoring.phase_timer import PhaseTimer
 from web_infra.security.jwt_util import JWTUtil
 from web_infra.security.token_verify_status_enum import TokenVerifyStatus
@@ -68,13 +69,15 @@ class AuthMiddleware:
         token = auth[len(self._bearer_prefix):] if auth and auth.startswith(self._bearer_prefix) else None
         if not token:
             PhaseTimer.mark("auth")
-            await self._send_unauthorized(send, "E2-AUTH-000", "未认证：缺少 Bearer 凭证")
+            await self._send_unauthorized(send, CommonErrorCode.AUTH_UNAUTHENTICATED.code, "未认证：缺少 Bearer 凭证")
             return
 
         payload, error_code, error_message = await self._verify(token)
         if payload is None:
             PhaseTimer.mark("auth")
-            await self._send_unauthorized(send, error_code or "E2-AUTH-002", error_message or "凭证校验失败")
+            await self._send_unauthorized(
+                send, error_code or CommonErrorCode.AUTH_INVALID.code, error_message or "凭证校验失败"
+            )
             return
 
         # 校验成功：注入请求上下文（§6.4 业务禁止自行解析凭证，统一从上下文取身份）
@@ -103,17 +106,17 @@ class AuthMiddleware:
                 return payload, None, None
             payload, status = await JWTUtil.verify_token(token)
             if status == TokenVerifyStatus.EXPIRED:
-                return None, "E2-AUTH-001", "凭证已过期"
+                return None, CommonErrorCode.AUTH_EXPIRED.code, "凭证已过期"
             if status == TokenVerifyStatus.EXPIRING:
                 # 凭证即将过期（规范 §6.1 静默刷新信号）：同 VALID 放行，由客户端凭响应头触发静默刷新
                 return payload, None, None
             if status != TokenVerifyStatus.VALID:
-                return None, "E2-AUTH-002", "凭证非法或已被撤销"
+                return None, CommonErrorCode.AUTH_INVALID.code, "凭证非法或已被撤销"
             return payload, None, None
         except BizException as exc:
             return None, exc.code, str(exc.message or "凭证校验失败")
         except Exception:
-            return None, "E2-AUTH-002", "凭证非法或已被撤销"
+            return None, CommonErrorCode.AUTH_INVALID.code, "凭证非法或已被撤销"
 
     async def _send_unauthorized(self, send: Send, code: str, message: str) -> None:
         """发送 401 JSON 响应（规范 §6.4：校验失败统一入口直接返回，不进入业务模块）"""
@@ -121,7 +124,7 @@ class AuthMiddleware:
         await send(
             {
                 "type": "http.response.start",
-                "status": 401,
+                "status": HttpStatusConstant.HTTP_UNAUTHORIZED,
                 "headers": [(b"content-type", b"application/json; charset=utf-8")],
             }
         )

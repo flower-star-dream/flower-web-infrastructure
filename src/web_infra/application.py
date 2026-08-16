@@ -29,6 +29,7 @@ from web_infra.web.idempotency_middleware import IdempotencyMiddleware
 from web_infra.web.in_memory_idempotency_store import InMemoryIdempotencyStore
 from web_infra.web.rate_limit_middleware import RateLimitMiddleware
 from web_infra.web.security_headers_middleware import SecurityHeadersMiddleware
+from web_infra.security.jwt_util import JWTUtil
 from web_infra.cache import (
     CacheConfig,
     MemoryCacheBackend,
@@ -239,6 +240,9 @@ class Application:
                     "socket_keepalive", "health_check_interval", "retry_on_timeout",
                 ],
             )
+            # 启用 Redis 时 JWT Token 状态存储默认走 Redis（复用同一 Redis 实例；
+            # 未启用回落内存，业务可经 JWTUtil.configure 注入自定义实现覆盖）
+            JWTUtil.set_redis_config(config)
             return RedisCacheBackend(config=config)
         return MemoryCacheBackend(CacheConfig(max_size=cast(int, self.settings.get_int("app.cache.max_size"))))
 

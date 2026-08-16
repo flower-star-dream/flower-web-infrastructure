@@ -12,6 +12,10 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from web_infra.error.biz_exception import BizException
 
 # ---------------------------------------------------------------------------
 # 大类（Category）元数据：HTTP 状态码 / 日志级别 / 是否可重试
@@ -62,6 +66,21 @@ class ErrorCode:
     category: str
     retryable: bool = False
     log_level: int = logging.INFO
+
+    def to_exception(self, message: str | None = None, data: Any = None) -> "BizException":
+        """将错误码转为业务异常（统一异常抛出约定：`raise 错误码.to_exception(message=...)`）。
+
+        业务代码统一经错误码抛出业务异常，避免散落 BizException 构造（与框架内部一致）；
+        域专属异常（参数 ParamException / 权限 PermException / 认证 AuthException）仍用对应构造函数。
+        未传 message 时回落错误码默认文案，data 透传给异常实例（全局异常处理器输出）。
+
+        :param message: 业务提示文案（缺省用错误码默认文案）
+        :param data: 附加数据（随异常透传至统一响应 data 字段）
+        :return: 携带本错误码的 BizException 实例
+        """
+        from web_infra.error.biz_exception import BizException
+
+        return BizException(self, message=message, data=data)
 
 
 def parse_category(code: str) -> str:

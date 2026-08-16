@@ -14,7 +14,6 @@ from typing import Any
 from web_infra.ai.model_config import ModelConfig
 from web_infra.ai.model_config_store_interface import ModelConfigStoreInterface
 from web_infra.error.ai_error_code import AiErrorCode
-from web_infra.error.biz_exception import BizException
 
 
 class ModelConfigManager:
@@ -36,7 +35,7 @@ class ModelConfigManager:
                 return config
             config = await self._store.load(model_code)
             if config is None:
-                raise BizException(AiErrorCode.AI_NOT_CONFIGURED, message=f"未找到模型配置: model_code={model_code}")
+                raise AiErrorCode.AI_NOT_CONFIGURED.to_exception(message=f"未找到模型配置: model_code={model_code}")
             await self._set_cache(model_code, config)
             return config
 
