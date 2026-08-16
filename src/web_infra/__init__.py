@@ -209,6 +209,24 @@ from web_infra.storage import (
     MinioPartStorage,
     MultipartUploadService,
 )
+from web_infra.payment import (
+    PaymentCallback,
+    PaymentCallbackDispatcher,
+    PaymentCallbackHandler,
+    PaymentCallbackVerifier,
+    PaymentGateway,
+    PaymentGatewayRegistry,
+    PaymentPrepayRequest,
+    PaymentPrepayResponse,
+    PaymentOrder,
+    PaymentRefundRequest,
+    PaymentRefundResponse,
+    PaymentScene,
+    PaymentStatus,
+    RefundStatus,
+    PaymentErrorCode,
+    PaymentConfig,
+)
 from web_infra.schedule import ScheduledTask, TaskScheduler
 from web_infra.registry import (
     ServiceInstance,
@@ -347,6 +365,12 @@ __all__ = [
     "StorageConfig", "ObjectStorageInterface", "LocalObjectStorage", "MinioStorageConfig", "MinioObjectStorage",
     "UploadStatus", "UploadTask", "UploadStoreInterface", "InMemoryUploadStore",
     "PartStorageInterface", "LocalPartStorage", "MinioPartStorage", "MultipartUploadService",
+    # 支付
+    "PaymentGateway", "PaymentCallbackVerifier", "PaymentCallbackHandler",
+    "PaymentCallbackDispatcher", "PaymentGatewayRegistry",
+    "PaymentPrepayRequest", "PaymentPrepayResponse", "PaymentOrder",
+    "PaymentRefundRequest", "PaymentRefundResponse", "PaymentCallback",
+    "PaymentScene", "PaymentStatus", "RefundStatus", "PaymentErrorCode", "PaymentConfig",
     # 定时调度
     "ScheduledTask", "TaskScheduler",
     # 服务注册发现与负载均衡
