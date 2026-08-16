@@ -181,6 +181,25 @@ app:
       cleanup_interval_seconds: 3600
       retain_days: 7
 
+  # 支付（特殊场景：默认不启用，需业务显式开启并配置渠道；敏感项经 ${APP_PAYMENT_*} 注入）
+  payment:
+    type: memory            # 默认渠道：memory（内存测试实现）| wechat
+    wechat:
+      appid: ${APP_PAYMENT_WECHAT_APPID:}
+      mchid: ${APP_PAYMENT_WECHAT_MCHID:}
+      mch_serial_no: ${APP_PAYMENT_WECHAT_MCH_SERIAL_NO:}
+      api_v3_key: ${APP_PAYMENT_WECHAT_API_V3_KEY:}
+      private_key: ${APP_PAYMENT_WECHAT_PRIVATE_KEY:}
+      private_key_path: ${APP_PAYMENT_WECHAT_PRIVATE_KEY_PATH:}
+      notify_url: ${APP_PAYMENT_WECHAT_NOTIFY_URL:}
+      refund_notify_url: ${APP_PAYMENT_WECHAT_REFUND_NOTIFY_URL:}
+      verify_mode: platform_cert
+      platform_cert_dir: ./cert
+      public_key_id: ${APP_PAYMENT_WECHAT_PUBLIC_KEY_ID:}
+      public_key: ${APP_PAYMENT_WECHAT_PUBLIC_KEY:}
+      connect_timeout: 5
+      read_timeout: 30
+
   # 服务注册发现
   registry:
     type: memory
