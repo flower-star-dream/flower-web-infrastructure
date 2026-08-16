@@ -76,20 +76,6 @@ jobs:
       - name: 安装 cosign
         uses: sigstore/cosign-installer@v3
 
-      - name: 镜像签名（cosign keyless，OIDC）
-        # 整改 S20-4（规范 §20.4 镜像签名校验）：
-        # 1) Keyless（OIDC）签名：cosign v2 默认 keyless，使用 GitHub Actions 的 OIDC 身份
-        #    （本 Job 已声明 permissions: id-token: write），无需配置任何密钥/Secret；
-        #    签名绑定镜像 digest，推送时重打 tag（main-xxx / SemVer / latest）不影响签名有效性。
-        # 2) 部署侧必须配套 cosign verify 校验签名后才拉取镜像（供应链防篡改），校验示例：
-        #    cosign verify \
-        #      --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-        #      --certificate-identity-regexp \
-        #        "https://github.com/flower-star-dream/flower-web-infrastructure/.github/workflows/ci.yml@refs/.*" \
-        #      ghcr.io/flower-star-dream/flower-web-infrastructure:<版本>
-        run: |
-          cosign sign --yes flower-web-infrastructure:ci
-
       - name: 镜像冒烟验证（/health/live 存活可达）
         # 整改 S19-1：存活冒烟用 /health/live（进程存活，不依赖组件 DOWN 状态）；
         # 就绪探测 /health/ready 由编排层（K8s readinessProbe）使用
@@ -112,20 +98,27 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 推送镜像（main 分支：测试标签 + latest）
+      - name: 推送镜像 + 签名（main 分支：测试标签 + latest）
         # 整改 S20-3 标签规范：测试版 <分支名>-<时间戳>-<构建号>（如 main-20260816103000-42）；
         # latest 跟随最新 main 构建——脚手架等下游 CI 拉取 ghcr.io/flower-star-dream/flower-web-infrastructure:latest
-        # 作为业务镜像基础（见脚手架 ci.yml / docs/CI-CD.md），正式版 tag 时仍会覆盖为最新正式版
+        # 作为业务镜像基础（见脚手架 ci.yml / docs/CI-CD.md），正式版 tag 时仍会覆盖为最新正式版。
+        # 整改 S20-4 镜像签名（keyless/OIDC）：cosign 只能对已推送的仓库镜像签名——本地 :ci 标签无仓库前缀
+        # 会被解析到 Docker Hub 导致 401（此前报错），故先推送再签名；签名绑定镜像 digest，
+        # 同一 digest 的多个 tag（main-xxx / latest）分别签名。部署侧必须配套 cosign verify 校验（示例见 docs/CI-CD.md §8）。
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
           IMAGE=ghcr.io/${{ github.repository }}
-          docker tag flower-web-infrastructure:ci $IMAGE:main-$(date +%Y%m%d%H%M%S)-${{ github.run_number }}
-          docker push $IMAGE:main-$(date +%Y%m%d%H%M%S)-${{ github.run_number }}
+          TAG=main-$(date +%Y%m%d%H%M%S)-${{ github.run_number }}
+          docker tag flower-web-infrastructure:ci $IMAGE:$TAG
+          docker push $IMAGE:$TAG
           docker tag flower-web-infrastructure:ci $IMAGE:latest
           docker push $IMAGE:latest
+          cosign sign --yes $IMAGE:$TAG
+          cosign sign --yes $IMAGE:latest
 
-      - name: 推送镜像（版本 tag v*：SemVer + latest）
-        # 正式版：语义化版本（SemVer，与 pyproject.toml 版本号保持一致），同时更新 latest
+      - name: 推送镜像 + 签名（版本 tag v*：SemVer + latest）
+        # 正式版：语义化版本（SemVer，与 pyproject.toml 版本号保持一致），同时更新 latest；
+        # 先推送后 keyless（OIDC）签名（同 main 分支，cosign 不能签名未推送的本地镜像）
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
           IMAGE=ghcr.io/${{ github.repository }}
@@ -134,3 +127,5 @@ jobs:
           docker push $IMAGE:$VERSION
           docker tag flower-web-infrastructure:ci $IMAGE:latest
           docker push $IMAGE:latest
+          cosign sign --yes $IMAGE:$VERSION
+          cosign sign --yes $IMAGE:latest

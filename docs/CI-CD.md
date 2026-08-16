@@ -42,7 +42,7 @@ CI
 | ---- | ---- |
 | 构建基础镜像 | `docker build -t flower-web-infrastructure:ci .`，基于 `Dockerfile`（整改 S20-2 多阶段构建：build 阶段安装依赖 `min-monolith + migrate` extras，runtime 阶段仅拷贝 site-packages + 源码，并清理基础镜像自带构建期工具 pip/setuptools/wheel——消除 Trivy 高危漏洞，如 setuptools 内置 wheel/jaraco.context、pip 内置 setuptools/msgpack） |
 | 镜像漏洞扫描 | Trivy 扫描（`HIGH,CRITICAL`，`exit-code=1`），存在高危/严重漏洞即阻断（规范 §20.2） |
-| 镜像签名 | cosign **keyless（OIDC）** 签名（规范 §20.4 供应链防篡改）：使用 GitHub Actions OIDC 身份自动签名（Job 声明 `id-token: write`），**无需配置密钥/Secret**；签名绑定镜像 digest，推送重打 tag 不影响有效性。部署侧必须配套 `cosign verify` 校验签名后才拉取镜像（校验命令见 ci.yml 对应步骤注释） |
+| 镜像签名 | cosign **keyless（OIDC）** 签名（规范 §20.4 供应链防篡改）：使用 GitHub Actions OIDC 身份自动签名（Job 声明 `id-token: write`），**无需配置密钥/Secret**；镜像先推送 GHCR 再签名（cosign 只能签名仓库中的镜像，本地 `:ci` 标签会被解析到 Docker Hub 导致 401），签名绑定镜像 digest，同一 digest 的多个 tag（main-xxx / SemVer / latest）分别签名。部署侧必须配套 `cosign verify` 校验签名后才拉取镜像（校验命令见 §8） |
 | 冒烟验证 | 启动容器并轮询 `GET /health/live`（30 次 × 1s，存活探针，整改 S19-1），失败时输出容器日志 |
 | 推送镜像（GHCR） | 已启用：push `main` 推测试标签 + `latest`；版本 tag `v*` 推 SemVer + `latest`；PR 不推送。详见 [4. 镜像推送](#4-镜像推送已启用) |
 
@@ -147,7 +147,7 @@ docker rm -f web-infra-smoke
 
 **镜像签名与校验**（规范 §20.4）：
 
-- CI 侧：`cosign sign --yes flower-web-infrastructure:ci`（cosign v2 默认 keyless，`sigstore/cosign-installer@v3` 安装）。
+- CI 侧：镜像先推送 GHCR 再签名——`cosign sign --yes ghcr.io/flower-star-dream/flower-web-infrastructure:<推送的标签>`（cosign v2 默认 keyless，`sigstore/cosign-installer@v3` 安装；不能签名未推送的本地镜像，如 `flower-web-infrastructure:ci` 会被解析到 Docker Hub 报 401）。
 - 部署侧（拉取镜像前必须校验签名）：`cosign verify --certificate-oidc-issuer https://token.actions.githubusercontent.com --certificate-identity-regexp "https://github.com/flower-star-dream/flower-web-infrastructure/.github/workflows/ci.yml@refs/.*" ghcr.io/flower-star-dream/flower-web-infrastructure:<版本>`
 
 **配置顺序建议**（首次接入时按序执行）：
