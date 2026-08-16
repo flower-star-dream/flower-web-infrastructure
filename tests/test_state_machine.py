@@ -12,6 +12,8 @@ from web_infra.error.biz_exception import BizException
 from web_infra.error.error_code_registry import ErrorCodeRegistry
 from web_infra.state_machine.base_event import BaseEvent
 from web_infra.state_machine.base_state import BaseState
+from web_infra.state_machine.state_machine import StateMachine
+from web_infra.state_machine.state_machine_engine import StateMachineEngine
 from web_infra.state_machine.state_machine_error import (
     StateMachineErrorCode,
     StateMachineErrorCodeEnum,
@@ -137,3 +139,123 @@ def test_router_dispatcher_receives_current_state():
     router = _StateAwareRouter()
     router.route(_DemoEvent.SUBMIT, _DemoStatus.PENDING, StateRouteParams.create())
     assert received == [_DemoStatus.PENDING]
+
+
+class _AsyncHandlerRouter(_DemoRouter):
+    """async 处理器的演示路由"""
+
+    def get_event_dispatcher(self):
+        return {_DemoEvent.SUBMIT: self._async_submit}
+
+    async def _async_submit(self, current_state, params):
+        return _DemoStatus.DONE
+
+
+@pytest.fixture
+def demo_machine():
+    """已装配的演示状态机"""
+    return StateMachine(_DemoRouter())
+
+
+def test_default_engine_implements_spi():
+    """默认引擎实现 StateMachineEngine SPI（isinstance 可识别）"""
+    assert isinstance(StateMachine(_DemoRouter()), StateMachineEngine)
+
+
+def test_fire_ok(demo_machine):
+    """fire：合法流转返回目标状态"""
+    assert demo_machine.fire(_DemoStatus.PENDING, _DemoEvent.SUBMIT, StateRouteParams.create()) is _DemoStatus.DONE
+
+
+def test_fire_illegal_transition(demo_machine):
+    """fire：组合表不包含该事件抛 ILLEGAL_STATE_TRANSITION"""
+    with pytest.raises(BizException) as ei:
+        demo_machine.fire(_DemoStatus.DONE, _DemoEvent.SUBMIT, StateRouteParams.create())
+    assert ei.value.code == "E4-STATE-000"
+
+
+def test_fire_empty_state(demo_machine):
+    """fire：状态为空抛 EMPTY_STATE"""
+    with pytest.raises(BizException) as ei:
+        demo_machine.fire(None, _DemoEvent.SUBMIT, StateRouteParams.create())
+    assert ei.value.code == "E4-STATE-001"
+
+
+def test_fire_empty_params(demo_machine):
+    """fire：参数为空抛 EMPTY_PARAMETER"""
+    with pytest.raises(BizException) as ei:
+        demo_machine.fire(_DemoStatus.PENDING, _DemoEvent.SUBMIT, None)
+    assert ei.value.code == "E4-STATE-002"
+
+
+def test_fire_empty_target():
+    """fire：处理器返回空目标状态抛 EMPTY_STATE"""
+
+    class _EmptyTargetRouter(_DemoRouter):
+        def get_event_dispatcher(self):
+            return {_DemoEvent.SUBMIT: lambda current_state, params: None}
+
+    with pytest.raises(BizException) as ei:
+        StateMachine(_EmptyTargetRouter()).fire(
+            _DemoStatus.PENDING, _DemoEvent.SUBMIT, StateRouteParams.create()
+        )
+    assert ei.value.code == "E4-STATE-001"
+
+
+def test_fire_sync_handler_returns_coroutine_raises():
+    """fire：同步入口遇 async 处理器抛 TypeError（提示改用 fire_async）"""
+    with pytest.raises(TypeError):
+        StateMachine(_AsyncHandlerRouter()).fire(
+            _DemoStatus.PENDING, _DemoEvent.SUBMIT, StateRouteParams.create()
+        )
+
+
+def test_fire_illegal_transition_message_uses_description():
+    """fire：非法流转错误消息用 description 而非枚举 str"""
+    with pytest.raises(BizException) as ei:
+        StateMachine(_DemoRouter()).fire(_DemoStatus.DONE, _DemoEvent.SUBMIT, StateRouteParams.create())
+    assert "已完成" in ei.value.message
+    assert "提交" in ei.value.message
+
+
+@pytest.mark.asyncio
+async def test_fire_async_with_async_handler():
+    """fire_async：async 处理器正常流转"""
+    machine = StateMachine(_AsyncHandlerRouter())
+    assert await machine.fire_async(
+        _DemoStatus.PENDING, _DemoEvent.SUBMIT, StateRouteParams.create()
+    ) is _DemoStatus.DONE
+
+
+@pytest.mark.asyncio
+async def test_fire_async_with_sync_handler(demo_machine):
+    """fire_async：同步处理器也可用"""
+    assert await demo_machine.fire_async(
+        _DemoStatus.PENDING, _DemoEvent.SUBMIT, StateRouteParams.create()
+    ) is _DemoStatus.DONE
+
+
+@pytest.mark.asyncio
+async def test_fire_async_illegal_transition(demo_machine):
+    """fire_async：非法流转抛 ILLEGAL_STATE_TRANSITION"""
+    with pytest.raises(BizException) as ei:
+        await demo_machine.fire_async(_DemoStatus.DONE, _DemoEvent.SUBMIT, StateRouteParams.create())
+    assert ei.value.code == "E4-STATE-000"
+
+
+def test_fire_supports_dynamic_state_value():
+    """扩展状态：状态值不限于枚举（动态/无限状态场景，任意 hashable 值）"""
+
+    class _DynamicRouter(StateRouter[tuple, str, _DemoEntity]):
+        """重试状态机：状态为 ('RETRYING', 次数)，次数可无限增长"""
+
+        def get_state_event_target_config(self):
+            return {("RETRYING", 0): {"RETRY": ("RETRYING", 1)},
+                    ("RETRYING", 1): {"RETRY": ("RETRYING", 2)}}
+
+        def get_event_dispatcher(self):
+            return {"RETRY": lambda current_state, params: ("RETRYING", current_state[1] + 1)}
+
+    machine = StateMachine(_DynamicRouter())
+    target = machine.fire(("RETRYING", 1), "RETRY", StateRouteParams.create())
+    assert target == ("RETRYING", 2)
