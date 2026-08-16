@@ -4,20 +4,25 @@
 @Author: 花海
 @Date: 2026/08/16 10:00
 @Description: 覆盖回调验签（platform_cert/public_key 两种模式）、AES-256-GCM 报文解密、
-              金额分→元换算、验签失败/时间戳超窗/缺头返回 None。
+              金额分→元换算、验签失败/时间戳超窗/缺头返回 None、平台证书自动下载。
 """
 import base64
 import json
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
+import httpx
 import pytest
-from cryptography.hazmat.primitives import serialization
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.x509.oid import NameOID
 
 from web_infra.payment.payment_constant import PaymentConstant
 from web_infra.payment.payment_config import WechatPayConfig
 from web_infra.payment.provider.wechat.wechat_callback_verifier import WeChatCallbackVerifier
+from web_infra.payment.provider.wechat.wechat_pay_client import WeChatPayClient
 from web_infra.payment.provider.wechat.wechat_signer import WeChatSigner
 
 API_V3_KEY = "test-apiv3-key-0123456789abcdef0"  # 32 字节（AES-256-GCM 要求）
@@ -190,3 +195,103 @@ async def test_parse_unknown_serial_returns_none(tmp_path, platform_key_pair):
 def test_amount_scale_constant():
     """金额换算系数：分=元×100"""
     assert PaymentConstant.BIZ_PAY_AMOUNT_SCALE == 100
+
+
+# ---------------------------------------------------------------------------
+# 平台证书自动下载
+# ---------------------------------------------------------------------------
+
+
+def _make_cert_pem(public_pem: str) -> str:
+    """用指定公钥 PEM 生成自签名 X509 证书"""
+    public_key = serialization.load_pem_public_key(public_pem.encode("utf-8"))
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "wechatpay-test")])
+    now = datetime.now(timezone.utc)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(public_key)
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(days=1))
+        .not_valid_after(now + timedelta(days=3650))
+        .sign(rsa.generate_private_key(public_exponent=65537, key_size=2048), hashes.SHA256())
+    )
+    return cert.public_bytes(serialization.Encoding.PEM).decode("utf-8")
+
+
+def _cert_item(serial_no: str, cert_pem: str) -> dict:
+    """构造下载平台证书接口返回的 data 列表项（APIv3 密钥加密）"""
+    nonce = "0123456789ab"
+    aad = "certificate"
+    ciphertext = AESGCM(API_V3_KEY.encode("utf-8")).encrypt(nonce.encode("utf-8"), cert_pem.encode("utf-8"), aad.encode("utf-8"))
+    return {
+        "serial_no": serial_no,
+        "effective_time": "2026-01-01T00:00:00+08:00",
+        "expire_time": "2031-01-01T00:00:00+08:00",
+        "encrypt_certificate": {"algorithm": "AEAD_AES_256_GCM", "ciphertext": base64.b64encode(ciphertext).decode("utf-8"), "nonce": nonce, "associated_data": aad},
+    }
+
+
+@pytest.mark.asyncio
+async def test_parse_auto_download_platform_cert(tmp_path, platform_key_pair):
+    """parse：platform_cert + cert_auto_download + 注入 client：未知序列号自动下载后验签通过"""
+    private_pem, public_pem = platform_key_pair
+    serial = "AUTO-SERIAL-0001"
+    cert_pem = _make_cert_pem(public_pem)
+    merchant_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    merchant_private_pem = merchant_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode("utf-8")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v3/certificates"
+        return httpx.Response(200, json={"data": [_cert_item(serial, cert_pem)]}, headers={"Content-Type": "application/json"})
+
+    config = WechatPayConfig(api_v3_key=API_V3_KEY, verify_mode="platform_cert", platform_cert_dir=str(tmp_path),
+                             cert_auto_download=True, private_key=merchant_private_pem)
+    client = WeChatPayClient(config, http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    verifier = WeChatCallbackVerifier(config, client=client)
+
+    body = _build_body(_pay_plaintext())
+    headers = _sign_headers(body, private_pem, serial)
+
+    callback = await verifier.parse(headers, body)
+    assert callback is not None
+    assert callback.out_trade_no == "T-20260816-001"
+    assert callback.amount == Decimal("1.00")
+
+
+@pytest.mark.asyncio
+async def test_parse_auto_download_disabled_returns_none(tmp_path, platform_key_pair):
+    """parse：cert_auto_download 关闭且本地无证书：不触发下载，返回 None"""
+    private_pem, public_pem = platform_key_pair
+    serial = "AUTO-SERIAL-0002"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("不应触发平台证书下载")
+
+    config = WechatPayConfig(api_v3_key=API_V3_KEY, verify_mode="platform_cert", platform_cert_dir=str(tmp_path), cert_auto_download=False)
+    client = WeChatPayClient(config, http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    verifier = WeChatCallbackVerifier(config, client=client)
+
+    body = _build_body(_pay_plaintext())
+    headers = _sign_headers(body, private_pem, serial)
+
+    assert await verifier.parse(headers, body) is None
+
+
+@pytest.mark.asyncio
+async def test_parse_auto_download_without_client_returns_none(tmp_path, platform_key_pair):
+    """parse：未注入 client：即使开启自动下载也不下载，返回 None"""
+    private_pem, _ = platform_key_pair
+    serial = "AUTO-SERIAL-0003"
+    config = WechatPayConfig(api_v3_key=API_V3_KEY, verify_mode="platform_cert", platform_cert_dir=str(tmp_path), cert_auto_download=True)
+    verifier = WeChatCallbackVerifier(config)  # 不注入 client
+
+    body = _build_body(_pay_plaintext())
+    headers = _sign_headers(body, private_pem, serial)
+
+    assert await verifier.parse(headers, body) is None

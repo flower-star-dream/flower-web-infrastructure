@@ -6,6 +6,8 @@
 @Description: 微信支付回调验签 + AES-256-GCM 报文解密（实现 PaymentCallbackVerifier SPI）。
               验签失败/解密失败/解析失败统一返回 None（调用方返回 401，微信自动重试）。
               参考官方文档：回调报文解密 pay.weixin.qq.com/doc/v3/merchant/4012071382。
+              平台证书自动下载：注入 WeChatPayClient 且 cert_auto_download 开启时，
+              验签遇未知序列号自动调用 /v3/certificates 获取并缓存。
 """
 from __future__ import annotations
 
@@ -14,7 +16,7 @@ import json
 import logging
 import time
 from decimal import Decimal
-from typing import Mapping
+from typing import TYPE_CHECKING, Mapping
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
@@ -23,6 +25,9 @@ from web_infra.payment.payment_callback_verifier_interface import PaymentCallbac
 from web_infra.payment.payment_config import WechatPayConfig
 from web_infra.payment.payment_constant import PaymentConstant
 from web_infra.payment.provider.wechat.wechat_signer import WeChatSigner
+
+if TYPE_CHECKING:
+    from web_infra.payment.provider.wechat.wechat_pay_client import WeChatPayClient
 
 logger = logging.getLogger("web_infra.payment.wechat.callback")
 
@@ -35,8 +40,9 @@ class WeChatCallbackVerifier(PaymentCallbackVerifier):
     HEADER_SIGNATURE = "wechatpay-signature"
     HEADER_SERIAL = "wechatpay-serial"
 
-    def __init__(self, config: WechatPayConfig) -> None:
+    def __init__(self, config: WechatPayConfig, client: "WeChatPayClient | None" = None) -> None:
         self._config = config
+        self._client = client
 
     async def parse(self, headers: Mapping[str, str], body: str) -> PaymentCallback | None:
         timestamp = headers.get(self.HEADER_TIMESTAMP, "")
@@ -50,6 +56,10 @@ class WeChatCallbackVerifier(PaymentCallbackVerifier):
             logger.warning("微信回调时间戳超窗，拒绝")
             return None
         public_key = self._config.load_verify_key(serial)
+        if public_key is None and self._client is not None and self._config.verify_mode == "platform_cert" and self._config.cert_auto_download:
+            logger.info("回调验签未知平台证书序列号 serial=%s，触发自动下载", serial)
+            await self._client.download_certificates()
+            public_key = self._config.load_verify_key(serial)
         if public_key is None:
             logger.warning("微信回调无匹配验签凭据 serial=%s", serial)
             return None
