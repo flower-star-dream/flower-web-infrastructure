@@ -17,6 +17,7 @@ from web_infra.state_machine.state_machine_error import (
     StateMachineErrorCodeEnum,
 )
 from web_infra.state_machine.state_route_params import StateRouteParams
+from web_infra.state_machine.state_router import StateRouter
 
 
 def test_state_machine_error_codes_registered():
@@ -93,3 +94,46 @@ def test_state_route_params():
     assert params.contains("remark")
     assert not params.contains("none")
     assert params.size() == 2
+
+
+class _DemoRouter(StateRouter[_DemoStatus, _DemoEvent, _DemoEntity]):
+    """演示状态路由：PENDING + SUBMIT -> DONE"""
+
+    def get_state_event_target_config(self):
+        return {_DemoStatus.PENDING: {_DemoEvent.SUBMIT: _DemoStatus.DONE}}
+
+    def get_event_dispatcher(self):
+        return {_DemoEvent.SUBMIT: self._submit}
+
+    def _submit(self, current_state, params):
+        return _DemoStatus.DONE
+
+
+def test_router_route_dispatches():
+    """route：按事件分发到处理器（处理器收到当前状态）并返回目标状态"""
+    router = _DemoRouter()
+    assert router.route(_DemoEvent.SUBMIT, _DemoStatus.PENDING, StateRouteParams.create()) is _DemoStatus.DONE
+
+
+def test_router_route_unregistered_event():
+    """route：未注册事件抛 EVENT_ROUTER_ERROR"""
+    with pytest.raises(BizException) as ei:
+        _DemoRouter().route(_DemoEvent.CANCEL, _DemoStatus.PENDING, StateRouteParams.create())
+    assert ei.value.code == "E4-STATE-003"
+
+
+def test_router_dispatcher_receives_current_state():
+    """dispatcher 处理器第一个参数为当前状态（同一事件可随状态分叉）"""
+    received = []
+
+    class _StateAwareRouter(_DemoRouter):
+        def get_event_dispatcher(self):
+            return {_DemoEvent.SUBMIT: self._record_submit}
+
+        def _record_submit(self, current_state, params):
+            received.append(current_state)
+            return _DemoStatus.DONE
+
+    router = _StateAwareRouter()
+    router.route(_DemoEvent.SUBMIT, _DemoStatus.PENDING, StateRouteParams.create())
+    assert received == [_DemoStatus.PENDING]
