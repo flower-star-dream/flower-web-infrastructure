@@ -18,6 +18,7 @@ from web_infra.state_machine.state_machine_error import (
     StateMachineErrorCode,
     StateMachineErrorCodeEnum,
 )
+from web_infra.state_machine.state_machine_registry import StateMachineRegistry
 from web_infra.state_machine.state_route_params import StateRouteParams
 from web_infra.state_machine.state_router import StateRouter
 
@@ -259,3 +260,130 @@ def test_fire_supports_dynamic_state_value():
     machine = StateMachine(_DynamicRouter())
     target = machine.fire(("RETRYING", 1), "RETRY", StateRouteParams.create())
     assert target == ("RETRYING", 2)
+
+
+@StateMachineRegistry.register
+class _RegisteredRouter(StateRouter[_DemoStatus, _DemoEvent, _DemoEntity]):
+    """通过装饰器注册的演示路由"""
+
+    def get_state_event_target_config(self):
+        return {_DemoStatus.PENDING: {_DemoEvent.SUBMIT: _DemoStatus.DONE}}
+
+    def get_event_dispatcher(self):
+        return {_DemoEvent.SUBMIT: lambda current_state, params: _DemoStatus.DONE}
+
+
+class _OtherEntity:
+    """另一个数据实体（用于未注册/重复注册场景）"""
+
+
+class _SpiEntity:
+    """用于引擎工厂 SPI 测试的数据实体"""
+
+
+def test_registry_get_returns_engine():
+    """get：返回已注册 key 的状态机引擎实例"""
+    engine = StateMachineRegistry.get(_DemoStatus, _DemoEvent, _DemoEntity)
+    assert isinstance(engine, StateMachine)
+    assert isinstance(engine, StateMachineEngine)
+
+
+def test_registry_get_cache_same_instance():
+    """get：同一 key 缓存同一实例"""
+    assert (
+        StateMachineRegistry.get(_DemoStatus, _DemoEvent, _DemoEntity)
+        is StateMachineRegistry.get(_DemoStatus, _DemoEvent, _DemoEntity)
+    )
+
+
+def test_registry_get_unregistered_raises():
+    """get：未注册 key 抛 KeyError"""
+    with pytest.raises(KeyError):
+        StateMachineRegistry.get(_DemoStatus, _DemoEvent, _OtherEntity)
+
+
+def test_registry_duplicate_register_raises():
+    """register：同 key 重复注册抛 ValueError"""
+
+    class _DuplicateRouter(StateRouter[_DemoStatus, _DemoEvent, _DemoEntity]):
+        def get_state_event_target_config(self):
+            return {}
+
+        def get_event_dispatcher(self):
+            return {}
+
+    with pytest.raises(ValueError):
+        StateMachineRegistry.register(_DuplicateRouter)
+
+
+def test_registry_register_instance():
+    """register_instance：已装配实例直接注册并可用（构造注入场景）"""
+
+    class _InstanceRouter(StateRouter[_DemoStatus, _DemoEvent, _OtherEntity]):
+        def __init__(self, prefix):
+            self._prefix = prefix
+
+        def get_state_event_target_config(self):
+            return {_DemoStatus.PENDING: {_DemoEvent.SUBMIT: _DemoStatus.DONE}}
+
+        def get_event_dispatcher(self):
+            return {_DemoEvent.SUBMIT: lambda current_state, params: _DemoStatus.DONE}
+
+    router = _InstanceRouter(prefix="x")
+    registered = StateMachineRegistry.register_instance(router)
+    assert registered is router
+    engine = StateMachineRegistry.get(_DemoStatus, _DemoEvent, _OtherEntity)
+    assert engine.fire(_DemoStatus.PENDING, _DemoEvent.SUBMIT, StateRouteParams.create()) is _DemoStatus.DONE
+
+
+def test_registry_validate_router_missing_handler():
+    """静态校验：组合表声明的事件无处理器，register_instance 立即抛 ValueError"""
+
+    class _BrokenRouter(StateRouter[_DemoStatus, _DemoEvent, _SpiEntity]):
+        def get_state_event_target_config(self):
+            return {_DemoStatus.PENDING: {_DemoEvent.SUBMIT: _DemoStatus.DONE}}
+
+        def get_event_dispatcher(self):
+            return {}
+
+    with pytest.raises(ValueError):
+        StateMachineRegistry.register_instance(_BrokenRouter())
+
+
+def test_registry_validate_router_on_get():
+    """静态校验：register 装饰器注册后，get 首次实例化时同样校验"""
+
+    class _BrokenRouter2(StateRouter[_DemoStatus, _DemoEvent, _SpiEntity]):
+        def get_state_event_target_config(self):
+            return {_DemoStatus.PENDING: {_DemoEvent.SUBMIT: _DemoStatus.DONE}}
+
+        def get_event_dispatcher(self):
+            return {}
+
+    StateMachineRegistry.register(_BrokenRouter2)
+    with pytest.raises(ValueError):
+        StateMachineRegistry.get(_DemoStatus, _DemoEvent, _SpiEntity)
+
+
+def test_registry_engine_factory_spi():
+    """register_engine_factory：自定义引擎（第三方库适配）替换默认实现"""
+
+    class _ThirdPartyEngine(StateMachineEngine[_DemoStatus, _DemoEvent]):
+        """模拟基于第三方状态机库的适配引擎"""
+
+        def __init__(self):
+            self.calls = 0
+
+        def fire(self, current_state, event, params=None):
+            self.calls += 1
+            return _DemoStatus.DONE
+
+        async def fire_async(self, current_state, event, params=None):
+            self.calls += 1
+            return _DemoStatus.DONE
+
+    StateMachineRegistry.register_engine_factory(_DemoStatus, _DemoEvent, _SpiEntity, _ThirdPartyEngine)
+    engine = StateMachineRegistry.get(_DemoStatus, _DemoEvent, _SpiEntity)
+    assert isinstance(engine, _ThirdPartyEngine)
+    assert engine.fire(_DemoStatus.PENDING, _DemoEvent.SUBMIT, StateRouteParams.create()) is _DemoStatus.DONE
+    assert engine.calls == 1
