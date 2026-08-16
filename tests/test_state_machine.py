@@ -12,6 +12,7 @@ from web_infra.error.biz_exception import BizException
 from web_infra.error.error_code_registry import ErrorCodeRegistry
 from web_infra.state_machine.base_event import BaseEvent
 from web_infra.state_machine.base_state import BaseState
+from web_infra.state_machine.base_status import BaseStatus, BaseStatusRouter, StartStopEvent
 from web_infra.state_machine.state_machine import StateMachine
 from web_infra.state_machine.state_machine_engine import StateMachineEngine
 from web_infra.state_machine.state_machine_error import (
@@ -387,3 +388,40 @@ def test_registry_engine_factory_spi():
     assert isinstance(engine, _ThirdPartyEngine)
     assert engine.fire(_DemoStatus.PENDING, _DemoEvent.SUBMIT, StateRouteParams.create()) is _DemoStatus.DONE
     assert engine.calls == 1
+
+
+class _StatusEntity:
+    """带 status 字段的简单实体"""
+
+    def __init__(self, status):
+        self.status = status
+
+
+def test_base_status_router_enable_to_disable():
+    """BaseStatusRouter：ENABLE + START_OR_STOP -> DISABLE，实体状态同步翻转"""
+    entity = _StatusEntity(status=BaseStatus.ENABLE)
+    engine = StateMachine(BaseStatusRouter())
+    target = engine.fire(
+        BaseStatus.ENABLE, StartStopEvent.START_OR_STOP, StateRouteParams().add_param("entity", entity)
+    )
+    assert target is BaseStatus.DISABLE
+    assert entity.status is BaseStatus.DISABLE
+
+
+def test_base_status_router_disable_to_enable():
+    """BaseStatusRouter：DISABLE + START_OR_STOP -> ENABLE"""
+    entity = _StatusEntity(status=BaseStatus.DISABLE)
+    engine = StateMachine(BaseStatusRouter())
+    target = engine.fire(
+        BaseStatus.DISABLE, StartStopEvent.START_OR_STOP, StateRouteParams().add_param("entity", entity)
+    )
+    assert target is BaseStatus.ENABLE
+    assert entity.status is BaseStatus.ENABLE
+
+
+def test_base_status_router_missing_entity():
+    """BaseStatusRouter：缺 entity 抛 EMPTY_PARAMETER"""
+    engine = StateMachine(BaseStatusRouter())
+    with pytest.raises(BizException) as ei:
+        engine.fire(BaseStatus.ENABLE, StartStopEvent.START_OR_STOP, StateRouteParams.create())
+    assert ei.value.code == "E4-STATE-002"
