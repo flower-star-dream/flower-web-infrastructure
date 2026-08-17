@@ -29,10 +29,10 @@ class MySQLConnectionSettings(BaseModel):
     use_ssl: bool = Field(default=True, description="是否使用 SSL/TLS")
     check_hostname: bool = Field(default=True, description="校验服务器证书主机名（仅 use_ssl=True 时生效）")
     ssl_ca: str = Field(default="", description="CA 证书路径（为空时使用系统默认 CA 链）")
-    # 三层超时（规范 §14.1）：连接建立 / socket 读写 / 语句执行
+    # 超时（规范 §14.1）：连接建立 / 语句执行两层；aiomysql 0.3.x 的 connect()/Connection 均无
+    # read_timeout/write_timeout 参数（PyMySQL 同步驱动专属），socket 读写超时在 aiomysql 下不可配置，
+    # 故不提供对应字段，防止注入非法参数导致连接失败
     connect_timeout: int = Field(default=10, description="连接建立超时（秒）")
-    read_timeout: int = Field(default=30, description="socket 读超时（秒），覆盖语句执行等待响应上限")
-    write_timeout: int = Field(default=30, description="socket 写超时（秒）")
     statement_timeout_seconds: float = Field(default=0.0, description="语句执行超时（秒，0 不启用；>0 时通过会话变量 max_execution_time 生效，仅 SELECT）")
     pool_size: int = Field(default=8, description="连接池大小")
     max_overflow: int = Field(default=8, description="连接池溢出上限")
@@ -52,7 +52,7 @@ class MySQLConnectionSettings(BaseModel):
         return f"mysql+{driver}://{self.username}:{password}@{self.host}:{self.port}/{self.database}?charset={self.charset}"
 
     def _build_init_command(self) -> str:
-        """拼接连接初始化命令：UTC 会话时区 + 可选的语句执行超时（§14.1 三层超时之语句层）"""
+        """拼接连接初始化命令：UTC 会话时区 + 可选的语句执行超时（规范 §14.1 超时之语句层）"""
         commands = [INFRA_MYSQL_INIT_COMMAND]
         if self.statement_timeout_seconds > 0:
             # MySQL 8.0 会话变量 max_execution_time 仅约束 SELECT，单位毫秒
@@ -60,16 +60,17 @@ class MySQLConnectionSettings(BaseModel):
         return "; ".join(commands)
 
     def to_connect_args(self) -> dict[str, Any]:
-        """生成 aiomysql 所需 connect_args（UTC 会话时区、连接/读写超时、公钥检索与 SSL）"""
+        """生成 aiomysql 所需 connect_args（UTC 会话时区、连接建立超时、公钥检索与 SSL）。
+
+        注意：aiomysql 0.3.x 的 connect()/Connection.__init__ 均不接受 read_timeout/write_timeout
+        （PyMySQL 同步驱动专属参数），此处不注入，避免 TypeError 导致连接失败。
+        """
         connect_args: dict[str, Any] = {
             "server_public_key": self.allow_public_key_retrieval,
             # 每次连接重置会话时区为 UTC（规范 §16.1），并按需设置语句执行超时（规范 §14.1）
             "init_command": self._build_init_command(),
             # aiomysql 参数名为 connect_timeout（timeout 不是其合法参数）
             "connect_timeout": self.connect_timeout,
-            # socket 读写超时（规范 §14.1 三层超时之读写层）
-            "read_timeout": self.read_timeout,
-            "write_timeout": self.write_timeout,
         }
         if self.use_ssl:
             connect_args["ssl"] = {"ca": self.ssl_ca or None, "check_hostname": self.check_hostname}

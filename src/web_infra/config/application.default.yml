@@ -92,10 +92,9 @@ app:
       use_ssl: true
       check_hostname: true
       ssl_ca: ""
-      # 三层超时（连接建立 / socket 读写 / 语句执行；语句执行超时 0 表示不启用）
+      # 超时（连接建立 / 语句执行两层；aiomysql 0.3.x 不支持 socket 读写超时参数，
+      # 故无 read_timeout/write_timeout 配置项；语句执行超时 0 表示不启用）
       connect_timeout: 10
-      read_timeout: 30
-      write_timeout: 30
       statement_timeout_seconds: 0.0
       pool_size: 8
       max_overflow: 8

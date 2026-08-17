@@ -79,24 +79,25 @@ def test_mysql_config_build_url_usessl_mapping():
 
 
 # ------------------------------------------------------------------
-# 整改 S14-1：三层超时
+# 整改 S14-1：超时（连接建立 / 语句执行两层；aiomysql 不支持 socket 读写超时）
 # ------------------------------------------------------------------
 
-def test_mysql_settings_three_layer_timeouts():
-    """三层超时进入 connect_args：连接建立 / socket 读写 / 语句执行"""
+def test_mysql_settings_timeouts():
+    """超时进入 connect_args：连接建立 + 语句执行；aiomysql 不支持的读写超时参数不注入"""
     settings = MySQLConnectionSettings(
-        host="localhost", connect_timeout=5, read_timeout=15, write_timeout=20, statement_timeout_seconds=3.0
+        host="localhost", connect_timeout=5, statement_timeout_seconds=3.0
     )
     args = settings.to_connect_args()
     assert args["connect_timeout"] == 5
-    assert args["read_timeout"] == 15
-    assert args["write_timeout"] == 20
+    assert "read_timeout" not in args
+    assert "write_timeout" not in args
     assert "SET SESSION max_execution_time = 3000" in args["init_command"]
 
     default = MySQLConnectionSettings(host="localhost")
     default_args = default.to_connect_args()
-    assert default_args["read_timeout"] == 30
-    assert default_args["write_timeout"] == 30
+    assert default_args["connect_timeout"] == 10
+    assert "read_timeout" not in default_args
+    assert "write_timeout" not in default_args
     assert "SET SESSION max_execution_time" not in default_args["init_command"]
 
 

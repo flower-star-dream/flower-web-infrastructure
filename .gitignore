@@ -26,3 +26,6 @@ htmlcov/
 .env.*
 !.env.example
 *.local
+
+# 整改文档
+docs/superpowers/

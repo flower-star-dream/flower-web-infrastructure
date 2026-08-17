@@ -75,8 +75,6 @@ class MySQLConfig:
         echo: bool = False,
         pool_pre_ping: bool = True,
         connect_timeout: int = 10,
-        read_timeout: int = 30,
-        write_timeout: int = 30,
         datasource_name: str = "default",
         slow_sql_threshold_seconds: float = 0.2,
         slow_sql_critical_seconds: float = 2.0,
@@ -100,10 +98,9 @@ class MySQLConfig:
             )
         elif url is not None:
             self.url, self.connect_args = self._build_url(url, username, password)
-            self.connect_args["connect_timeout"] = connect_timeout
-            # 读写超时默认 30s（规范 §14.1 三层超时），URL 未显式声明时生效
-            self.connect_args.setdefault("read_timeout", read_timeout)
-            self.connect_args.setdefault("write_timeout", write_timeout)
+            # 连接建立超时默认 10s（规范 §14.1），URL 未显式声明时生效；
+            # 注意：aiomysql 0.3.x 不支持 read_timeout/write_timeout（PyMySQL 同步驱动专属），不注入
+            self.connect_args.setdefault("connect_timeout", connect_timeout)
             self.username = username
             self.password = password
         else:
@@ -153,10 +150,12 @@ class MySQLConfig:
         parsed = urlparse(url)
         query_params = dict(parse_qsl(parsed.query))
 
+        # aiomysql 0.3.x connect()/Connection 合法参数白名单；
+        # read_timeout/write_timeout 为 PyMySQL 同步驱动专属，aiomysql 不接受，不入白名单
         aiomysql_supported = {
             "charset", "sql_mode", "read_default_file", "conv", "use_unicode", "client_flag",
             "cursorclass", "init_command", "connect_timeout", "read_default_group", "autocommit",
-            "local_infile", "max_allowed_packet", "auth_plugin_map", "read_timeout", "write_timeout",
+            "local_infile", "max_allowed_packet", "auth_plugin_map",
             "bind_address", "binary_prefix", "program_name", "server_public_key", "ssl", "db",
         }
         jdbc_to_aiomysql = {
@@ -366,10 +365,8 @@ class MySQLConfig:
             from sqlalchemy.ext.asyncio import create_async_engine
 
         replica_url, connect_args = self._build_url(url, self.replica_username, self.replica_password)
-        # 复用主库三层超时（规范 §14.1）：连接建立 / socket 读写
+        # 复用主库连接建立超时（规范 §14.1）；aiomysql 不支持 socket 读写超时，不注入
         connect_args["connect_timeout"] = self.connect_args.get("connect_timeout", 10)
-        connect_args.setdefault("read_timeout", self.connect_args.get("read_timeout", 30))
-        connect_args.setdefault("write_timeout", self.connect_args.get("write_timeout", 30))
         engine = create_async_engine(
             replica_url,
             pool_size=self.pool_size,
