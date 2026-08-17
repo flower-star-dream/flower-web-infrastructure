@@ -1,0 +1,266 @@
+"""自动版本管理脚本
+
+@Author: 花海
+@Date: 2026/08/17 21:10
+@Description: prepare-commit-msg 钩子调用的版本自动递增核心脚本：
+              按 conventional commits 前缀推断提交类型（feat→小版本+1、fix 等→补丁+1、
+              docs/chore→不变、含 BREAKING CHANGE 或 !→大版本+1），同步更新
+              pyproject.toml 与 src/web_infra/__init__.py 两处版本号并 git add 纳入本次提交。
+              dev 分支打测试版本号（PEP 440 .devN，基础版本不动仅递增 dev 序号）；
+              合入 main 后正式提交剥离 .devN 再按类型递增生成正式版。
+              merge / revert / squash 提交跳过（无法解析前缀，避免误改版本）。
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import subprocess
+import sys
+from enum import Enum
+from pathlib import Path
+
+# 版本号：X.Y.Z 或 X.Y.Z.devN（PEP 440 开发版本号）
+_VERSION_RE = re.compile(
+    r"^(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)(?:\.dev(?P<dev>\d+))?$"
+)
+
+# pyproject.toml 中 version = "..."（仅 [project] 段首处）
+_PYPROJECT_VERSION_RE = re.compile(r'(?m)^version\s*=\s*"[^"]*"')
+
+# __init__.py 中 __version__ = "..."
+_INIT_VERSION_RE = re.compile(r'(?m)^__version__\s*=\s*"[^"]*"')
+
+# conventional commits 前缀（支持 scope，如 feat(auth): xxx；前缀大小写不敏感）
+_TYPE_RE = re.compile(
+    r"^(?P<type>feat|fix|refactor|perf|test|build|ci|style|docs|chore)"
+    r"(?:\((?P<scope>[^()]*)\))?"
+    r"(?P<breaking>!)?:",
+    re.IGNORECASE,
+)
+
+# 版本文件（相对仓库根）：代码与文档中展示框架当前版本的位置，随版本号自动同步
+_VERSION_FILES = (
+    "pyproject.toml",
+    "src/web_infra/__init__.py",
+    "README.md",
+    "docs/CI-CD.md",
+    "docs/使用说明.md",
+)
+
+# 文档中的框架当前版本引用（写入时用上下文精确匹配，避免误伤规则示例表、
+# 数据库迁移版本 V0.2.0-*、业务版本号等；{v} 会被替换为当前（旧）版本号）
+_DOC_VERSION_RULES: tuple[tuple[str, str], ...] = (
+    ("README.md", r"version-v{v}(?=-blue)"),        # 徽章版本
+    ("README.md", r"\| 当前版本 \| v{v}"),            # 项目信息表当前版本
+    ("README.md", r"当前版本：\*\*v{v}\*\*"),         # §13 当前版本
+    ("docs/CI-CD.md", r"tag `v{v}` → 推送 `{v}`"),     # 镜像标签规范示例
+    ("docs/使用说明.md", r"@v{v}"),                    # Git 依赖安装示例
+)
+
+# 开发分支判定模式：精确匹配 dev，或 dev/、dev- 前缀，或 -dev 后缀
+_DEV_BRANCH_PATTERNS = ("dev/", "dev-", "-dev")
+
+
+class CommitType(Enum):
+    """提交类型（决定版本递增策略）。"""
+
+    SKIP = "skip"        # merge / revert / squash：跳过，不更新版本
+    NO_CHANGE = "no_change"  # docs / chore：纯文档或杂物，不更新版本
+    BREAKING = "breaking"    # 破坏性变更：大版本 +1
+    FEAT = "feat"            # 新功能：小版本 +1
+    PATCH = "patch"          # 修复或其他小修改：补丁 +1
+
+
+def parse_commit_type(subject: str, body: str = "", source: str = "") -> CommitType:
+    """解析提交类型（含 scope / 破坏性标记）。
+
+    :param subject: 提交信息第一行（主题）
+    :param body: 提交信息其余内容（用于识别 BREAKING CHANGE footer）
+    :param source: prepare-commit-msg 钩子的第二参数（提交信息来源）
+    :return: CommitType
+    """
+    # merge / squash 提交信息无法解析前缀，直接跳过
+    if source in ("merge", "squash") or subject.startswith("Merge "):
+        return CommitType.SKIP
+    # revert 提交不自动递增（版本应回到被还原前的语义，由人工处理）
+    if subject.startswith("Revert "):
+        return CommitType.SKIP
+
+    full_text = f"{subject}\n{body}"
+    breaking_footer = bool(re.search(r"BREAKING[ -]CHANGE\s*:", full_text, re.IGNORECASE))
+
+    m = _TYPE_RE.match(subject.strip())
+    if m is None:
+        # 无标准前缀：视为"其他小修改"，按补丁处理（提示用户规范前缀）
+        return CommitType.BREAKING if breaking_footer else CommitType.PATCH
+
+    commit_type = m.group("type").lower()
+    has_bang = m.group("breaking") == "!"
+    if breaking_footer or has_bang:
+        return CommitType.BREAKING
+    if commit_type in ("docs", "chore"):
+        return CommitType.NO_CHANGE
+    if commit_type == "feat":
+        return CommitType.FEAT
+    return CommitType.PATCH
+
+
+def is_dev_branch(branch: str) -> bool:
+    """判断分支是否为开发分支（打测试版本号 .devN）。
+
+    :param branch: 分支名（git branch --show-current）
+    :return: True 表示开发分支
+    """
+    if not branch:
+        return False
+    return branch == "dev" or any(
+        branch.startswith(p) or branch.endswith(p) for p in _DEV_BRANCH_PATTERNS
+    )
+
+
+def bump_version(current: str, commit_type: CommitType, branch: str) -> str | None:
+    """根据提交类型与分支计算新版本号。
+
+    :param current: 当前版本（X.Y.Z 或 X.Y.Z.devN）
+    :param commit_type: 提交类型
+    :param branch: 当前分支名
+    :return: 新版本号；None 表示无需更新
+    :raises ValueError: 当前版本号格式非法
+    """
+    if commit_type in (CommitType.SKIP, CommitType.NO_CHANGE):
+        return None
+
+    m = _VERSION_RE.match(current)
+    if m is None:
+        raise ValueError(f"无法解析版本号: {current!r}（期望 X.Y.Z 或 X.Y.Z.devN）")
+    major, minor, patch = int(m.group("major")), int(m.group("minor")), int(m.group("patch"))
+    dev = int(m.group("dev")) if m.group("dev") is not None else None
+
+    # 开发分支：基础版本不动，仅递增/追加测试版本号 .devN
+    if is_dev_branch(branch):
+        base = f"{major}.{minor}.{patch}"
+        return f"{base}.dev{0 if dev is None else dev + 1}"
+
+    # 正式分支：剥离 .devN（若有）后按提交类型递增基础版本
+    if commit_type is CommitType.BREAKING:
+        return f"{major + 1}.0.0"
+    if commit_type is CommitType.FEAT:
+        return f"{major}.{minor + 1}.0"
+    return f"{major}.{minor}.{patch + 1}"
+
+
+def read_current_version(repo_root: Path) -> str:
+    """从 pyproject.toml 读取当前版本（权威来源）。
+
+    :param repo_root: 仓库根目录
+    :return: 当前版本号
+    :raises RuntimeError: pyproject.toml 中未找到 version 字段
+    """
+    text = (repo_root / "pyproject.toml").read_text(encoding="utf-8")
+    m = _PYPROJECT_VERSION_RE.search(text)
+    if m is None:
+        raise RuntimeError("pyproject.toml 中未找到 version 字段")
+    return m.group(0).split('"')[1]
+
+
+def write_version(repo_root: Path, old_version: str, new_version: str) -> None:
+    """同步更新 pyproject.toml、__init__.py 及文档中的框架版本号引用。
+
+    :param repo_root: 仓库根目录
+    :param old_version: 当前（旧）版本号，用于文档引用精确匹配
+    :param new_version: 新版本号
+    :raises RuntimeError: 代码版本字段未匹配到，已中止写入
+    """
+    pyproject_path = repo_root / "pyproject.toml"
+    init_path = repo_root / "src" / "web_infra" / "__init__.py"
+
+    text = pyproject_path.read_text(encoding="utf-8")
+    updated, count = _PYPROJECT_VERSION_RE.subn(f'version = "{new_version}"', text, count=1)
+    if count != 1:
+        raise RuntimeError("pyproject.toml 中未匹配到 version 字段，已中止写入")
+    pyproject_path.write_text(updated, encoding="utf-8")
+
+    text = init_path.read_text(encoding="utf-8")
+    updated, count = _INIT_VERSION_RE.subn(f'__version__ = "{new_version}"', text, count=1)
+    if count != 1:
+        raise RuntimeError("__init__.py 中未匹配到 __version__ 字段，已中止写入")
+    init_path.write_text(updated, encoding="utf-8")
+
+    # 文档中的当前版本展示（README 徽章/信息表/§13 与 docs 示例），按上下文精确匹配替换
+    for rel_path, template in _DOC_VERSION_RULES:
+        doc_path = repo_root / rel_path
+        if not doc_path.exists():
+            continue
+        text = doc_path.read_text(encoding="utf-8")
+        pattern = template.format(v=re.escape(old_version))
+        updated, _ = re.subn(pattern, lambda m: m.group(0).replace(old_version, new_version), text)
+        if updated != text:
+            doc_path.write_text(updated, encoding="utf-8")
+
+
+def read_commit_message(message_path: str) -> tuple[str, str]:
+    """读取提交信息文件，拆分为主题与正文。
+
+    :param message_path: 提交信息文件路径（prepare-commit-msg 的 $1，可能为相对路径）
+    :return: (subject, body)
+    """
+    with open(os.path.abspath(message_path), encoding="utf-8", errors="replace") as f:
+        lines = f.read().splitlines()
+    if not lines:
+        return "", ""
+    return lines[0], "\n".join(lines[1:])
+
+
+def git(args: list[str], repo_root: Path) -> str:
+    """执行 git 命令并返回 stdout（去尾换行）。
+
+    :param args: git 子命令参数
+    :param repo_root: 仓库根目录（作为 cwd）
+    :return: 命令标准输出
+    """
+    result = subprocess.run(
+        ["git", *args], cwd=str(repo_root), capture_output=True, text=True, encoding="utf-8"
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"git {' '.join(args)} 失败: {result.stderr.strip()}")
+    return result.stdout.strip()
+
+
+def main() -> int:
+    """prepare-commit-msg 钩子入口：解析提交信息 → 计算新版本 → 写回并 git add。
+
+    :return: 退出码（0 正常；异常信息打印后仍返回 0，不阻塞提交）
+    """
+    repo_root = Path(__file__).resolve().parents[1]
+
+    try:
+        if len(sys.argv) < 2:
+            return 0
+        source = sys.argv[2] if len(sys.argv) > 2 else ""
+        subject, body = read_commit_message(sys.argv[1])
+        commit_type = parse_commit_type(subject, body, source)
+        if commit_type is CommitType.SKIP:
+            print("[version-bump] 跳过：merge/revert/squash 提交不更新版本")
+            return 0
+        if commit_type is CommitType.NO_CHANGE:
+            print("[version-bump] 跳过：docs/chore 提交不更新版本")
+            return 0
+
+        branch = git(["branch", "--show-current"], repo_root)
+        current = read_current_version(repo_root)
+        new_version = bump_version(current, commit_type, branch)
+        if new_version is None or new_version == current:
+            return 0
+
+        write_version(repo_root, current, new_version)
+        # 将版本文件纳入本次提交（prepare-commit-msg 阶段 git add 有效）
+        git(["add", *_VERSION_FILES], repo_root)
+        print(f"[version-bump] 版本号自动更新: {current} -> {new_version}（分支 {branch or 'HEAD'}）")
+    except Exception as exc:  # noqa: BLE001 - 钩子失败不阻塞提交，仅告警
+        print(f"[version-bump] 警告：自动版本更新失败（{exc}），本次提交保留现有版本号")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -857,6 +857,40 @@ GitHub Actions 工作流位于 `.github/workflows/ci.yml`，推送 `main` / 版�
 - 当前版本：**v0.1.0**（与 `pyproject.toml` 保持同步）。
 - 错误码 `E<大类>-<子类/域>-<3位编号>`、成功码 `S0000` 一经发布不可变更语义。
 
+### 13.1 自动版本管理
+
+框架通过 `prepare-commit-msg` 钩子在每次 `git commit` 时**自动递增版本号**并**全框架统一同步**（自动纳入本次提交，无需手动维护）：
+
+- 权威来源：`pyproject.toml` 的 `version` 字段（版本递增的基准）；
+- 同步位置：`src/web_infra/__init__.py`（`__version__`）、README 当前版本展示（徽章 / 项目信息表 / §13）、docs 中的版本示例（CI-CD.md 镜像标签、使用说明.md 安装命令）；
+- 不随版本同步：`db/versions/` 与 `alembic/` 的 `V0.2.0-*` 数据库迁移链历史（改则破坏迁移对应关系）、`requirements.lock`（pip freeze 生成物，重新生成即可）、业务版本号（模型版本 / Prompt 模板版本 / 任务乐观锁）。
+
+版本递增规则：
+
+| 提交前缀（conventional commits）          | 版本变化        | 示例                          |
+| ----------------------------------------- | --------------- | ----------------------------- |
+| `feat` / `feat(scope)`                    | 小版本 +1       | `0.1.0` → `0.2.0`             |
+| `fix` / `refactor` / `perf` / `test` / `build` / `ci` / `style` | 补丁 +1 | `0.1.0` → `0.1.1` |
+| 含 `BREAKING CHANGE:`（footer）或 `!:`（如 `feat!: xxx`） | 大版本 +1 | `0.1.0` → `1.0.0` |
+| `docs` / `chore`（纯文档/杂物）           | 不变            | —                             |
+| `Merge ...` / revert / squash（无前缀，无法解析） | 跳过，不变 | —                             |
+| 其他无前缀提交                            | 按补丁 +1（建议使用规范前缀） | `0.1.0` → `0.1.1` |
+
+分支规则：
+
+- **开发分支（`dev` / `dev/*` / `dev-*` / `*-dev`）**：打测试版本号（PEP 440），基础版本不动、仅递增 dev 序号，如 `0.1.0` → `0.1.0.dev0` → `0.1.0.dev1`；合入 `main` 后正式提交剥离 `.devN` 并按上表递增生成正式版本（如 `0.1.0.dev5` + fix → `0.1.1`）。
+- **正式分支（`main` 等）**：直接按上表递增正式版本号。
+- 版本打 tag（`v*`，触发 CI 正式版镜像发布）仍需手动执行，钩子只更新版本号不打 tag。
+
+安装钩子（`.git/hooks` 不入库，每个 clone 后执行一次）：
+
+```bash
+python scripts/install_hooks.py             # 安装（已有他人钩子先备份为 .bak）
+python scripts/install_hooks.py --uninstall # 卸载（自动恢复备份）
+```
+
+> 注意：提交前缀映射依赖 `prepare-commit-msg` 钩子，使用 `git commit --no-verify` 时不会触发自动版本更新。
+
 ## 14. 许可证
 
 MIT License。
