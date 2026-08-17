@@ -665,14 +665,15 @@ CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "
 
 ## 11. CI/CD
 
-GitHub Actions 工作流位于 `.github/workflows/ci.yml`，推送 `main` / 版本 tag `v*` / 提交 PR 时自动执行：
+GitHub Actions 工作流位于 `.github/workflows/ci.yml`，推送 `main` / `dev` / 版本 tag `v*` / 提交 PR 时自动执行：
 
 - **test**：静态类型检查（pyright，容忍既有基线）+ 单元测试（pytest，硬性门禁）；
-- **build-image**：Docker 基础镜像构建 + Trivy 漏洞扫描 + cosign keyless 签名（OIDC，无需密钥）+ `/health/live` 存活冒烟验证 + GHCR 推送（push `main` 推测试标签与 `latest`，版本 tag 推 SemVer + `latest`，PR 不推送）。
+- **build-image**：Docker 基础镜像构建 + Trivy 漏洞扫描 + cosign keyless 签名（OIDC，无需密钥）+ `/health/live` 存活冒烟验证 + GHCR 推送（push `main` 推测试标签与 `latest`，版本 tag 推 SemVer + `latest`，dev push 与 PR 不推送）。
 
 **触发规则**：
 
-- **非代码变更不触发**：仅修改文档与非代码文件（`*.md`、`docs/**`、`LICENSE`、`.gitignore`、`.env.example`、`db/**`、`data/**`）时，push `main` 与 PR 均不运行流水线（`paths-ignore`）；
+- **dev 分支推送即验证**：推送 `dev` 运行全量验证（test + 镜像构建/漏洞扫描/冒烟，不推送镜像），保证 **CI 通过后再提 PR**；
+- **非代码变更不触发**：仅修改文档与非代码文件（`*.md`、`docs/**`、`LICENSE`、`.gitignore`、`.env.example`、`db/**`、`data/**`）时，push `main` / `dev` 与 PR 均不运行流水线（`paths-ignore`）；
 - **版本 tag 无条件触发**：`v*` 版本 tag 不受 `paths-ignore` 影响，保证正式版镜像必发布；
 - **镜像签名**：cosign keyless（OIDC）签名，先推送 GHCR 再签名（cosign 只能签名仓库中的镜像，本地 `:ci` 标签会被解析到 Docker Hub 导致 401），部署侧必须配套 `cosign verify` 校验后再拉取镜像。
 
