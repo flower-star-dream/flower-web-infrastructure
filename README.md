@@ -760,6 +760,8 @@ git push origin main
 
 **不推荐：网页端合入**——GitHub 网页 merge / squash 不触发本地钩子，main 会残留 `.devN` 测试版本号，需在 main 本地再提交一次才能正式化。
 
+**走 PR 合入（推荐）则无需手动发版**：dev→main 的 PR 合并成功后，[release workflow](./.github/workflows/release.yml) 自动在 main 生成正式版本——剥离 `.devN` 并按 **PR 标题前缀**递增（`feat`→小版本、`fix` 等→补丁、`!` / `BREAKING CHANGE`→大版本、`docs`/`chore`→仅剥离正式化不递增），同步更新 README / docs 版本引用并提交推送 main。注意：**PR 标题必须带 conventional 前缀**，否则按补丁处理；该 workflow 只更新版本号，不打 tag。
+
 > 合入 main 生成正式版本号后，如需发布正式版镜像，手动打 tag 推送即可（`git tag v0.2.0 && git push origin v0.2.0`，CI 的 `v*` tag 会触发正式版镜像构建与签名）。
 
 ## 14. 许可证
