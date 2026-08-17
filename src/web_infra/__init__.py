@@ -13,6 +13,16 @@ Web 系统通用后端基础设施
               能力依赖模型（2026-08-17）：CapabilityRegistry 声明能力契约与依赖包含规则
               （用户系统 → 鉴权 → 支付，以此类推），启用能力按包含关系自动带上前置。
 """
+# .env 提前加载（2026-08-17）：Settings.default_source() 仅在 create_app() 调用时才加载项目根 .env，
+# 而 SnowflakeUtil / LocalObjectStorage / TokenCounter 等模块在包导入期读取环境变量
+# （SNOWFLAKE_WORKER_ID / LOCAL_STORAGE_PRESIGN_SECRET / LLM_MODEL_RESOURCE_DIR），
+# 若等到 create_app 才加载会导致这些值恒为默认（如雪花 ID 的 worker_id 恒为 0 并告警）。
+# 此处包导入即加载项目根 .env（已存在的进程/容器环境变量优先，不覆盖），
+# 保证模块级环境变量读取在包导入时能拿到 .env 中的值。
+from web_infra.config.config_utils import load_env_file  # noqa: E402
+
+load_env_file()
+
 from importlib import import_module
 from typing import TYPE_CHECKING
 

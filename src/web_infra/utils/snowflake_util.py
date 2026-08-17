@@ -65,16 +65,31 @@ class SnowflakeUtil:
         return timestamp
 
 
-_worker_id = int(os.getenv("SNOWFLAKE_WORKER_ID", "0"))
-if _worker_id == 0:
-    # 多实例部署未区分 worker_id 时，同一毫秒内不同实例可能生成重复 ID（仅配置风险，不影响单实例）
-    logging.getLogger("web_infra").warning(
-        "SNOWFLAKE_WORKER_ID 未配置（默认 0）：多实例部署必须为每个实例配置唯一 worker_id，"
-        "否则同一毫秒内不同实例可能生成重复雪花 ID"
-    )
-_snowflake = SnowflakeUtil(worker_id=_worker_id)
+# worker_id 延迟读取（2026-08-17）：.env 文件由 web_infra 包导入时（web_infra/__init__.py）提前加载，
+# 但为杜绝任何路径下模块级立即读取早于 .env 加载（雪花 ID 恒为默认 0 并告警），
+# 改为首次生成 ID 时读取 SNOWFLAKE_WORKER_ID 并构造单例。
+_worker_id: int | None = None
+_snowflake: SnowflakeUtil | None = None
+
+
+def _get_snowflake() -> SnowflakeUtil:
+    """获取雪花生成器单例：首次调用时读取 SNOWFLAKE_WORKER_ID（此时 .env 已加载）并构造。
+
+    :return: SnowflakeUtil 单例
+    """
+    global _worker_id, _snowflake
+    if _snowflake is None:
+        _worker_id = int(os.getenv("SNOWFLAKE_WORKER_ID", "0"))
+        if _worker_id == 0:
+            # 多实例部署未区分 worker_id 时，同一毫秒内不同实例可能生成重复 ID（仅配置风险，不影响单实例）
+            logging.getLogger("web_infra").warning(
+                "SNOWFLAKE_WORKER_ID 未配置（默认 0）：多实例部署必须为每个实例配置唯一 worker_id，"
+                "否则同一毫秒内不同实例可能生成重复雪花 ID"
+            )
+        _snowflake = SnowflakeUtil(worker_id=_worker_id)
+    return _snowflake
 
 
 def snowflake_id() -> int:
     """生成雪花 ID 的便捷函数"""
-    return _snowflake.next_id()
+    return _get_snowflake().next_id()

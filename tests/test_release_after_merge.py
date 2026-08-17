@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from release_after_merge import (  # noqa: E402
     GitHubApi,
     _clean_stale_release_branch,
+    ensure_and_push_tag,
     evaluate_check_runs,
     parse_repo_remote,
     release_version,
@@ -242,6 +243,39 @@ class TestCleanStaleReleaseBranch:
         calls = self._monkeypatch_git(monkeypatch, {})
         _clean_stale_release_branch(Path("."), "release/v0.2.0")
         assert calls == [["ls-remote", "--heads", "origin", "release/v0.2.0"]]
+
+
+class TestEnsureAndPushTag:
+    """正式版本 tag 推送（触发 ci.yml 正式版镜像发布）。"""
+
+    @staticmethod
+    def _monkeypatch_git(monkeypatch: pytest.MonkeyPatch, results: dict[tuple[str, ...], str]) -> list[list[str]]:
+        """替换 git 执行器：按命令元组返回预设 stdout，并记录调用。"""
+
+        calls: list[list[str]] = []
+
+        def fake_git(args: list[str], repo_root: Path) -> str:
+            calls.append(args)
+            return results.get(tuple(args), "")
+
+        monkeypatch.setattr("release_after_merge.git", fake_git)
+        return calls
+
+    def test_tag_not_exists_push(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # 远端无同名 tag：探测后打 tag 并推送
+        calls = self._monkeypatch_git(monkeypatch, {})
+        ensure_and_push_tag(Path("."), "0.2.0")
+        assert ["ls-remote", "--tags", "origin", "v0.2.0"] in calls
+        assert ["tag", "v0.2.0"] in calls
+        assert ["push", "origin", "v0.2.0"] in calls
+
+    def test_tag_exists_skip(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # 远端已存在同名 tag（上次推送成功但后续步骤失败）：仅探测，不重复打 tag/推送
+        calls = self._monkeypatch_git(monkeypatch, {
+            ("ls-remote", "--tags", "origin", "v0.1.1"): "abc123\trefs/tags/v0.1.1\n",
+        })
+        ensure_and_push_tag(Path("."), "0.1.1")
+        assert calls == [["ls-remote", "--tags", "origin", "v0.1.1"]]
 
 
 class TestWaitForChecks:

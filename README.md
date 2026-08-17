@@ -881,7 +881,7 @@ GitHub Actions 工作流位于 `.github/workflows/ci.yml`，推送 `main` / `dev
 
 - **开发分支（`dev` / `dev/*` / `dev-*` / `*-dev`）**：打测试版本号（PEP 440），基础版本不动、仅递增 dev 序号，如 `0.1.0` → `0.1.0.dev0` → `0.1.0.dev1`；合入 `main` 后正式提交剥离 `.devN` 并按上表递增生成正式版本（如 `0.1.0.dev5` + fix → `0.1.1`）。
 - **正式分支（`main` 等）**：直接按上表递增正式版本号。
-- 版本打 tag（`v*`，触发 CI 正式版镜像发布）仍需手动执行，钩子只更新版本号不打 tag。
+- 版本打 tag（`v*`，触发 CI 正式版镜像发布）：dev→main 走 PR 合入时由 release workflow **自动完成**；直接提交 main / 本地合入场景仍需手动执行（本地钩子只更新版本号不打 tag）。
 
 安装钩子（`.git/hooks` 不入库，每个 clone 后执行一次）：
 
@@ -903,7 +903,7 @@ dev 分支开发（本地钩子自动打 `X.Y.Z.devN` 测试版本号）→ 推�
 - 剥离 `.devN` 并按 **PR 标题前缀**递增：`feat`→小版本、`fix` 等→补丁、`!` / `BREAKING CHANGE`→大版本、`docs`/`chore`→仅剥离正式化不递增；
 - 同步更新 README / docs 版本引用；
 - 经 **release/vX.Y.Z 临时分支创建 PR 自动合入 main**（PR 触发 CI，检查通过后自动合并），全程符合 main 分支保护；
-- 仅更新版本号，不打 tag。
+- 合并发版 PR 后自动打 `vX.Y.Z` tag 并推送，触发 CI 正式版镜像发布（SemVer + `latest`）。
 
 注意：**PR 标题必须带 conventional 前缀**，否则按补丁处理；release workflow 只在 `base=main` + `head=dev` 且合并成功时触发（release 分支自身的 PR 不会触发，避免循环）。
 
@@ -923,7 +923,7 @@ git push origin main
 - 如需保留分支历史可改用 `git merge dev`：merge 提交钩子自动跳过（不更新版本），需在 main 上再提交一次（如 `fix: 合入后的收尾修改`）生成正式版本；
 - 若 main 与 dev 都改过 `pyproject.toml` 产生冲突，手动保留版本号较高的一方即可（如保留 dev 的 `0.1.0.dev5`）。
 
-> 合入 main 生成正式版本号后，如需发布正式版镜像，手动打 tag 推送即可（`git tag v0.2.0 && git push origin v0.2.0`，CI 的 `v*` tag 会触发正式版镜像构建与签名）。
+> 合入 main 生成正式版本号后，正式版镜像由 release workflow **自动打 tag 发布**（dev→main 走 PR 合入时，发版 PR 合并后自动推 `vX.Y.Z` tag）；本地合并场景（备选方案）需手动打 tag 推送（`git tag v0.2.0 && git push origin v0.2.0`，CI 的 `v*` tag 会触发正式版镜像构建与签名）。
 
 ## 14. 许可证
 

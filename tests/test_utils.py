@@ -67,6 +67,25 @@ def test_snowflake_id():
     assert snowflake_id() > 0
 
 
+def test_snowflake_worker_id_lazy_from_env(monkeypatch):
+    """SNOWFLAKE_WORKER_ID 延迟读取：.env 加载后首次生成 ID 才读环境变量，不再恒为默认 0。
+
+    回归：2026-08-17 修复前 worker_id 在模块导入期立即读取，早于 .env 加载
+    （Settings.default_source() 在 create_app 时才加载 .env），导致雪花 ID 恒为默认 0 并告警。
+    """
+    import importlib
+
+    import web_infra.utils.snowflake_util as su
+
+    monkeypatch.setenv("SNOWFLAKE_WORKER_ID", "7")
+    reloaded = importlib.reload(su)
+    # 首次生成 ID 前不构造单例（worker_id 未读）
+    assert reloaded._snowflake is None
+    reloaded.snowflake_id()
+    assert reloaded._snowflake is not None
+    assert reloaded._snowflake.worker_id == 7
+
+
 def test_to_int():
     """安全转整数"""
     assert DataUtil.to_int("123") == 123
