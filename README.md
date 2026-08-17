@@ -701,7 +701,7 @@ GitHub Actions 工作流位于 `.github/workflows/ci.yml`，推送 `main` / 版�
 框架通过 `prepare-commit-msg` 钩子在每次 `git commit` 时**自动递增版本号**并**全框架统一同步**（自动纳入本次提交，无需手动维护）：
 
 - 权威来源：`pyproject.toml` 的 `version` 字段（版本递增的基准）；
-- 同步位置：`src/web_infra/__init__.py`（`__version__`）、README 当前版本展示（徽章 / 项目信息表 / §13）、docs 中的版本示例（CI-CD.md 镜像标签、使用说明.md 安装命令）；
+- 同步位置：`src/web_infra/__init__.py`（`__version__`）、README 当前版本展示（徽章 / 项目信息表 / §13）、README 演示示例（规则示例表 / 开发分支示例 / 合入指南，以基础版本为基数整体重算）、docs 中的版本示例（CI-CD.md 镜像标签、使用说明.md 安装命令）；
 - 不随版本同步：`db/versions/` 与 `alembic/` 的 `V0.2.0-*` 数据库迁移链历史（改则破坏迁移对应关系）、`requirements.lock`（pip freeze 生成物，重新生成即可）、业务版本号（模型版本 / Prompt 模板版本 / 任务乐观锁）。
 
 版本递增规则：
@@ -732,9 +732,19 @@ python scripts/install_hooks.py --uninstall # 卸载（自动恢复备份）
 
 #### 13.1.1 dev → main 合入时如何正确生成正式版本
 
-版本钩子是**本地钩子**（`.git/hooks/`），只在本地 `git commit` 时运行；GitHub 网页端的 merge / squash / rebase 不会触发钩子，合入后 main 分支会停留在 dev 合入时的版本（通常为 `X.Y.Z.devN` 测试版本号）。因此**合入 main 请走本地操作**，让钩子生成正式版本。
+版本号由**本地钩子**（`.git/hooks/`，仅在本地 `git commit` 时运行）与 **release workflow**（PR 合入后自动执行，见 [release.yml](./.github/workflows/release.yml)）协同维护。dev→main 合入推荐走 PR：
 
-**推荐：本地 squash 合并（单次提交，一步生成正式版本）**
+**首选：dev→main 走 PR 合入（自动发版，无需手动操作）**
+
+dev 分支开发（本地钩子自动打 `X.Y.Z.devN` 测试版本号）→ 推送远程 → 创建 dev→main PR（网页或 `gh pr create` 均可）→ 合并 PR（网页 Merge / `gh pr merge` 均可）→ [release workflow](./.github/workflows/release.yml) 自动完成发版：
+
+- 剥离 `.devN` 并按 **PR 标题前缀**递增：`feat`→小版本、`fix` 等→补丁、`!` / `BREAKING CHANGE`→大版本、`docs`/`chore`→仅剥离正式化不递增；
+- 同步更新 README / docs 版本引用并提交推送 main；
+- 仅更新版本号，不打 tag。
+
+注意：**PR 标题必须带 conventional 前缀**，否则按补丁处理；release workflow 只在 `base=main` + `head=dev` 且合并成功时触发。
+
+**备选：本地合并（不走 PR，由本地钩子发版）**
 
 ```bash
 git checkout main
@@ -745,22 +755,8 @@ git push origin main
 ```
 
 - 合入前 dev 版本为 `0.1.0.dev5`，合入后 main 上 `feat` 提交 → 剥离 `.devN` 得 `0.1.0` → 小版本 +1 → **`0.2.0`**（正式版），README 徽章 / 当前版本 / docs 示例随提交自动同步；
-- commit 前缀按合入内容取 `feat` / `fix` / `refactor` 等，破坏性变更加 `!` 或 `BREAKING CHANGE:` 生成大版本；
+- 如需保留分支历史可改用 `git merge dev`：merge 提交钩子自动跳过（不更新版本），需在 main 上再提交一次（如 `fix: 合入后的收尾修改`）生成正式版本；
 - 若 main 与 dev 都改过 `pyproject.toml` 产生冲突，手动保留版本号较高的一方即可（如保留 dev 的 `0.1.0.dev5`）。
-
-**备选：本地普通合并（保留分支历史，需再提交一次）**
-
-```bash
-git checkout main
-git pull origin main
-git merge dev                  # 产生 merge commit，钩子对 merge 提交自动跳过（不更新版本）
-git commit -m "fix: 合入后的收尾修改"     # main 上再提交一次，钩子剥离 .devN 生成正式版本
-git push origin main
-```
-
-**不推荐：网页端合入**——GitHub 网页 merge / squash 不触发本地钩子，main 会残留 `.devN` 测试版本号，需在 main 本地再提交一次才能正式化。
-
-**走 PR 合入（推荐）则无需手动发版**：dev→main 的 PR 合并成功后，[release workflow](./.github/workflows/release.yml) 自动在 main 生成正式版本——剥离 `.devN` 并按 **PR 标题前缀**递增（`feat`→小版本、`fix` 等→补丁、`!` / `BREAKING CHANGE`→大版本、`docs`/`chore`→仅剥离正式化不递增），同步更新 README / docs 版本引用并提交推送 main。注意：**PR 标题必须带 conventional 前缀**，否则按补丁处理；该 workflow 只更新版本号，不打 tag。
 
 > 合入 main 生成正式版本号后，如需发布正式版镜像，手动打 tag 推送即可（`git tag v0.2.0 && git push origin v0.2.0`，CI 的 `v*` tag 会触发正式版镜像构建与签名）。
 

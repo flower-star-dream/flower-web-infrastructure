@@ -164,6 +164,77 @@ def read_current_version(repo_root: Path) -> str:
     return m.group(0).split('"')[1]
 
 
+def _base_version(version: str) -> str:
+    """提取版本号的基础部分（剥离 .devN 测试后缀）。
+
+    :param version: 完整版本号（X.Y.Z 或 X.Y.Z.devN）
+    :return: 基础版本 X.Y.Z
+    """
+    m = _VERSION_RE.match(version)
+    if m is None:
+        raise ValueError(f"无法解析版本号: {version!r}")
+    return f"{m.group('major')}.{m.group('minor')}.{m.group('patch')}"
+
+
+def _bump_base(base: str, kind: str) -> str:
+    """对基础版本 X.Y.Z 按类型递增（用于重算 README 演示示例的目标版本）。
+
+    :param base: 基础版本 X.Y.Z
+    :param kind: minor（小版本+1）/ patch（补丁+1）/ major（大版本+1）
+    :return: 递增后的版本
+    """
+    major, minor, patch = (int(part) for part in base.split("."))
+    if kind == "major":
+        return f"{major + 1}.0.0"
+    if kind == "minor":
+        return f"{major}.{minor + 1}.0"
+    return f"{major}.{minor}.{patch + 1}"
+
+
+def _sync_readme_examples(text: str, old_version: str, new_version: str) -> str:
+    """同步 README 规则示例表 / 开发分支示例 / 合入指南中的演示示例。
+
+    演示示例以当前基础版本 X.Y.Z 为基数（如 `0.1.0` → `0.2.0` 的 feat 演示），
+    随版本变化整体重算基数与目标（小版本目标 = 基数 minor+1、补丁目标 = 基数 patch+1、
+    大版本目标 = 基数 major+1）。dev 分支基础版本不变时（如 0.1.0.dev0）示例不动。
+
+    仅处理含示例特征的行（→ / .dev / PEP 440 / tag v），跳过含 "V0." 的数据库迁移引用行，
+    且要求行内出现当前基数（old_base）或其派生目标，避免误伤非示例内容。
+
+    :param text: README 全文
+    :param old_version: 当前（旧）版本号
+    :param new_version: 新版本号
+    :return: 同步后的 README 文本
+    """
+    old_base = _base_version(old_version)
+    new_base = _base_version(new_version)
+    if old_base == new_base:
+        return text
+
+    # 旧基数派生目标（示例行内可能出现）→ 新基数对应目标；值相同的键合并
+    mapping: dict[str, str] = {old_base: new_base}
+    for kind in ("patch", "minor", "major"):
+        old_target = _bump_base(old_base, kind)
+        mapping.setdefault(old_target, _bump_base(new_base, kind))
+    pattern = re.compile("|".join(re.escape(k) for k in sorted(mapping, key=len, reverse=True)))
+
+    def _replace(m: re.Match[str]) -> str:
+        return mapping[m.group(0)]
+
+    trigger_tokens = ("→", ".dev", "PEP 440", "tag v")
+    lines = text.splitlines(keepends=True)
+    for i, line in enumerate(lines):
+        if "V0." in line:
+            continue  # 数据库迁移引用（V0.2.0-*）不随框架版本变化
+        if not any(token in line for token in trigger_tokens):
+            continue
+        # tag 示例行（如 `git tag v0.2.0`）不含旧基数本身，按 old_minor 目标识别
+        if old_base not in line and not ("tag v" in line and _bump_base(old_base, "minor") in line):
+            continue
+        lines[i] = pattern.sub(_replace, line)
+    return "".join(lines)
+
+
 def write_version(repo_root: Path, old_version: str, new_version: str) -> None:
     """同步更新 pyproject.toml、__init__.py 及文档中的框架版本号引用。
 
@@ -197,6 +268,14 @@ def write_version(repo_root: Path, old_version: str, new_version: str) -> None:
         updated, _ = re.subn(pattern, lambda m: m.group(0).replace(old_version, new_version), text)
         if updated != text:
             doc_path.write_text(updated, encoding="utf-8")
+
+    # README 演示示例（规则示例表 / 开发分支示例 / 合入指南）以基础版本为基数整体重算
+    readme_path = repo_root / "README.md"
+    if readme_path.exists():
+        text = readme_path.read_text(encoding="utf-8")
+        updated = _sync_readme_examples(text, old_version, new_version)
+        if updated != text:
+            readme_path.write_text(updated, encoding="utf-8")
 
 
 def read_commit_message(message_path: str) -> tuple[str, str]:
