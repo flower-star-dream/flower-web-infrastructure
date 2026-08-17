@@ -730,6 +730,38 @@ python scripts/install_hooks.py --uninstall # 卸载（自动恢复备份）
 
 > 注意：提交前缀映射依赖 `prepare-commit-msg` 钩子，使用 `git commit --no-verify` 时不会触发自动版本更新。
 
+#### 13.1.1 dev → main 合入时如何正确生成正式版本
+
+版本钩子是**本地钩子**（`.git/hooks/`），只在本地 `git commit` 时运行；GitHub 网页端的 merge / squash / rebase 不会触发钩子，合入后 main 分支会停留在 dev 合入时的版本（通常为 `X.Y.Z.devN` 测试版本号）。因此**合入 main 请走本地操作**，让钩子生成正式版本。
+
+**推荐：本地 squash 合并（单次提交，一步生成正式版本）**
+
+```bash
+git checkout main
+git pull origin main
+git merge --squash dev          # 将 dev 全部改动合并到暂存区（不产生 merge commit）
+git commit -m "feat: <本次合入的功能描述>"   # 本地钩子：剥离 .devN 后按前缀递增
+git push origin main
+```
+
+- 合入前 dev 版本为 `0.1.0.dev5`，合入后 main 上 `feat` 提交 → 剥离 `.devN` 得 `0.1.0` → 小版本 +1 → **`0.2.0`**（正式版），README 徽章 / 当前版本 / docs 示例随提交自动同步；
+- commit 前缀按合入内容取 `feat` / `fix` / `refactor` 等，破坏性变更加 `!` 或 `BREAKING CHANGE:` 生成大版本；
+- 若 main 与 dev 都改过 `pyproject.toml` 产生冲突，手动保留版本号较高的一方即可（如保留 dev 的 `0.1.0.dev5`）。
+
+**备选：本地普通合并（保留分支历史，需再提交一次）**
+
+```bash
+git checkout main
+git pull origin main
+git merge dev                  # 产生 merge commit，钩子对 merge 提交自动跳过（不更新版本）
+git commit -m "fix: 合入后的收尾修改"     # main 上再提交一次，钩子剥离 .devN 生成正式版本
+git push origin main
+```
+
+**不推荐：网页端合入**——GitHub 网页 merge / squash 不触发本地钩子，main 会残留 `.devN` 测试版本号，需在 main 本地再提交一次才能正式化。
+
+> 合入 main 生成正式版本号后，如需发布正式版镜像，手动打 tag 推送即可（`git tag v0.2.0 && git push origin v0.2.0`，CI 的 `v*` tag 会触发正式版镜像构建与签名）。
+
 ## 14. 许可证
 
 MIT License。
