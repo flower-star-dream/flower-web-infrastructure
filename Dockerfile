@@ -7,6 +7,8 @@
 #               业务项目通过 FROM 继承本镜像（挂载 application.yml 与业务代码后覆盖启动命令）。
 #               构建分两阶段：build 阶段完成 pip 依赖安装；runtime 阶段仅拷贝 site-packages + 源码，产物更小更安全。
 #               2026-08-16 整改：runtime 清理基础镜像自带构建期工具（pip/setuptools/wheel），消除 Trivy 高危漏洞阻断。
+#               2026-08-17 整改：runtime 启动时 apt-get upgrade 升级系统包，消除基础镜像浮动标签
+#               拉取到未修复快照导致的 Trivy 高危漏洞（CVE-2026-53615，util-linux 家族，修复版 2.41.5-0+deb13u1）。
 # =====================================================================
 
 # ---- build 阶段：安装依赖到系统 site-packages ----
@@ -59,10 +61,16 @@ COPY --from=build /usr/local/lib/python3.11/site-packages /usr/local/lib/python3
 COPY src ./src
 
 # 非 root 运行（安全基线）；合并 RUN 减少层数
-# 清理基础镜像 python:3.11-slim 自带的构建期工具（pip/setuptools/wheel 及其 vendored 依赖）：
-# COPY --from=build 只叠加不删除，基础镜像自带的 setuptools-79.0.1（内置 wheel 0.45.1 / jaraco.context 5.3.0）
-# 与 pip-24.0 若不清理会残留进最终镜像，导致 Trivy 高危漏洞（CVE-2026-24049 / CVE-2026-23949）阻断 CI。
-RUN rm -rf /usr/local/lib/python3.11/site-packages/pip \
+# 1) 系统包升级（2026-08-17 整改）：基础镜像 python:3.11-slim 浮动标签可能拉取到未含安全修复的
+#    快照（如 util-linux 2.41-5 存在 CVE-2026-53615，修复版 2.41.5-0+deb13u1），
+#    启动时统一 apt-get upgrade 到 Debian 仓库最新，保证最终镜像系统包无高危漏洞。
+# 2) 清理基础镜像 python:3.11-slim 自带的构建期工具（pip/setuptools/wheel 及其 vendored 依赖）：
+#    COPY --from=build 只叠加不删除，基础镜像自带的 setuptools-79.0.1（内置 wheel 0.45.1 / jaraco.context 5.3.0）
+#    与 pip-24.0 若不清理会残留进最终镜像，导致 Trivy 高危漏洞（CVE-2026-24049 / CVE-2026-23949）阻断 CI。
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get upgrade --no-install-recommends -y \
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -rf /usr/local/lib/python3.11/site-packages/pip \
            /usr/local/lib/python3.11/site-packages/pip-*.dist-info \
            /usr/local/lib/python3.11/site-packages/setuptools \
            /usr/local/lib/python3.11/site-packages/setuptools-*.dist-info \
