@@ -2,24 +2,28 @@
 
 @Author: 花海
 @Date: 2026/08/17 22:00
-@Description: dev→main 的 PR 合并成功后，在 main 分支自动生成正式版本：
-              剥离 dev 测试版本号 .devN 并按 PR 标题前缀递增（feat→小版本、fix 等→补丁、
-              ! 或 BREAKING CHANGE→大版本、docs/chore→仅剥离 .devN 正式化不递增），
-              同步更新 pyproject.toml / __init__.py / README / docs 版本引用，
-              提交并推送 main 分支。仅更新版本号，不打 tag（正式镜像发布仍由手动 v* tag 触发）。
+@Description: dev→main 的 PR 合并成功后，自动在 main 生成正式版本：
+              计算正式版本号并同步版本文件后，通过「release 分支 + PR 合并」通道合入 main——
+              推送到 release/vX.Y.Z 临时分支 → 创建 PR（自动触发 CI）→ 等待检查通过 →
+              自动合并 PR → 清理临时分支。全程走 PR 通道，使自动发版提交在推送 main 前
+              已跑过 CI，规避 main 分支保护「推送前必须通过状态检查」的拦截。
+              仅更新版本号，不打 tag（正式镜像发布仍由手动 v* tag 触发）。
               由 .github/workflows/release.yml 在 pull_request closed+merged 时调用。
 
 用法：
-    python scripts/release_after_merge.py --pr-title "<PR 标题>"
-    python scripts/release_after_merge.py --pr-title "feat: xxx" --skip-git   # 仅计算与更新文件，不提交推送
+    python scripts/release_after_merge.py --pr-title "<PR 标题>"    # 需 GITHUB_TOKEN 环境变量
+    python scripts/release_after_merge.py --pr-title "feat: xxx" --skip-git   # 仅计算与更新文件
 """
 
 from __future__ import annotations
 
 import argparse
-import re
+import os
 import sys
+import time
 from pathlib import Path
+
+import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -33,8 +37,17 @@ from version_bump import (  # noqa: E402
     write_version,
 )
 
-# 自动发版提交信息前缀（远端 main 上由 CI 生成的提交，本地钩子不会重复处理该提交）
+# 自动发版提交信息（release 分支上的版本提交）
 _RELEASE_COMMIT_SUBJECT = "chore(release): 发布正式版 v{version}"
+
+# 等待 CI 检查的默认超时/间隔（秒），可用环境变量覆盖
+_DEFAULT_CHECK_TIMEOUT = 900
+_DEFAULT_CHECK_INTERVAL = 20
+
+_API_HEADERS = {
+    "Accept": "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+}
 
 
 def release_version(current: str, commit_type: CommitType) -> str | None:
@@ -70,16 +83,142 @@ def release_version(current: str, commit_type: CommitType) -> str | None:
     return f"{major}.{minor}.{patch + 1}"
 
 
+def parse_repo_remote(remote_url: str) -> tuple[str, str]:
+    """从 git remote URL 解析 (owner, repo)。
+
+    支持 https://github.com/owner/repo(.git) 与 git@github.com:owner/repo(.git) 两种格式。
+
+    :param remote_url: git remote 地址
+    :return: (owner, repo)
+    :raises ValueError: 无法解析的地址
+    """
+    url = remote_url.strip()
+    if url.endswith(".git"):
+        url = url[:-4]
+    if "github.com/" in url:
+        path = url.split("github.com/", 1)[1]
+    elif "github.com:" in url:
+        path = url.split("github.com:", 1)[1]
+    else:
+        raise ValueError(f"无法解析 GitHub 仓库地址: {remote_url!r}")
+    parts = [p for p in path.split("/") if p]
+    if len(parts) < 2:
+        raise ValueError(f"无法解析 GitHub 仓库地址: {remote_url!r}")
+    return parts[0], parts[1]
+
+
+def evaluate_check_runs(runs: list[dict]) -> tuple[str, list[str]]:
+    """评估 check runs 集合的完成状态。
+
+    :param runs: GitHub check-runs 接口返回的 check_runs 列表
+    :return: (status, 明细)，status ∈ success / failure / pending；明细为失败或未完成项名称
+    """
+    if not runs:
+        return "pending", []
+    if any(r.get("status") != "completed" for r in runs):
+        return "pending", [r.get("name", "?") for r in runs if r.get("status") != "completed"]
+    failed = [r.get("name", "?") for r in runs if r.get("conclusion") != "success"]
+    if failed:
+        return "failure", failed
+    return "success", []
+
+
+class GitHubApi:
+    """GitHub REST API 客户端（httpx，支持注入 transport 便于测试）。"""
+
+    def __init__(self, token: str, owner: str, repo: str, transport: httpx.BaseTransport | None = None) -> None:
+        """初始化客户端。
+
+        :param token: GitHub Token（GITHUB_TOKEN）
+        :param owner: 仓库属主
+        :param repo: 仓库名
+        :param transport: 可选的 httpx transport（测试注入 MockTransport）
+        """
+        headers = {**_API_HEADERS, "Authorization": f"Bearer {token}"}
+        self._client = httpx.Client(
+            base_url=f"https://api.github.com/repos/{owner}/{repo}",
+            headers=headers,
+            transport=transport,
+        )
+
+    def create_pull(self, title: str, head: str, base: str, body: str) -> int:
+        """创建 PR，返回 PR 编号。
+
+        :param title: PR 标题
+        :param head: 源分支
+        :param base: 目标分支
+        :param body: PR 描述
+        :return: PR 编号
+        """
+        response = self._client.post("/pulls", json={"title": title, "head": head, "base": base, "body": body})
+        response.raise_for_status()
+        return int(response.json()["number"])
+
+    def list_check_runs(self, sha: str) -> list[dict]:
+        """查询提交上的全部 check runs。
+
+        :param sha: 提交 SHA
+        :return: check_runs 列表
+        """
+        response = self._client.get(f"/commits/{sha}/check-runs")
+        response.raise_for_status()
+        return list(response.json().get("check_runs", []))
+
+    def merge_pull(self, number: int, method: str = "squash") -> None:
+        """合并 PR。
+
+        :param number: PR 编号
+        :param method: 合并方式（merge / squash / rebase）
+        :raises RuntimeError: PR 不可合并（405）时
+        """
+        response = self._client.put(f"/pulls/{number}/merge", json={"merge_method": method})
+        if response.status_code == 405:
+            raise RuntimeError(f"PR #{number} 不可合并: {response.text}")
+        response.raise_for_status()
+
+    def delete_branch(self, branch: str) -> None:
+        """删除分支（合并后清理临时分支；分支不存在时忽略）。
+
+        :param branch: 分支名
+        """
+        response = self._client.delete(f"/git/refs/heads/{branch}")
+        if response.status_code not in (204, 422):
+            response.raise_for_status()
+
+
+def wait_for_checks(api: GitHubApi, sha: str, timeout_seconds: int, interval_seconds: int) -> None:
+    """轮询等待提交的 CI 检查全部通过。
+
+    :param api: GitHubApi 实例
+    :param sha: 提交 SHA
+    :param timeout_seconds: 超时时间
+    :param interval_seconds: 轮询间隔
+    :raises RuntimeError: 存在失败的检查
+    :raises TimeoutError: 等待超时
+    """
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        status, details = evaluate_check_runs(api.list_check_runs(sha))
+        if status == "success":
+            return
+        if status == "failure":
+            raise RuntimeError(f"CI 检查失败: {', '.join(details)}")
+        if time.monotonic() >= deadline:
+            raise TimeoutError(f"等待 CI 检查超时（{timeout_seconds}s）：{', '.join(details) or '无检查记录'}")
+        print(f"[release] 等待 CI 检查完成...（{', '.join(details) or '无检查记录'}）")
+        time.sleep(interval_seconds)
+
+
 def main() -> int:
-    """入口：解析 PR 标题 → 计算正式版本 → 更新版本文件 → 提交并推送 main。
+    """入口：解析 PR 标题 → 计算正式版本 → 更新版本文件 → release 分支 PR 合入 main。
 
     :return: 退出码（发版失败时非 0，暴露给 CI 排查）
     """
-    parser = argparse.ArgumentParser(description="PR 合入后自动发版（生成正式版本并推送 main）")
+    parser = argparse.ArgumentParser(description="PR 合入后自动发版（经 release 分支 PR 合入 main）")
     parser.add_argument("--pr-title", required=True, help="PR 标题（解析 conventional commits 前缀）")
     parser.add_argument(
         "--skip-git", action="store_true",
-        help="仅计算与更新版本文件，不执行 git add/commit/push（本地调试用）",
+        help="仅计算与更新版本文件，不执行 git / GitHub API 操作（本地调试用）",
     )
     args = parser.parse_args()
 
@@ -103,16 +242,62 @@ def main() -> int:
     print(f"[release] 正式版本已生成: {current} -> {new_version}")
 
     if args.skip_git:
-        print("[release] --skip-git：未执行 git 提交推送")
+        print("[release] --skip-git：未执行 git / GitHub API 操作")
         return 0
 
-    # CI 环境配置提交身份（actions/checkout 已注入 GITHUB_TOKEN 凭据，push 无需额外认证）
+    token = os.environ.get("GITHUB_TOKEN")
+    if not token:
+        print("[release] 错误：缺少 GITHUB_TOKEN 环境变量（release.yml 需注入 secrets.GITHUB_TOKEN）", file=sys.stderr)
+        return 1
+    repo_env = os.environ.get("GITHUB_REPOSITORY")
+    if repo_env:
+        owner, repo = repo_env.split("/", 1)
+    else:
+        owner, repo = parse_repo_remote(git(["remote", "get-url", "origin"], repo_root))
+
+    # 1) 创建版本提交
     git(["config", "user.name", "github-actions[bot]"], repo_root)
     git(["config", "user.email", "41898282+github-actions[bot]@users.noreply.github.com"], repo_root)
     git(["add", *_VERSION_FILES], repo_root)
     git(["commit", "--no-verify", "-m", _RELEASE_COMMIT_SUBJECT.format(version=new_version)], repo_root)
-    git(["push", "origin", "HEAD"], repo_root)
-    print(f"[release] 已提交并推送 main（{_RELEASE_COMMIT_SUBJECT.format(version=new_version)}）")
+
+    # 2) 推送 release 临时分支（不受 main 保护影响）
+    release_branch = f"release/v{new_version}"
+    git(["checkout", "-b", release_branch], repo_root)
+    git(["push", "origin", release_branch], repo_root)
+    print(f"[release] 已推送 release 分支 {release_branch}")
+
+    # 3) 创建 PR：release/vX.Y.Z → main（自动触发 CI 检查）
+    api = GitHubApi(token, owner, repo)
+    pr_body = (
+        "自动发版（由 release workflow 在 dev→main PR 合并后生成）：\n"
+        f"- 正式版本：{current} → {new_version}\n"
+        "- 同步更新 pyproject.toml / __init__.py / README / docs 版本引用\n"
+        "- 仅更新版本号，不打 tag；CI 检查通过后自动合并"
+    )
+    pr_number = api.create_pull(
+        title=_RELEASE_COMMIT_SUBJECT.format(version=new_version),
+        head=release_branch,
+        base="main",
+        body=pr_body,
+    )
+    print(f"[release] 已创建 PR #{pr_number}（{release_branch} → main）")
+
+    # 4) 等待 CI 检查通过后自动合并（自动发版提交已跑过 CI，规避 main 推送保护）
+    timeout = int(os.environ.get("RELEASE_CHECK_TIMEOUT", str(_DEFAULT_CHECK_TIMEOUT)))
+    interval = int(os.environ.get("RELEASE_CHECK_INTERVAL", str(_DEFAULT_CHECK_INTERVAL)))
+    head_sha = git(["rev-parse", "HEAD"], repo_root)
+    wait_for_checks(api, head_sha, timeout, interval)
+    print("[release] CI 检查全部通过，合并 PR...")
+    api.merge_pull(pr_number, method="squash")
+    print(f"[release] PR #{pr_number} 已合并，正式版本 {new_version} 已合入 main")
+
+    # 5) 清理临时分支（失败不阻断，交由人工处理）
+    try:
+        api.delete_branch(release_branch)
+        print(f"[release] 已清理临时分支 {release_branch}")
+    except Exception as exc:  # noqa: BLE001 - 清理失败不影响发版结果
+        print(f"[release] 警告：清理临时分支失败（{exc}），请手动删除 {release_branch}")
     return 0
 
 

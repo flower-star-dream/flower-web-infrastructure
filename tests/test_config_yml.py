@@ -11,7 +11,7 @@ import pytest
 
 from web_infra import Application, create_app
 from web_infra.config import ConfigError, Settings, YamlConfigSource
-from web_infra.web import AuthMiddleware, IdempotencyMiddleware, TraceIdMiddleware
+from web_infra.web import AuthMiddleware, IdempotencyMiddleware, InMemoryIdempotencyStore, RedisIdempotencyStore, TraceIdMiddleware
 
 
 def test_default_yml_loaded_by_settings():
@@ -90,6 +90,51 @@ def test_middleware_config_idempotency_params():
     )
     middleware = next(m for m in app.user_middleware if m.cls is IdempotencyMiddleware)
     assert middleware.kwargs["ttl_seconds"] == 60
+
+
+def test_middleware_idempotency_default_memory_store():
+    """idempotency 未配 store_type 时默认 memory store（单实例）"""
+    app = create_app(
+        {
+            "app.web.middlewares": {
+                "trace_id": {},
+                "idempotency": {"enabled": True},
+            }
+        }
+    )
+    middleware = next(m for m in app.user_middleware if m.cls is IdempotencyMiddleware)
+    assert isinstance(middleware.kwargs["store"], InMemoryIdempotencyStore)
+
+
+def test_middleware_idempotency_redis_store_reuses_cache():
+    """store_type=redis：复用已装配 cache 组件的同一 Redis 客户端（跨实例原子，规范 §12.6）"""
+    app = create_app(
+        {
+            "app.web.middlewares": {
+                "trace_id": {},
+                "idempotency": {"enabled": True, "store_type": "redis"},
+            },
+            "app.cache.type": "redis",
+        }
+    )
+    middleware = next(m for m in app.user_middleware if m.cls is IdempotencyMiddleware)
+    store = middleware.kwargs["store"]
+    assert isinstance(store, RedisIdempotencyStore)
+    assert store._redis is app.state.cache.config.client()  # 复用 cache 组件同一客户端实例
+
+
+def test_middleware_idempotency_redis_without_cache_raises():
+    """store_type=redis 但 cache 组件非 Redis：启动期快速失败（ConfigError，明确错误提示）"""
+    with pytest.raises(ConfigError):
+        create_app(
+            {
+                "app.web.middlewares": {
+                    "trace_id": {},
+                    "idempotency": {"enabled": True, "store_type": "redis"},
+                },
+                "app.cache.type": "memory",
+            }
+        )
 
 
 def test_unknown_middleware_raises():

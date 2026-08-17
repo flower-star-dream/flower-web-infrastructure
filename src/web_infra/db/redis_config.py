@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # 仅静态检查使用，运行时跳过（延迟导入，最小安装不含 redis-py 时 import 本模块不失败）
@@ -55,30 +56,47 @@ class RedisConfig:
         self.retry_on_timeout = retry_on_timeout
         self._redis: Redis | None = None
         self._lock = asyncio.Lock()
+        # 同步客户端锁（跨线程保护 _redis 创建；connect 的协程级互斥仍由 _lock 负责）
+        self._sync_lock = threading.Lock()
+
+    def client(self) -> Redis:
+        """获取可用的异步客户端实例（未连接时同步创建，首次 IO 自动建连）。
+
+        供中间件装配等同步上下文复用 Redis 客户端（如幂等存储经 cache 组件配置获取）；
+        不强制 ping（避免同步装配阻塞），连接管理与健康检查仍归 connect/close 负责。
+        双重检查锁定（_sync_lock）：跨线程并发调用时只创建一份客户端实例（与 connect 的
+        协程级互斥 _lock 对称，connect 内部亦复用本方法）。
+        """
+        if self._redis is None:
+            with self._sync_lock:
+                if self._redis is None:
+                    from redis.asyncio import Redis
+
+                    self._redis = Redis(
+                        host=self.host,
+                        port=self.port,
+                        db=self.db,
+                        password=self.password,
+                        username=self.username,
+                        max_connections=self.max_connections,
+                        decode_responses=self.decode_responses,
+                        socket_connect_timeout=self.socket_connect_timeout,
+                        socket_timeout=self.socket_timeout,
+                        socket_keepalive=self.socket_keepalive,
+                        health_check_interval=self.health_check_interval,
+                        retry_on_timeout=self.retry_on_timeout,
+                    )
+        return self._redis
 
     async def connect(self) -> Redis:
         """建立 Redis 连接，返回异步客户端实例（连接失败抛 RedisError）"""
-        from redis.asyncio import Redis
         from redis.exceptions import RedisError
 
         async with self._lock:
             if self._redis is not None:
                 return self._redis
 
-            redis = Redis(
-                host=self.host,
-                port=self.port,
-                db=self.db,
-                password=self.password,
-                username=self.username,
-                max_connections=self.max_connections,
-                decode_responses=self.decode_responses,
-                socket_connect_timeout=self.socket_connect_timeout,
-                socket_timeout=self.socket_timeout,
-                socket_keepalive=self.socket_keepalive,
-                health_check_interval=self.health_check_interval,
-                retry_on_timeout=self.retry_on_timeout,
-            )
+            redis = self.client()
             try:
                 # 触发连接以尽早发现配置问题
                 await redis.ping()
@@ -87,7 +105,6 @@ class RedisConfig:
                 logger.error("redis_connection_failed host=%s port=%s error=%s", self.host, self.port, str(e))
                 raise
 
-            self._redis = redis
             return self._redis
 
     async def close(self) -> None:

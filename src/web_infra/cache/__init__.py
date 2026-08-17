@@ -12,5 +12,9 @@ from web_infra.cache.tenant_key_builder import TenantKeyBuilder
 from web_infra.cache.cache_backend_interface import CacheBackendInterface
 from web_infra.cache.cache_config import CacheConfig
 from web_infra.cache.memory_cache_backend import MemoryCacheBackend
+from web_infra.cache.cache_backend_registry import CacheBackendRegistry
 
-__all__ = ["KeyBuilder", "TenantKeyBuilder", "CacheBackendInterface", "CacheConfig", "MemoryCacheBackend"]
+__all__ = [
+    "KeyBuilder", "TenantKeyBuilder", "CacheBackendInterface", "CacheConfig", "MemoryCacheBackend",
+    "CacheBackendRegistry",
+]

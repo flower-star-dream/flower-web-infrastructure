@@ -76,6 +76,7 @@ from web_infra.ai import (
     ModelConfig,
     ModelConfigStoreInterface,
     DictModelConfigStore,
+    ModelConfigStoreRegistry,
     ModelConfigManager,
     PromptTemplate,
     PromptTemplateStoreInterface,
@@ -162,7 +163,7 @@ from web_infra.capability import (
     CapabilityResolution,
     CapabilityValidation,
 )
-from web_infra.cache import KeyBuilder, CacheBackendInterface, CacheConfig, MemoryCacheBackend
+from web_infra.cache import KeyBuilder, CacheBackendInterface, CacheConfig, MemoryCacheBackend, CacheBackendRegistry
 from web_infra.cache.tenant_key_builder import TenantKeyBuilder
 from web_infra.db import (
     DatabaseConfig,
@@ -170,6 +171,7 @@ from web_infra.db import (
     SqliteSessionFactory,
     DatabaseSessionInterface,
     DatabaseFactoryInterface,
+    DatabaseRegistry,
     MySQLConnectionSettings,
     release_session_connection,
     connection_released,
@@ -189,6 +191,7 @@ from web_infra.mq import (
     InMemoryMessageQueue,
     RocketMqConfig,
     RocketMqPublisher,
+    MessageQueueRegistry,
     MessageIdempotencyStoreInterface,
     InMemoryMessageIdempotencyStore,
     RedisMessageIdempotencyStore,
@@ -211,6 +214,7 @@ from web_infra.storage import (
     LocalObjectStorage,
     MinioStorageConfig,
     MinioObjectStorage,
+    ObjectStorageRegistry,
     UploadStatus,
     UploadTask,
     UploadStoreInterface,
@@ -227,6 +231,7 @@ from web_infra.registry import (
     NacosDiscoveryClient,
     NacosRegistration,
     InMemoryServiceRegistry,
+    ServiceDiscoveryRegistry,
 )
 from web_infra.loadbalance import LoadBalancerInterface, RandomBalancer, RoundRobinBalancer, WeightedRoundRobinBalancer
 from web_infra.http import FeignClient, FeignClientConfig, build_feign_client, default_service_fallback
@@ -319,7 +324,8 @@ __all__ = [
     # AI
     "ModelProviderInterface", "ModelProviderRegistry", "ChatRole", "FinishReason", "ChatMessage", "Usage",
     "ChatRequest", "ChatResponse", "ChatStreamChunk", "EmbeddingRequest", "EmbeddingResponse",
-    "AiErrorCode", "ModelConfig", "ModelConfigStoreInterface", "DictModelConfigStore", "ModelConfigManager",
+    "AiErrorCode", "ModelConfig", "ModelConfigStoreInterface", "DictModelConfigStore",
+    "ModelConfigStoreRegistry", "ModelConfigManager",
     "PromptTemplate", "PromptTemplateStoreInterface", "InMemoryPromptTemplateStore", "PromptTemplateFiller",
     "ContextWindowErrorParser", "ContextTruncator", "ContextWindowRetryPolicy",
     "DocumentChunkerInterface", "MarkdownChunker", "VectorStoreInterface", "InMemoryVectorStore",
@@ -343,27 +349,31 @@ __all__ = [
     "AuthConstant", "CacheKeyBuilder", "InfraConstant", "ParamConstant", "SysConstant", "BizConstant",
     # 缓存
     "KeyBuilder", "TenantKeyBuilder", "CacheBackendInterface", "CacheConfig", "MemoryCacheBackend",
+    "CacheBackendRegistry",
     # 能力（能力契约与依赖包含规则：用户 → 鉴权 → 支付，按包含关系自动启用前置）
     "Capability", "CapabilityError", "CapabilityRegistry", "CapabilityResolution", "CapabilityValidation",
     # 数据库（依赖 sqlalchemy/redis/mongo 的实现名不在 __all__，保证最小安装 `from web_infra import *`
     # 不触发惰性导入；需用时显式导入，如 from web_infra import MySQLConfig / Base）
     "DatabaseConfig", "PageQuery", "SqliteSessionFactory", "DatabaseSessionInterface", "DatabaseFactoryInterface",
+    "DatabaseRegistry",
     "SessionScopeMixin", "provide_db_session",
     "MySQLConnectionSettings", "release_session_connection", "connection_released",
     "TenantGuard", "DatabaseRouterInterface", "TenantDatabaseRouter",
     # 消息队列
     "MqConfig", "Message", "MessagePublisherInterface", "MessageConsumerInterface", "InMemoryMessageQueue",
-    "RocketMqConfig", "RocketMqPublisher",
+    "RocketMqConfig", "RocketMqPublisher", "MessageQueueRegistry",
     "MessageIdempotencyStoreInterface", "InMemoryMessageIdempotencyStore", "RedisMessageIdempotencyStore", "IdempotentConsumer",
     "OutboxStatus", "OutboxRecord", "OutboxStoreInterface", "InMemoryOutboxStore", "OutboxPublisher", "OutboxCleaner",
     # 对象存储
     "StorageConfig", "ObjectStorageInterface", "LocalObjectStorage", "MinioStorageConfig", "MinioObjectStorage",
+    "ObjectStorageRegistry",
     "UploadStatus", "UploadTask", "UploadStoreInterface", "InMemoryUploadStore",
     "PartStorageInterface", "LocalPartStorage", "MinioPartStorage", "MultipartUploadService",
     # 定时调度
     "ScheduledTask", "TaskScheduler",
     # 服务注册发现与负载均衡
     "ServiceInstance", "ServiceRegistryInterface", "NacosDiscoveryClient", "NacosRegistration", "InMemoryServiceRegistry",
+    "ServiceDiscoveryRegistry",
     "LoadBalancerInterface", "RandomBalancer", "RoundRobinBalancer", "WeightedRoundRobinBalancer", "FeignClient",
     "FeignClientConfig", "build_feign_client",
     "default_service_fallback",

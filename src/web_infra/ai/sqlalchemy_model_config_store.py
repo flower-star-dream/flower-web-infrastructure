@@ -12,6 +12,7 @@ SQLAlchemy 模型配置来源
 """
 from __future__ import annotations
 
+import inspect
 import json
 from contextlib import asynccontextmanager
 from dataclasses import replace
@@ -47,13 +48,27 @@ def _now() -> datetime:
 class SqlAlchemyModelConfigStore(ModelConfigStoreInterface):
     """SQLAlchemy 数据库模型配置来源（ai_model_config 表，AsyncSession + text()）"""
 
-    def __init__(self, session_factory: Callable[[], AsyncSession] | Any) -> None:
+    def __init__(self, session_factory: Callable[[], AsyncSession] | Any, engine: Any | None = None) -> None:
         """初始化存储。
 
         :param session_factory: 异步会话工厂（`async_sessionmaker[AsyncSession]` 或 `() -> AsyncSession`）；
             load/load_all/upsert 内部自建会话并提交，可传入业务会话扩展同事务场景
+        :param engine: 可选 SQLAlchemy 异步引擎（sqlite 场景由装配层自建独立 aiosqlite 引擎，
+            持有引用供 close 释放；mysql 场景复用数据库组件引擎，传 None 即可）
         """
         self._session_factory = session_factory
+        self._engine = engine
+
+    async def close(self) -> None:
+        """释放自建异步引擎（sqlite 场景独立 aiosqlite 引擎；mysql 场景复用 db 组件引擎，无操作）"""
+        engine = self._engine
+        if engine is None:
+            return
+        dispose = getattr(engine, "dispose", None)
+        if callable(dispose):
+            result = dispose()
+            if inspect.isawaitable(result):
+                await result
 
     @asynccontextmanager
     async def _session_scope(self, session: AsyncSession | None = None) -> AsyncGenerator[AsyncSession, None]:

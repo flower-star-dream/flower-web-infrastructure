@@ -901,10 +901,11 @@ python scripts/install_hooks.py --uninstall # 卸载（自动恢复备份）
 dev 分支开发（本地钩子自动打 `X.Y.Z.devN` 测试版本号）→ 推送远程 → 创建 dev→main PR（网页或 `gh pr create` 均可）→ 合并 PR（网页 Merge / `gh pr merge` 均可）→ [release workflow](./.github/workflows/release.yml) 自动完成发版：
 
 - 剥离 `.devN` 并按 **PR 标题前缀**递增：`feat`→小版本、`fix` 等→补丁、`!` / `BREAKING CHANGE`→大版本、`docs`/`chore`→仅剥离正式化不递增；
-- 同步更新 README / docs 版本引用并提交推送 main；
+- 同步更新 README / docs 版本引用；
+- 经 **release/vX.Y.Z 临时分支创建 PR 自动合入 main**（PR 触发 CI，检查通过后自动合并），全程符合 main 分支保护；
 - 仅更新版本号，不打 tag。
 
-注意：**PR 标题必须带 conventional 前缀**，否则按补丁处理；release workflow 只在 `base=main` + `head=dev` 且合并成功时触发。
+注意：**PR 标题必须带 conventional 前缀**，否则按补丁处理；release workflow 只在 `base=main` + `head=dev` 且合并成功时触发（release 分支自身的 PR 不会触发，避免循环）。
 
 **备选：本地合并（不走 PR，由本地钩子发版）**
 

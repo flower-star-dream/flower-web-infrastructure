@@ -6,7 +6,8 @@ SQLAlchemy 模型配置来源测试
 @Description: 验证（AI 规范 §3.2/§17.4）：
               1) SqlAlchemyModelConfigStore 数据库 CRUD 语义（sqlite+aiosqlite 内存库验证 SQL）；
               2) api_key 存 env:VAR 引用，resolved_api_key 运行时从环境变量解析（禁止明文落盘）；
-              3) application 装配：store.type=db 时非 MySQL 数据源快速失败；
+              3) application 装配：store.type=db 时数据源跟随用户配置的数据库组件（mysql/sqlite），
+                 拿不到异步会话工厂时快速失败；
               4) 启动生命周期：数据库模型配置来源自动同步 SPI 注册表。
 """
 import os
@@ -223,16 +224,37 @@ async def test_store_feeds_auto_registrar(db_store, clean_registry, monkeypatch)
 # ------------------------------------------------------------------
 
 
-def test_application_db_store_requires_mysql(clean_registry):
-    """app.ai.store.type=db 且数据库组件非 MySQL 数据源时快速失败（ConfigError，明确错误提示）"""
+@pytest.mark.asyncio
+async def test_application_db_store_sqlite_assembles(clean_registry):
+    """app.ai.store.type=db 且数据库组件为 sqlite（app.db.type=sqlite）时正常装配（数据源跟随用户配置，不锁死 MySQL）"""
     settings = {
         "app": {
             "ai": {"enabled": True, "store": {"type": "db"}, "models": [], "model_gateway": {}},
             "db": {"type": "sqlite", "sqlite": {"path": ":memory:"}},
         }
     }
+    app = create_app(settings)
+    store = app.state.ai_model_config_store
+    assert isinstance(store, SqlAlchemyModelConfigStore)
+    assert store._engine is not None  # sqlite 场景自建独立 aiosqlite 引擎
+    await store.close()  # close 释放自建引擎
+
+
+def test_application_db_store_missing_session_factory_raises(clean_registry):
+    """db 组件拿不到 SQLAlchemy 异步会话工厂时快速失败（ConfigError，明确错误提示）"""
+    class _NoSessionFactory:
+        pass
+
+    settings = {
+        "app": {
+            "ai": {"enabled": True, "store": {"type": "db"}, "models": [], "model_gateway": {}},
+            "db": {"type": "sqlite", "sqlite": {"path": ":memory:"}},
+        }
+    }
+    app = Application(settings)
+    app._components["db"] = _NoSessionFactory()
     with pytest.raises(ConfigError):
-        create_app(settings)
+        app._build_ai_model_store()
 
 
 @pytest.mark.asyncio

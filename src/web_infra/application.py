@@ -15,7 +15,7 @@ import asyncio
 import inspect
 import logging
 from contextlib import asynccontextmanager
-from typing import Any, AsyncGenerator, Callable, cast
+from typing import Any, AsyncGenerator, Callable
 
 from fastapi import FastAPI
 
@@ -28,53 +28,40 @@ from web_infra.web import TraceIdMiddleware, register_health_endpoints
 from web_infra.web.auth_middleware import AuthMiddleware
 from web_infra.web.idempotency_middleware import IdempotencyMiddleware
 from web_infra.web.in_memory_idempotency_store import InMemoryIdempotencyStore
+from web_infra.web.redis_idempotency_store import RedisIdempotencyStore
 from web_infra.web.rate_limit_middleware import RateLimitMiddleware
 from web_infra.web.security_headers_middleware import SecurityHeadersMiddleware
-from web_infra.security.jwt_util import JWTUtil
-from web_infra.cache import (
-    CacheConfig,
-    MemoryCacheBackend,
-)
+from web_infra.cache.cache_backend_registry import CacheBackendRegistry
 from web_infra.db import (
     MongoDBConfig,
-    MySQLConfig,
-    MySQLConnectionSettings,
-    MySQLDatabase,
-    RedisCacheBackend,
-    RedisConfig,
     SqliteSessionFactory,
     TenantQueryFilter,
 )
+from web_infra.db.database_registry import DatabaseRegistry
 from web_infra.db.database_manager import DatabaseManager
 from web_infra.db.database_router import TenantDatabaseRouter
 from web_infra.ai.model_gateway import ModelRouter, RouteEntry, ModelGateway
 from web_infra.ai.model_auto_registrar import ModelAutoRegistrar
+from web_infra.ai.model_config_store_registry import ModelConfigStoreRegistry
 from web_infra.ai.sqlalchemy_model_config_store import SqlAlchemyModelConfigStore
 from web_infra.ai.connection_pool import ConnectionPoolConfig, ConnectionPoolManager
 from web_infra.ai.quota import QuotaConfig, QuotaManager
-from web_infra.mq import InMemoryMessageQueue, RocketMqConfig, RocketMqPublisher
-from web_infra.storage import (
-    LocalObjectStorage,
-    StorageConfig,
-    MinioObjectStorage,
-    MinioStorageConfig,
-)
-from web_infra.registry import (
-    InMemoryServiceRegistry,
-    NacosDiscoveryClient,
-)
-from web_infra.config import NacosProperties
+from web_infra.mq.message_queue_registry import MessageQueueRegistry
+from web_infra.storage.object_storage_registry import ObjectStorageRegistry
+from web_infra.registry.service_discovery_registry import ServiceDiscoveryRegistry
 
 logger = logging.getLogger(__name__)
 
 # 框架提供的中间件注册表（name -> (中间件类, 构造参数构建器)）：
-# 业务在 app.web.middlewares 中声明是否引入及参数，如何引入由配置决定
-_MIDDLEWARE_REGISTRY: dict[str, tuple[type, Callable[[dict[str, Any]], dict[str, Any]]]] = {
-    "trace_id": (TraceIdMiddleware, lambda options: {}),
-    "auth": (AuthMiddleware, lambda options: {"whitelist": tuple(options.get("whitelist") or ())}),
+# 业务在 app.web.middlewares 中声明是否引入及参数，如何引入由配置决定。
+# 构建器签名 (options, ctx)：ctx 携带装配上下文（settings/components），
+# 供依赖框架组件的中间件复用已装配组件（如幂等存储复用 cache 组件 Redis 客户端）。
+_MIDDLEWARE_REGISTRY: dict[str, tuple[type, Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]]]] = {
+    "trace_id": (TraceIdMiddleware, lambda options, ctx: {}),
+    "auth": (AuthMiddleware, lambda options, ctx: {"whitelist": tuple(options.get("whitelist") or ())}),
     "rate_limit": (
         RateLimitMiddleware,
-        lambda options: {
+        lambda options, ctx: {
             "qps": options.get("qps"),
             "burst": options.get("burst"),
             "key_by": options.get("key_by") or "path",
@@ -82,13 +69,16 @@ _MIDDLEWARE_REGISTRY: dict[str, tuple[type, Callable[[dict[str, Any]], dict[str,
     ),
     "idempotency": (
         IdempotencyMiddleware,
-        lambda options: {"store": InMemoryIdempotencyStore(), "ttl_seconds": options.get("ttl_seconds")},
+        lambda options, ctx: {
+            "store": _build_idempotency_store(options, ctx),
+            "ttl_seconds": options.get("ttl_seconds"),
+        },
     ),
     # 安全响应头中间件（整改 S25-1）：默认关闭（yml enabled: false，向后兼容），推荐业务显式启用；
     # 头默认值收敛于 yml app.web.middlewares.security_headers，未配置时回落类内安全默认
     "security_headers": (
         SecurityHeadersMiddleware,
-        lambda options: {
+        lambda options, ctx: {
             "content_security_policy": options.get("content_security_policy"),
             "x_content_type_options": options.get("x_content_type_options"),
             "x_frame_options": options.get("x_frame_options"),
@@ -96,6 +86,42 @@ _MIDDLEWARE_REGISTRY: dict[str, tuple[type, Callable[[dict[str, Any]], dict[str,
         },
     ),
 }
+
+
+def _build_idempotency_store(options: dict[str, Any], ctx: dict[str, Any]) -> Any:
+    """按配置构建 API 幂等键存储（app.web.middlewares.idempotency.store_type，规范 §12.6）：
+    memory（默认，单实例）/ redis（跨实例原子，复用已装配 cache 组件的 Redis 客户端）。
+
+    :raises ConfigError: store_type=redis 但 cache 组件非 Redis 时快速失败（拿不到 Redis 客户端）
+    """
+    if (options.get("store_type") or "memory") == "redis":
+        cache = (ctx.get("components") or {}).get("cache")
+        config = getattr(cache, "config", None)
+        if config is None or not hasattr(config, "client"):
+            raise ConfigError(
+                "app.web.middlewares.idempotency.store_type=redis 需要已启用的 Redis 缓存组件"
+                "（app.cache.type=redis），当前拿不到 Redis 客户端",
+                key="app.web.middlewares.idempotency",
+            )
+        return RedisIdempotencyStore(redis=config.client())
+    return InMemoryIdempotencyStore()
+
+
+def _resolve_registry(registry: Any, name: str, key: str) -> Any:
+    """按名查组件注册表工厂；未注册抛 ConfigError（避免拼写错误/未注册类型静默回落默认实现）。
+
+    :param registry: 类级注册表（提供 get/registered_names）
+    :param name: type 值（yml 配置，如 app.cache.type）
+    :param key: 配置键（错误提示定位）
+    """
+    try:
+        return registry.get(name)
+    except KeyError:
+        raise ConfigError(
+            f"{key}={name} 未注册组件实现（内置：{', '.join(registry.registered_names())}；"
+            "自定义实现经对应注册表 register 注册后装配）",
+            key=key,
+        )
 
 
 class Application:
@@ -125,11 +151,14 @@ class Application:
         return Settings(CompositeConfigSource(DictConfigSource(settings), Settings.default_source()))
 
     def build(self) -> FastAPI:
-        """装配应用：日志 -> 能力装配校验 -> Web 基础能力 -> 中间件组件 -> 多租户 -> 健康检查/指标端点"""
+        """装配应用：日志 -> 能力装配校验 -> 组件装配 -> Web 基础能力 -> 中间件 -> 多租户 -> 健康检查/指标端点。
+
+        组件先于中间件装配：依赖框架组件的中间件（如幂等存储复用 cache 组件 Redis 客户端）装配期可取已装配组件。
+        """
         self._setup_logging()
         self._setup_capabilities()
-        self._setup_web()
         self._setup_components()
+        self._setup_web()
         self._setup_tenant()
         self._setup_health()
         return self.app
@@ -206,7 +235,8 @@ class Application:
                 raise ConfigError(f"未注册的 Web 中间件: {name}", key=f"app.web.middlewares.{name}")
             middleware_class, build_options = entry
             options = params if isinstance(params, dict) else {}
-            self.app.add_middleware(middleware_class, **build_options(options))
+            ctx = {"settings": self.settings, "components": self._components}
+            self.app.add_middleware(middleware_class, **build_options(options, ctx))
 
     def _setup_components(self) -> None:
         """按配置装配中间件组件，并注入 app.state 供业务代码访问"""
@@ -229,19 +259,23 @@ class Application:
         """多租户装配（app.tenant.enabled=true）：将租户条件过滤器挂载到数据库会话（多租户规范 §2）。
 
         SQL 自动注入租户条件、strict 模式无上下文拒绝执行；未启用多租户时不装配（默认关闭收敛于 yml）。
+        按能力判断（install_tenant_filter）而非具体类型装配，兼容 MySQL/PostgreSQL 等
+        任何提供租户过滤能力的数据库实现（DatabaseFactoryInterface 扩展能力）。
         """
         if not self.settings.get_bool("app.tenant.enabled"):
             return
         strict = self.settings.get_bool("app.tenant.strict")
         tenant_filter = TenantQueryFilter(strict=strict)
         db = self._components.get("db")
-        if isinstance(db, MySQLDatabase):
-            db.install_tenant_filter(tenant_filter)
-        elif isinstance(db, DatabaseManager):
+        if isinstance(db, DatabaseManager):
             for name in db.names:
-                connection = db.get(name)
-                if isinstance(connection, MySQLDatabase):
-                    connection.install_tenant_filter(tenant_filter)
+                install = getattr(db.get(name), "install_tenant_filter", None)
+                if callable(install):
+                    install(tenant_filter)
+            return
+        install = getattr(db, "install_tenant_filter", None)
+        if callable(install):
+            install(tenant_filter)
 
     def _setup_health(self) -> None:
         """装配健康检查三端点（/health/live 存活、/health/ready 就绪、/health 兼容，整改 S19-1）与指标端点（/metrics），规范 §19.4 / §18.1"""
@@ -256,42 +290,44 @@ class Application:
     # ------------------------------------------------------------------
 
     def _build_cache(self) -> Any:
-        """缓存组件：memory（默认）/ redis（默认值与类型收敛于 yml）"""
-        cache_type = self.settings.get("app.cache.type")
-        if cache_type == "redis":
-            config = self._build(
-                RedisConfig,
-                "app.cache.redis",
-                [
-                    "host", "port", "db", "password", "username", "max_connections",
-                    "decode_responses", "socket_connect_timeout", "socket_timeout",
-                    "socket_keepalive", "health_check_interval", "retry_on_timeout",
-                ],
-            )
-            # 启用 Redis 时 JWT Token 状态存储默认走 Redis（复用同一 Redis 实例；
-            # 未启用回落内存，业务可经 JWTUtil.configure 注入自定义实现覆盖）
-            JWTUtil.set_redis_config(config)
-            return RedisCacheBackend(config=config)
-        return MemoryCacheBackend(CacheConfig(max_size=cast(int, self.settings.get_int("app.cache.max_size"))))
+        """缓存组件：按 app.cache.type 经 CacheBackendRegistry 按名装配（内置 memory/redis，自定义经注册表接入）"""
+        cache_type = self.settings.get("app.cache.type") or "memory"
+        return _resolve_registry(CacheBackendRegistry, cache_type, "app.cache.type")(self.settings)
 
     def _build_db(self) -> Any:
-        """数据库组件：mysql（默认，通用 DatabaseFactoryInterface 接口）/ sqlite（轻量参考）。
-        多数据源（app.db.mysql.instances，多租户独立库/Schema 模式）默认关闭（yml 中空字典即单数据源）。"""
-        db_type = self.settings.get("app.db.type")
-        if db_type == "mysql":
-            instances = self.settings.get("app.db.mysql.instances")
-            if isinstance(instances, dict) and instances:
-                return self._build_multi_datasource(instances)
-            settings = self._model(MySQLConnectionSettings, "app.db.mysql")
-            return MySQLDatabase(MySQLConfig(settings=settings, datasource_name="default"))
-        return SqliteSessionFactory(db_path=self.settings.get("app.db.sqlite.path"))
+        """数据库组件（DatabaseFactoryInterface SPI，DatabaseRegistry 按名装配）：
+        - 单源：按 app.db.type 经注册表按名装配（内置 mysql/sqlite，自定义如 PostgreSQL 经 register 接入）；
+        - 混合多数据源（app.db.instances，每实例带 type 字段）：装配为 DatabaseManager 按名/租户路由，
+          支持 MySQL/PostgreSQL 等不同数据库并存；
+        - 多租户独立库（app.db.mysql.instances，向后兼容旧格式）：全 MySQL 多源同样走 DatabaseManager。
+        未注册的 db.type 启动期快速失败（ConfigError，避免拼写错误/未注册类型静默回落 sqlite）。"""
+        instances = self.settings.get("app.db.instances")
+        if isinstance(instances, dict) and instances:
+            return self._build_multi_datasource(instances)
+        legacy_instances = self.settings.get("app.db.mysql.instances")
+        if isinstance(legacy_instances, dict) and legacy_instances:
+            return self._build_multi_datasource(legacy_instances)
+        db_type = self.settings.get("app.db.type") or "mysql"
+        params = self._db_params(db_type)
+        return _resolve_registry(DatabaseRegistry, db_type, "app.db.type")(params)
+
+    def _db_params(self, db_type: str) -> dict[str, Any]:
+        """读取 app.db.<type> 段作为单源实例连接参数（非 None 字段；instances 多源由 _build_db 分支处理）"""
+        data = self.settings.get(f"app.db.{db_type}") or {}
+        return {k: v for k, v in data.items() if v is not None and k != "instances"}
 
     def _build_multi_datasource(self, instances: dict[str, dict[str, Any]]) -> DatabaseManager:
-        """按多数据源配置装配 DatabaseManager（共享连接池 + 租户动态路由）"""
+        """按多数据源配置装配 DatabaseManager（共享连接池 + 租户动态路由）：
+        - app.db.instances（通用混合多源）：每实例带 type 字段（缺省 mysql），按 DatabaseRegistry 按名构建，
+          支持 MySQL/PostgreSQL 等不同数据库并存；
+        - app.db.mysql.instances（多租户独立库模式，向后兼容）：实例无 type 字段时缺省回落 mysql。
+        """
         connections: dict[str, Any] = {}
         for name, params in instances.items():
-            settings = MySQLConnectionSettings(**params)
-            connections[name] = MySQLDatabase(MySQLConfig(settings=settings, datasource_name=name))
+            db_type = params.get("type") or "mysql"
+            instance_params = {k: v for k, v in params.items() if k not in ("type", "instances") and v is not None}
+            factory = _resolve_registry(DatabaseRegistry, db_type, f"app.db.instances.{name}")
+            connections[name] = factory({**instance_params, "datasource_name": name})
         mapping = self.settings.get("app.db.router.mapping")
         pattern = self.settings.get("app.db.router.pattern")
         router = TenantDatabaseRouter(mapping=mapping or {}, pattern=pattern or "tenant_{tenant_id}")
@@ -310,37 +346,30 @@ class Application:
         )
 
     def _build_storage(self) -> Any:
-        """对象存储组件：local（默认）/ minio（默认值收敛于 yml）"""
-        storage_type = self.settings.get("app.storage.type")
-        if storage_type == "minio":
-            config = self._model(MinioStorageConfig, "app.storage.minio")
-            return MinioObjectStorage(config)
-        return LocalObjectStorage(StorageConfig(base_dir=self.settings.get("app.storage.base_dir")))
+        """对象存储组件：按 app.storage.type 经 ObjectStorageRegistry 按名装配（内置 local/minio，自定义经注册表接入）"""
+        storage_type = self.settings.get("app.storage.type") or "local"
+        return _resolve_registry(ObjectStorageRegistry, storage_type, "app.storage.type")(self.settings)
 
     def _build_mq(self) -> Any:
-        """消息队列组件：memory（默认）/ rocketmq（默认值收敛于 yml）"""
-        mq_type = self.settings.get("app.mq.type")
-        if mq_type == "rocketmq":
-            config = self._model(RocketMqConfig, "app.mq.rocketmq")
-            return RocketMqPublisher(config)
-        return InMemoryMessageQueue()
+        """消息队列组件：按 app.mq.type 经 MessageQueueRegistry 按名装配（内置 memory/rocketmq，自定义经注册表接入）"""
+        mq_type = self.settings.get("app.mq.type") or "memory"
+        return _resolve_registry(MessageQueueRegistry, mq_type, "app.mq.type")(self.settings)
 
     def _build_registry(self) -> Any:
-        """服务注册发现组件：memory（默认）/ nacos（默认值收敛于 yml）"""
-        registry_type = self.settings.get("app.registry.type")
-        if registry_type == "nacos":
-            config = self._model(NacosProperties, "app.registry.nacos")
-            return NacosDiscoveryClient(config)
-        return InMemoryServiceRegistry(
-            instance_expire_seconds=cast(int, self.settings.get_int("app.registry.expire_seconds"))
-        )
+        """服务注册发现组件：按 app.registry.type 经 ServiceDiscoveryRegistry 按名装配（内置 memory/nacos，自定义经注册表接入）"""
+        registry_type = self.settings.get("app.registry.type") or "memory"
+        return _resolve_registry(ServiceDiscoveryRegistry, registry_type, "app.registry.type")(self.settings)
 
     def _build_ai(self) -> Any:
         """AI 组件：app.ai.enabled=true 时装配统一模型网关（AI 规范 §2.2/§17.4）。
 
-        模型配置来源（app.ai.store.type）：
+        模型配置来源（app.ai.store.type，ModelConfigStoreInterface SPI）：
         - yml（默认）：app.ai.models 配置清单 -> 供应商 SPI 注册表（业务代码/配置文件写死供应商）；
-        - db：ai_model_config 表（SqlAlchemyModelConfigStore），启动生命周期内经 register_from_store 自动注册。
+        - db：ai_model_config 表（SqlAlchemyModelConfigStore），数据源跟随 app.db.type
+          （mysql 复用数据库组件 AsyncSession 会话工厂；sqlite 走独立 SQLAlchemy aiosqlite 引擎），
+          启动生命周期内经 register_from_store 自动注册；
+        - 自定义来源（配置中心/Redis 等）：经 ModelConfigStoreRegistry.register 注册工厂后按 type 装配，
+          未注册的 store.type 启动期快速失败（ConfigError，避免配置拼写错误静默回落）。
         默认 OpenAI 兼容协议（/v1/chat/completions），自定义供应商经 ModelProviderFactory 注册后
         按 provider 字段自动装配。路由由 app.ai.model_gateway.routes 按模型逻辑名声明场景主备。
         默认不启用（yml app.ai.enabled=false），需业务配置显式开启。"""
@@ -353,9 +382,21 @@ class Application:
             # 数据库模型配置来源：store 挂到组件，启动生命周期内经 register_from_store 自动注册（异步 I/O）
             self._components["ai_model_config_store"] = self._build_ai_model_store()
         else:
-            models = self.settings.get("app.ai.models") or []
-            if models:
-                registrar.register_configs(ModelAutoRegistrar.from_dicts(list(models)))
+            try:
+                factory = ModelConfigStoreRegistry.get(store_type)
+            except KeyError:
+                raise ConfigError(
+                    f"app.ai.store.type={store_type} 未注册模型配置来源"
+                    "（内置：yml/db；自定义来源经 ModelConfigStoreRegistry.register 注册后装配）",
+                    key="app.ai.store.type",
+                )
+            if store_type == "yml":
+                models = self.settings.get("app.ai.models") or []
+                if models:
+                    registrar.register_configs(ModelAutoRegistrar.from_dicts(list(models)))
+            else:
+                # 自定义来源（SPI 接入点）：实例挂组件，启动生命周期内经 register_from_store 自动注册
+                self._components["ai_model_config_store"] = factory()
         self._components["ai_registrar"] = registrar
         # 2) 场景路由（按模型逻辑名声明主备降级）
         routes = self.settings.get("app.ai.model_gateway.routes") or {}
@@ -391,28 +432,36 @@ class Application:
         return ModelGateway(router, pool_manager=pool_manager, quota_manager=quota_manager)
 
     def _build_ai_model_store(self) -> Any:
-        """构建数据库模型配置来源（app.ai.store.type=db）：复用已装配数据库组件的 SQLAlchemy 会话工厂。
+        """构建数据库模型配置来源（app.ai.store.type=db）：数据源跟随用户配置的数据库组件（不锁死 MySQL）。
 
-        多数据源（DatabaseManager）场景取首个已注册数据源的会话工厂（模型配置表与业务库同库部署）。
+        支持的数据源（app.db.type）：
+        - mysql（默认）：复用 MySQLDatabase 的 SQLAlchemy AsyncSession 会话工厂（模型配置表与业务库同库部署）；
+        - 多数据源（DatabaseManager，多租户独立库模式）：取首个已注册数据源的会话工厂；
+        - sqlite：基于 SqliteSessionFactory 的数据文件路径构建独立 SQLAlchemy aiosqlite 异步引擎
+          （框架 sqlite 组件为同步 sqlite3 会话，模型配置表走独立异步连接；:memory: 场景为独立内存库，
+          与业务会话不共享，建议使用文件路径）。
+        自定义数据源经 DatabaseFactoryInterface 接入框架后，提供 SQLAlchemy AsyncSession 会话工厂即可复用。
 
-        :raises ConfigError: 数据库组件非 MySQL 数据源或引擎未初始化（拿不到 session_factory）时快速失败，
-            提示启用 app.db.type=mysql（SqlAlchemyModelConfigStore 依赖原生 AsyncSession）
+        :raises ConfigError: db 组件缺失或拿不到 SQLAlchemy 异步会话工厂时快速失败
         """
         db = self._components.get("db")
-        session_factory = None
-        if isinstance(db, MySQLDatabase):
-            session_factory = db.session_factory
-        elif isinstance(db, DatabaseManager):
+        session_factory = getattr(db, "session_factory", None)
+        if session_factory is None and isinstance(db, DatabaseManager):
             names = db.names
             if names:
                 session_factory = getattr(db.get(names[0]), "session_factory", None)
-        if session_factory is None:
-            raise ConfigError(
-                "app.ai.store.type=db 需要已初始化的 MySQL 数据源（app.db.type=mysql），"
-                "当前拿不到 SQLAlchemy 会话工厂",
-                key="app.ai.store.type",
-            )
-        return SqlAlchemyModelConfigStore(session_factory)
+        if session_factory is not None:
+            return SqlAlchemyModelConfigStore(session_factory)
+        if isinstance(db, SqliteSessionFactory):
+            from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+            engine = create_async_engine(f"sqlite+aiosqlite:///{db.db_path}")
+            return SqlAlchemyModelConfigStore(async_sessionmaker(engine, expire_on_commit=False), engine=engine)
+        raise ConfigError(
+            "app.ai.store.type=db 需要已装配的数据库组件提供 SQLAlchemy 异步会话工厂"
+            "（app.db.type=mysql 或 sqlite；自定义数据源实现 DatabaseFactoryInterface 并提供异步会话工厂）",
+            key="app.ai.store.type",
+        )
 
     # ------------------------------------------------------------------
     # 内部：生命周期（优雅停机，规范 §19.6）
@@ -420,20 +469,18 @@ class Application:
 
     @asynccontextmanager
     async def _lifespan(self, app: FastAPI) -> AsyncGenerator[None, None]:
-        """应用生命周期：启动前清理上下文、数据库模型配置来源自动注册；停机时释放可关闭组件"""
+        """应用生命周期：启动前清理上下文、模型配置来源自动注册；停机时释放可关闭组件"""
         RequestContext.clear()
-        await self._register_ai_models_from_db()
+        await self._register_ai_models_from_store()
         yield
         await self._shutdown()
 
-    async def _register_ai_models_from_db(self) -> None:
-        """数据库模型配置来源（app.ai.store.type=db）：启动时全量加载并自动同步 SPI 注册表（AI 规范 §17.4）。
+    async def _register_ai_models_from_store(self) -> None:
+        """模型配置来源（app.ai.store.type=db 或自定义 SPI 来源）：启动时全量加载并自动同步 SPI 注册表（AI 规范 §17.4）。
 
-        注册失败仅记录 error 日志不阻断启动（数据库暂不可用时应用仍可提供非 AI 能力），
+        注册失败仅记录 error 日志不阻断启动（来源暂不可用时应用仍可提供非 AI 能力），
         模型调用将回落 E4-AI-001（模型/供应商未配置）明确错误。
         """
-        if (self.settings.get("app.ai.store.type") or "yml") != "db":
-            return
         registrar = self._components.get("ai_registrar")
         store = self._components.get("ai_model_config_store")
         if registrar is None or store is None:
@@ -441,7 +488,7 @@ class Application:
         try:
             registered = await registrar.register_from_store(store)
             logger.info("ai_model_config_db_register_count=%d", len(registered))
-        except Exception as exc:  # 数据库未就绪/表缺失：记录错误，不阻断应用启动
+        except Exception as exc:  # 来源未就绪/表缺失：记录错误，不阻断应用启动
             logger.error("ai_model_config_db_register_failed err=%s", exc)
 
     async def _shutdown(self) -> None:

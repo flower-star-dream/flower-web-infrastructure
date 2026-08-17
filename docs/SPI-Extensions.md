@@ -17,6 +17,7 @@
 - [4. 数据库模块（db）](#4-数据库模块db)
   - [4.1 DatabaseSessionInterface —— 通用数据库会话接口](#41-databasesessioninterface--通用数据库会话接口)
   - [4.2 DatabaseFactoryInterface —— 通用数据库工厂接口](#42-databasefactoryinterface--通用数据库工厂接口)
+  - [4.2.1 自定义数据库接入与使用示例（两种方式）](#421-自定义数据库接入与使用示例两种方式)
   - [4.3 DatabaseRouterInterface —— 数据库路由接口](#43-databaserouterinterface--数据库路由接口)
 - [5. 注册发现模块（registry）](#5-注册发现模块registry)
   - [5.1 ServiceRegistryInterface —— 服务注册发现通用接口](#51-serviceregistryinterface--服务注册发现通用接口)
@@ -103,12 +104,12 @@
 | config | `ConfigClientInterface` | Protocol | 无（Nacos 内置实现） | Nacos/Apollo |
 | config | `ConfigSourceInterface` | Protocol | `CompositeConfigSource` | 配置中心适配 |
 | db | `DatabaseSessionInterface` | Protocol | `SqlAlchemyDatabaseSession` / `SqliteSession` | PG/其他 ORM |
-| db | `DatabaseFactoryInterface` | Protocol | `SqliteSessionFactory` | MySQL/PG 工厂 |
+| db | `DatabaseFactoryInterface` | Protocol | `SqliteSessionFactory` / `MySQLDatabase`（`DatabaseRegistry` 按 `app.db.type` 或 `app.db.instances` 装配） | PG 工厂（register 接入） |
 | db | `DatabaseRouterInterface` | ABC | `TenantDatabaseRouter` | 自定义路由策略 |
 | registry | `ServiceRegistryInterface` | Protocol | `InMemoryServiceRegistry` | Nacos/Eureka/Consul |
 | loadbalance | `LoadBalancerInterface` | ABC | `RandomBalancer` / `RoundRobinBalancer` / `WeightedRoundRobinBalancer` | 自定义策略 |
 | ai | `ModelProviderInterface` | ABC | `OpenAICompatibleProvider` | Anthropic/DeepSeek 等 |
-| ai | `ModelConfigStoreInterface` | Protocol | `DictModelConfigStore` / `SqlAlchemyModelConfigStore`（数据库 ai_model_config 表） | 配置中心 |
+| ai | `ModelConfigStoreInterface` | Protocol | `DictModelConfigStore`（yml）/ `SqlAlchemyModelConfigStore`（数据库 ai_model_config 表，数据源跟随 app.db.type） | 配置中心（`ModelConfigStoreRegistry.register` 接入） |
 | ai | `ContentGuardInterface` | ABC | `RuleBasedContentGuard` | 第三方审核服务 |
 | ai | `QuotaStoreInterface` | ABC | `InMemoryQuotaStore` | Redis（INCR + TTL 窗口） |
 | ai | `PromptTemplateStoreInterface` | ABC | `InMemoryPromptTemplateStore` | 数据库 prompt_templates 表 |
@@ -119,8 +120,8 @@
 | ai | `RerankerInterface` | ABC | `IdentityReranker` | CrossEncoder 等 |
 | ai | `ModelProviderFactory.register_factory` | 注册表 | OpenAI 兼容回落 | 自定义协议工厂 |
 | ai | `ModelAccessPolicy` | ABC | `AllowAllModelAccessPolicy` | RBAC 权限策略 |
-| cache | `CacheBackendInterface` | Protocol | `MemoryCacheBackend` | Redis |
-| mq | `MessagePublisherInterface` | Protocol | `InMemoryMessageQueue` | RocketMQ/Kafka |
+| cache | `CacheBackendInterface` | Protocol | `MemoryCacheBackend`（`CacheBackendRegistry` 按 `app.cache.type` 装配） | Redis/自定义（register 接入） |
+| mq | `MessagePublisherInterface` | Protocol | `InMemoryMessageQueue`（`MessageQueueRegistry` 按 `app.mq.type` 装配） | RocketMQ/Kafka（register 接入） |
 | mq | `MessageConsumerInterface` | Protocol | `InMemoryMessageQueue` | RocketMQ/Kafka |
 | mq | `MessageIdempotencyStoreInterface` | Protocol | `InMemoryMessageIdempotencyStore` | Redis SETNX / DB 唯一约束 |
 | mq | `MessageQueueSelector` | ABC | `HashMessageQueueSelector` | 自定义分区策略 |
@@ -129,12 +130,13 @@
 | monitoring | `ComponentMetricsCollector` | ABC | 内置组件各自子类 | 自定义组件指标 |
 | monitoring | `ThreadPoolMetrics` | 注册表 | 内置 | - |
 | security | `CaptchaStoreInterface` | ABC | `InMemoryCaptchaStore` | Redis |
-| storage | `ObjectStorageInterface` | Protocol | `LocalObjectStorage` | MinIO/云 OSS/S3 |
+| storage | `ObjectStorageInterface` | Protocol | `LocalObjectStorage`（`ObjectStorageRegistry` 按 `app.storage.type` 装配） | MinIO/云 OSS/S3（register 接入） |
 | storage | `PartStorageInterface` | Protocol | `LocalPartStorage` | MinIO 分段上传 |
 | storage | `UploadStoreInterface` | Protocol | `InMemoryUploadStore` | Redis/MySQL |
 | task | `TaskRecordStoreInterface` | ABC | `InMemoryTaskRecordStore` | MySQL（乐观锁） |
 | web | `IdempotencyStoreInterface` | Protocol | `InMemoryIdempotencyStore` | Redis/DB |
 | security | `SocialPlatform` | Protocol | `DemoSocialPlatform` | 微信/GitHub/钉钉等 |
+| registry | `ServiceRegistryInterface` | Protocol | `InMemoryServiceRegistry`（`ServiceDiscoveryRegistry` 按 `app.registry.type` 装配） | Nacos/Eureka/Consul（register 接入） |
 | security | `SocialBindingStore` | Protocol | `InMemorySocialBindingStore` | Redis/MySQL |
 | security | `JwtTokenStore` | Protocol | `InMemoryJwtTokenStore` / `RedisJwtTokenStore` | 共享存储 |
 | security | `JwtKeyProvider` | Protocol | `EnvJwtKeyProvider` | RS256/KMS 托管 |
@@ -204,6 +206,145 @@
 | `async health_check() -> bool` | 健康检查 |
 
 - 默认实现：`SqliteSessionFactory`（`sqlite_session_factory.py`）；MySQL 侧提供 `MySQLDatabase`/`DatabaseManager` 等构建配套。
+- 装配：`DatabaseRegistry`（`database_registry.py`）按 `app.db.type` 单源按名装配（内置 `mysql`/`sqlite`，自定义如 PostgreSQL 经 `register(name, factory)` 接入，工厂签名 `(实例连接参数 dict) -> DatabaseFactoryInterface`）；混合多数据源（`app.db.instances`，每实例带 `type` 字段）装配为 `DatabaseManager` 按名/租户路由，支持 MySQL/PostgreSQL 等不同数据库并存；`app.db.mysql.instances`（多租户独立库）向后兼容缺省回落 mysql。未注册 type 启动期快速失败（`ConfigError`）。
+
+#### 4.2.1 自定义数据库接入与使用示例（两种方式）
+
+> 场景：框架内置 MySQL/SQLite，接入 PostgreSQL 等其他数据库。以下以 PostgreSQL 为例（依赖 `sqlalchemy` + `asyncpg`，业务侧自行安装 asyncpg）。
+
+**第一步：实现 `DatabaseFactoryInterface` 并注册进 `DatabaseRegistry`**
+
+```python
+# my_pg_database.py
+"""PostgreSQL 数据库实现（自定义数据库接入示例）
+
+@Author: 花海
+@Date: 2026/08/17
+@Description: 基于 SQLAlchemy asyncpg 的 PostgreSQL 数据库工厂（DatabaseFactoryInterface 最小契约
+              + 可选 session_factory 能力），经 DatabaseRegistry.register 接入框架装配。
+"""
+from __future__ import annotations
+
+from contextlib import asynccontextmanager
+from typing import Any, AsyncGenerator
+
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+from web_infra.db import DatabaseRegistry
+
+
+class PgDatabase:
+    """PostgreSQL 数据库工厂（DatabaseFactoryInterface：create_session/session/close/health_check）"""
+
+    def __init__(
+        self,
+        host: str = "localhost",
+        port: int = 5432,
+        database: str = "app",
+        username: str = "postgres",
+        password: str = "",
+    ) -> None:
+        self._engine = create_async_engine(
+            f"postgresql+asyncpg://{username}:{password}@{host}:{port}/{database}"
+        )
+        self._session_factory = async_sessionmaker(self._engine, expire_on_commit=False)
+
+    @property
+    def session_factory(self) -> Any:
+        """SQLAlchemy 异步会话工厂（可选能力：供 SqlAlchemyModelConfigStore 等框架组件复用）"""
+        return self._session_factory
+
+    async def create_session(self) -> Any:
+        """创建通用数据库会话"""
+        return await self._session_factory()
+
+    @asynccontextmanager
+    async def session(self) -> AsyncGenerator[Any, None]:
+        """异步上下文管理器：进入创建会话，退出自动提交（异常回滚）并关闭"""
+        async with self._session_factory() as session:
+            try:
+                yield session
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
+            finally:
+                await session.close()
+
+    async def close(self) -> None:
+        """关闭连接池/底层资源"""
+        await self._engine.dispose()
+
+    async def health_check(self) -> bool:
+        """健康检查"""
+        try:
+            async with self._session_factory() as session:
+                await session.execute(text("SELECT 1"))
+            return True
+        except Exception:
+            return False
+
+
+def build_pg(params: dict[str, Any]) -> PgDatabase:
+    """数据库工厂（DatabaseRegistry 工厂签名）：入参为 app.db.pg 段或 app.db.instances 实例参数"""
+    return PgDatabase(**{k: v for k, v in params.items() if k != "datasource_name"})
+
+
+# 注册进 DatabaseRegistry（模块导入即注册，幂等；应用入口 import my_pg_database 即生效）
+DatabaseRegistry.register("pg", build_pg)
+```
+
+**方式一：单源替换**（整个应用数据库替换为 PostgreSQL，`app.db.type: pg`）
+
+```yaml
+# application.yml
+db:
+  type: pg
+  pg:                       # app.db.pg 段 = DatabaseRegistry 工厂入参
+    host: localhost
+    port: 5432
+    database: app
+    username: postgres
+    password: ${APP_DB_PG_PASSWORD:}
+```
+
+```python
+# 应用入口（create_app 前先导入注册模块）
+import my_pg_database  # noqa: F401  触发 DatabaseRegistry.register("pg", ...)
+
+db = app.state.db                 # PgDatabase 实例
+async with db.session() as session:
+    ...
+```
+
+**方式二：多源并存**（同一应用 MySQL 与 PostgreSQL 共存，`app.db.instances` 每实例带 `type`）
+
+```yaml
+# application.yml
+db:
+  instances:
+    order:    { type: mysql, host: 127.0.0.1, port: 3306, database: order_db }   # 订单库 MySQL
+    audit:    { type: pg,    host: localhost, port: 5432, database: audit_db }   # 审计库 PostgreSQL
+```
+
+```python
+import my_pg_database  # noqa: F401
+
+db = app.state.db                 # DatabaseManager：按名获取任意数据源
+async with db.get("order").session() as session:   # MySQL
+    ...
+async with db.get("audit").session() as session:   # PostgreSQL
+    ...
+```
+
+> **同类型多库同样适用**：`app.db.instances` 实例未带 `type` 时缺省回落 `mysql`（或显式写 `type: mysql`），
+> 多个实例均为同一类型数据库（如订单/库存各自独立 MySQL 库）时同样装配为 `DatabaseManager` 按名获取。
+
+**可选能力**（非 DatabaseFactoryInterface 必需，按需实现即可被框架对应功能识别）：
+- `session_factory`（SQLAlchemy 异步会话工厂）：供 `SqlAlchemyModelConfigStore`（AI 模型配置 `store.type=db`）等复用同库；
+- `install_tenant_filter(tenant_filter)`：多租户（`app.tenant.enabled=true`）时挂载租户条件过滤器；
+- `orm_session()`：SQLAlchemy ORM 会话上下文管理器（`DatabaseManager.orm_session` 委托调用）。
 
 ### 4.3 DatabaseRouterInterface —— 数据库路由接口
 
@@ -235,6 +376,7 @@
 | `async close() -> None` | 释放底层资源 |
 
 - 默认实现：`InMemoryServiceRegistry`（`in_memory.py`，单体/测试场景）；分布式实现：`NacosDiscoveryClient`（`nacos_discovery.py`，官方 nacos-sdk-python v2，gRPC 协议，临时实例由 SDK 自动心跳保活），`NacosRegistration`（`nacos_registration.py`）为注册流程封装工具类。
+- 装配：`ServiceDiscoveryRegistry`（`service_discovery_registry.py`）按 `app.registry.type` 按名装配（内置 `memory`/`nacos`，自定义经 `register(name, factory)` 接入，工厂签名 `(settings) -> ServiceRegistryInterface`）；未注册 type 启动期快速失败（`ConfigError`）。
 
 ## 6. 负载均衡模块（loadbalance）
 
@@ -282,8 +424,23 @@
 
 - 默认实现一：`DictModelConfigStore`（`dict_model_config_store.py`）——内存/yml 清单（`app.ai.models`，`app.ai.store.type=yml` 默认装配）。
 - 默认实现二：`SqlAlchemyModelConfigStore`（`sqlalchemy_model_config_store.py`）——数据库 `ai_model_config` 表（基线 DDL/DML 见 `db/init/ddl/002-ai-model-config-init-ddl.sql`、`db/init/dml/002-ai-model-config-init-dml.sql`），`app.ai.store.type=db` 装配，启动生命周期自动同步 SPI 注册表。
-  - 构造：接收 SQLAlchemy `async_sessionmaker[AsyncSession]` 会话工厂（复用 `app.db.type=mysql` 数据库组件的 `session_factory`）；非 MySQL 数据源时装配快速失败（`ConfigError`）。
+  - 构造：接收 SQLAlchemy `async_sessionmaker[AsyncSession]` 会话工厂；数据源跟随用户配置的数据库组件（不锁死 MySQL）——`app.db.type=mysql` 复用数据库组件 `session_factory`（同库部署）；多数据源（`DatabaseManager`）取首个数据源；`app.db.type=sqlite` 基于 `SqliteSessionFactory.db_path` 构建独立 SQLAlchemy aiosqlite 异步引擎（sqlite 组件为同步 sqlite3 会话，模型配置表走独立异步连接，`:memory:` 为独立内存库建议使用文件路径）；拿不到异步会话工厂时装配快速失败（`ConfigError`）。
+  - 释放：自建引擎（sqlite 场景）经 `SqlAlchemyModelConfigStore.close()` 释放，应用停机生命周期自动调用；mysql 场景复用数据库组件引擎无需释放。
   - 密钥安全（AI 规范 §3.1/AI-7）：`api_key` 列仅存 `env:VAR` 环境变量引用（如 `env:LLM_API_KEY`），真实密钥由应用进程从环境变量/.env 注入，`ModelConfig.resolved_api_key` 运行时解析，禁止明文落盘。
+
+#### 7.2.1 ModelConfigStoreRegistry —— 模型配置来源注册表
+
+- 文件：`src/web_infra/ai/model_config_store_registry.py`
+- 定位：模型配置来源 SPI 装配入口（类级注册，全局装配）。yml 配置 `app.ai.store.type` 按名查注册表实例化；内置 `yml` 条目，用户自定义来源（配置中心/Redis 等）经注册即可接入 `create_app`，无需改动框架装配代码；未注册的 `store.type` 启动期快速失败（`ConfigError`，避免拼写错误静默回落）。
+- 注册方式：`ModelConfigStoreRegistry.register(name, factory)`，`factory` 为无参工厂，返回 `ModelConfigStoreInterface` 实现；同名覆盖，`unregister` 注销。
+
+| 方法 | 说明 |
+| ---- | ---- |
+| `register(name, factory)` | 注册 store 工厂（同名覆盖） |
+| `unregister(name)` | 注销 store（不存在静默） |
+| `get(name) -> factory` | 按名查询工厂（未注册抛 `KeyError`，装配期转 `ConfigError`） |
+| `create(name) -> store` | 按名实例化 store |
+| `registered_names() -> list[str]` | 已注册 store 名清单 |
 
 ### 7.3 ContentGuardInterface —— 内容安全审核接口
 
@@ -429,6 +586,7 @@
 | `async is_empty(key: str) -> bool` | 判断是否处于空值占位状态（过期自动失效返回 False） |
 
 - 默认实现：`MemoryCacheBackend`（`memory_cache_backend.py`，本地缓存 TTL 自动钳制为分布式 TTL 的 1/3，规范 §8）；分布式实现：`RedisCacheBackend`（`db/redis_cache_backend.py`）。
+- 装配：`CacheBackendRegistry`（`cache_backend_registry.py`）按 `app.cache.type` 按名装配（内置 `memory`/`redis`，自定义经 `register(name, factory)` 接入，工厂签名 `(settings) -> CacheBackendInterface`）；未注册 type 启动期快速失败（`ConfigError`）。
 
 ## 9. 消息队列模块（mq）
 
@@ -444,6 +602,7 @@
 | `async send_delay(message: Message, delay_seconds: int) -> str` | 发送延迟消息（规范 §9.5），返回消息 ID；RocketMQ 实现映射官方固定 delay level（1s~2h 共 18 档，禁止 sleep） |
 
 - 默认实现：`InMemoryMessageQueue`（`in_memory_message_queue.py`）；分布式实现：`RocketMqPublisher`（`rocketmq_publisher.py`）。
+- 装配：`MessageQueueRegistry`（`message_queue_registry.py`）按 `app.mq.type` 按名装配（内置 `memory`/`rocketmq`，自定义经 `register(name, factory)` 接入，工厂签名 `(settings) -> MessagePublisherInterface`）；未注册 type 启动期快速失败（`ConfigError`）。
 
 ### 9.2 MessageConsumerInterface —— 消息消费者接口
 
@@ -639,6 +798,7 @@
 > 类型别名：`OwnerValidator = Callable[[str, str \| None, str \| None], None]`（object_id / owner / current_user，校验失败抛权限异常，如 `PermException` E2-PERM-*）。
 
 - 默认实现：`LocalObjectStorage`（`local_object_storage.py`，presign_url 返回带 `expires`+HMAC `signature` 的受限 URL）；对象存储实现：`MinioStorage`（`minio_storage.py`）。
+- 装配：`ObjectStorageRegistry`（`object_storage_registry.py`）按 `app.storage.type` 按名装配（内置 `local`/`minio`，自定义经 `register(name, factory)` 接入，工厂签名 `(settings) -> ObjectStorageInterface`）；未注册 type 启动期快速失败（`ConfigError`）。
 
 ### 12.2 PartStorageInterface —— 分片存储接口
 
@@ -706,6 +866,7 @@
 | `async release(key: str) -> None` | 释放占用（业务处理异常时调用，允许后续请求重试） |
 
 - 默认实现：`InMemoryIdempotencyStore`（`in_memory_idempotency_store.py`）；Redis 实现：`RedisIdempotencyStore`（`redis_idempotency_store.py`）。
+- 中间件装配（`app.web.middlewares.idempotency.store_type`）：`memory`（默认，单实例）/ `redis`（跨实例原子，复用已装配 cache 组件 `RedisCacheBackend` 的 Redis 客户端，需 `app.cache.type=redis`）；`store_type=redis` 但 cache 组件非 Redis 时启动期快速失败（`ConfigError`）。
 
 ## 15. 支付模块（payment）
 

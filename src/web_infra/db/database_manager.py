@@ -148,7 +148,8 @@ class DatabaseManager:
         """默认数据源 SQLAlchemy ORM 会话上下文管理器（规范 §10.6：框架统一管理连接生命周期）。
 
         退出自动提交（异常自动回滚）并关闭；业务无需 try/finally。
-        仅支持底层为 MySQLDatabase 的数据源（原生 AsyncSession）。
+        支持实现 orm_session 能力的数据源（如 MySQLDatabase 的原生 AsyncSession）；
+        无该能力的数据源（如同步 SQLite）调用时抛 AttributeError。
 
         :param name: 数据源名（默认使用构造时 default_name）
         """

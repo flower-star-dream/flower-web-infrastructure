@@ -11,6 +11,7 @@ from web_infra.registry.service_registry_interface import ServiceRegistryInterfa
 from web_infra.registry.nacos_discovery import NacosDiscoveryClient
 from web_infra.registry.nacos_registration import NacosRegistration
 from web_infra.registry.in_memory import InMemoryServiceRegistry
+from web_infra.registry.service_discovery_registry import ServiceDiscoveryRegistry
 
 __all__ = [
     "ServiceInstance",
@@ -18,4 +19,5 @@ __all__ = [
     "NacosDiscoveryClient",
     "NacosRegistration",
     "InMemoryServiceRegistry",
+    "ServiceDiscoveryRegistry",
 ]
