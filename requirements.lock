@@ -17,7 +17,7 @@ coverage==7.15.4
 cryptography==50.0.0
 dnspython==2.8.0
 fastapi==0.141.1
-# Editable Git install with no remote (flower-web-infrastructure==0.2.0)
+# Editable Git install with no remote (flower-web-infrastructure==0.1.0)
 -e f:\baseproject\flower-web-infrastructure
 greenlet==3.5.5
 h11==0.16.0
@@ -48,7 +48,7 @@ pytest==9.1.1
 pytest-asyncio==1.4.0
 pytest-cov==7.1.0
 python-dotenv==1.2.2
-# Editable install with no version control (python-web-infrastructure==0.2.0)
+# Editable install with no version control (python-web-infrastructure==0.1.0)
 -e f:\baseproject\python-web-infrastructure
 PyYAML==6.0.3
 redis==8.1.0

@@ -308,7 +308,7 @@ from web_infra.utils import (
 )
 from web_infra.application import Application, create_app
 
-__version__ = "0.3.0"
+__version__ = "0.1.0"
 
 __all__ = [
     # 响应与错误码
