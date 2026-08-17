@@ -45,6 +45,14 @@ storage = ["minio>=7.2"]                               # MinIO 对象存储（�
 yaml = ["pyyaml>=6.0"]                                 # YAML 配置（已在核心，兼容旧写法）
 rag = ["faiss-cpu>=1.8", "sentence-transformers>=3.0"] # RAG 向量检索（AI 规范 §11）
 pdf = ["playwright>=1.40"]                             # PDF 渲染导出（规范 §22）
+# 能力依赖链（可选能力，按需主动引入）：用户系统(user，业务实现) → 认证(authn) → 鉴权(authz) → 支付(pay)；
+# 依赖均为核心依赖（httpx/cryptography 等），extras 仅作能力声明与后续 SDK 挂载点；
+# 依赖包含规则由 web_infra.capability 能力注册表维护（启用 pay 自动带上前置 authz/authn/user），
+# 业务实现（如用户系统 user-service）由业务层提供
+user = []
+authn = []
+authz = []
+pay = []
 # MySQL/SQLite ORM 数据访问（SQLAlchemy + 异步驱动，延迟导入）
 mysql = ["sqlalchemy>=2.0.51", "aiomysql>=0.3.2", "aiosqlite>=0.19.0"]
 # Redis 缓存/分布式锁/幂等存储（延迟导入）
@@ -73,7 +81,7 @@ min-microservice = [
     "rocketmq-client-python>=2.0",
     "minio>=7.2",
 ]
-# 全量安装：核心 + 全部可选能力（nacos/rocketmq/storage/migrate/rag/pdf/mysql/redis/mongo）
+# 全量安装：核心 + 全部可选能力（user/authn/authz/pay + nacos/rocketmq/storage/migrate/rag/pdf/mysql/redis/mongo）
 all = [
     "nacos-sdk-python>=2.0",
     "rocketmq-client-python>=2.0",
@@ -88,6 +96,11 @@ all = [
     "redis>=5.0.0",
     "pymongo>=4.11.0",
     "beanie>=2.0.0",
+    # user/authn/authz/pay 为空 extra：能力声明，无额外依赖（能力依赖链由 web_infra.capability 维护）
+    "user",
+    "authn",
+    "authz",
+    "pay",
 ]
 
 [tool.setuptools.packages.find]

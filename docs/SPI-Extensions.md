@@ -69,7 +69,12 @@
   - [16.4 自定义对象存储实现示例（参照 `MinioStorage`）](#164-自定义对象存储实现示例参照-miniostorage)
   - [16.5 自定义指标分组示例（参照 `metric_group_provider_interface.py`）](#165-自定义指标分组示例参照-metricgroupproviderinterfacepy)
   - [16.6 常见替换对照](#166-常见替换对照)
-- [17. 维护指南](#17-维护指南)
+- [17. 能力注册表（capability）](#17-能力注册表capability)
+  - [17.1 能力契约与内置依赖图](#171-能力契约与内置依赖图)
+  - [17.2 依赖解析（resolve）与装配校验（validate）](#172-依赖解析resolve与装配校验validate)
+  - [17.3 启用能力（enable / app.capabilities.enabled）](#173-启用能力enable--appcapabilitiesenabled)
+  - [17.4 业务扩展自定义能力](#174-业务扩展自定义能力)
+- [18. 维护指南](#18-维护指南)
 
 ## 1. SPI 机制概述
 
@@ -704,6 +709,9 @@
 
 ## 15. 支付模块（payment）
 
+> **可选能力（2026-08-17）**：支付不随 `web_infra` 顶层导出，`import web_infra` 不加载支付模块/不注册支付错误码；
+> 需要支付的系统显式 `from web_infra.payment import ...` 主动引入（如 `from web_infra.payment import PaymentGateway`）。
+
 ### 15.1 PaymentGateway —— 支付网关统一抽象接口
 
 - 文件：`src/web_infra/payment/payment_gateway_interface.py`
@@ -897,7 +905,85 @@ MetricGroupProviderRegistry.register(OrderMetricsGroup())
 | 本地 MQ -> 分布式 MQ | `InMemoryMessageQueue` | `RocketMqPublisher`（已内置） |
 | 接入新模型供应商 | `OpenAICompatibleProvider` | 自定义 `ModelProviderInterface` 实现 |
 
-## 17. 维护指南
+## 17. 能力注册表（capability）
+
+> **能力依赖模型（2026-08-17）**：支付的前置是鉴权，鉴权的前置是认证，认证的前置是用户系统（否则无意义）。
+> 框架声明能力契约（SPI）与依赖包含规则，启用能力时按包含关系自动启用前置（启用支付默认启用鉴权→认证→用户，以此类推）；
+> 具体业务实现（如用户系统 user-service）交由业务层提供。
+
+### 17.1 能力契约与内置依赖图
+
+- 文件：`src/web_infra/capability/`（`Capability` / `CapabilityRegistry` / `CapabilityError` / `CapabilityResolution` / `CapabilityValidation`）
+- `Capability`（契约）：能力名 / 说明 / 随能力启用的框架模块（modules）/ 前置能力（requires，按包含关系自动启用）/ 业务契约（contract）。
+- 注册：`CapabilityRegistry.register(Capability(...))`（同名覆盖；前置允许后置注册，未知前置在解析/校验时拦截；不能依赖自身）。
+- 内置依赖图（导入 `web_infra.capability` 自动注册）：
+
+| 能力 | 框架模块 | 前置 | 说明 |
+| ---- | ---- | ---- | ---- |
+| `user` | 无（业务实现） | - | 用户系统：契约能力，业务层实现（如脚手架 user-service）；框架侧接入点 RequestContext / SocialBindingStore / OAuth2 |
+| `authn` | `web_infra.security` | `user` | 认证：确认『你是谁』——JWT 签发/校验、Token 存储、三方登录、OAuth2 登录（前置用户系统） |
+| `authz` | `web_infra.security` | `authn` | 鉴权：确认『你能做什么』——权限守卫/RBAC（PermissionGuard，前置认证） |
+| `pay` | `web_infra.payment` | `authz` | 支付：渠道 SPI + 回调验签/分发 + 骨架兜底 + 对账/冲正/风控（前置鉴权，传递依赖认证/用户） |
+| `ai` | `web_infra.ai` | - | AI 模型网关：供应商/模型路由/配额/检索/内容安全 |
+| `mq` | `web_infra.mq` | - | 消息队列：发布/幂等消费/事务发件箱 |
+| `storage` | `web_infra.storage` | - | 对象存储与分片上传 |
+| `registry` | `web_infra.registry` | - | 服务注册发现与负载均衡 |
+| `config` | `web_infra.config` | - | 配置（本地源 + Nacos 配置中心） |
+| `db` | `web_infra.db` | - | 数据访问（ORM 会话/读写分离/多租户过滤） |
+| `cache` | `web_infra.cache` | - | 缓存（内存/Redis） |
+
+### 17.2 依赖解析（resolve）与装配校验（validate）
+
+- `CapabilityRegistry.resolve(name)`：按包含关系展开传递前置，返回 `CapabilityResolution`（拓扑序能力链 chain、需导入框架模块 modules）；
+  未注册能力 / 依赖循环抛 `CapabilityError`。
+- `CapabilityRegistry.validate(enabled)`：装配校验，返回 `CapabilityValidation`（ok / unknown 未知能力 / circular 循环链路 /
+  closure 完整闭包 / chain 拓扑序）。**缺前置不视为失败**——按包含关系自动补足（如启用 pay 闭包自动含 user/authn/authz）。
+
+```python
+from web_infra import CapabilityRegistry
+
+resolution = CapabilityRegistry.resolve("pay")
+assert [c.name for c in resolution.chain] == ["user", "authn", "authz", "pay"]  # 启用支付自动带上前置（认证/鉴权均依赖用户）
+assert resolution.modules == ("web_infra.security", "web_infra.payment")
+
+validation = CapabilityRegistry.validate(["pay"])
+assert validation.ok and validation.closure == frozenset({"user", "authn", "authz", "pay"})
+```
+
+### 17.3 启用能力（enable / app.capabilities.enabled）
+
+- 运行时显式启用：`CapabilityRegistry.enable("pay")` —— 解析（校验）后按拓扑序自动导入前置与目标能力的框架模块（幂等）。
+- 配置驱动装配（推荐）：`application.yml` 声明 `app.capabilities.enabled`，`create_app` 装配时自动校验（未知能力/循环抛
+  `ConfigError`）并按拓扑序启用：
+
+```yaml
+app:
+  capabilities:
+    enabled: [pay]   # 自动启用 鉴权(authz)→认证(authn)→用户系统(user)（业务实现由业务层提供）
+```
+
+> **默认状态**：`app.capabilities.enabled` 默认空（`[]`）——业务可选能力链（user / authn / authz / pay）默认全部关闭，按需启用；
+> 认证/鉴权与支付一样依赖用户系统（JWT/权限守卫等安全工具代码随核心可导入，能力启用需用户前置）。
+> 框架内置模块能力（config / db / cache / mq / storage / registry / ai）的框架代码随核心安装即可用
+> （内存/本地实现开箱即用，外部实现需对应 extras + 配置），在 `enabled` 中声明仅用于显式装配校验与依赖展开。
+
+### 17.4 业务扩展自定义能力
+
+业务层（使用框架的项目开发者）按同一机制登记业务能力并声明依赖（以此类推）：
+
+```python
+from web_infra import Capability, CapabilityRegistry
+
+CapabilityRegistry.register(Capability(
+    name="order",            # 业务能力名
+    description="订单域（业务实现）",
+    requires=("pay",),       # 依赖支付 → 自动带出 auth / user
+    contract="订单业务由业务层实现",
+))
+CapabilityRegistry.enable("order")
+```
+
+## 18. 维护指南
 
 | 场景 | 操作位置 |
 | ---- | ---- |

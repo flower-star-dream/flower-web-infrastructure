@@ -62,8 +62,8 @@ flower web 通用框架是一套**配置驱动**的后端基础设施库，面�
 | 对象存储        | `ObjectStorage` 抽象 + 本地 / MinIO 实现，分片上传/断点续传                                                                                                                               |
 | 服务注册发现    | `ServiceRegistry` 抽象 + 内存 / Nacos 实现，负载均衡与 Feign 调用                                                                                                                         |
 | 韧性设计        | 重试（指数退避）、熔断、令牌桶限流、Redis 分布式锁                                                                                                                                          |
-| 认证与安全      | JWT 签发校验/登出、密码加密、图形验证码、登录防爆破锁定                                                                                                                                     |
-| 统一鉴权中间件  | 统一入口 Bearer 校验 + 白名单 + 上下文注入，RBAC 声明式权限守卫                                                                                                                             |
+| 认证与安全      | JWT 签发校验/登出、密码加密、图形验证码、登录防爆破锁定（**认证/鉴权能力依赖用户系统（业务实现），默认关闭**，见 [6 配置说明](#6-配置说明)） |
+| 统一鉴权中间件  | 统一入口 Bearer 校验 + 白名单 + 上下文注入，RBAC 声明式权限守卫（默认关闭，需显式启用） |
 | API 幂等键      | 写接口幂等键占用 + 结果缓存（内存/Redis），重复请求返回首次结果                                                                                                                             |
 | OAuth2          | 客户端注册 SPI + 令牌签发/校验/撤销（client_credentials 最小实现）                                                                                                                          |
 | AI 供应商抽象   | Provider SPI + 统一出入参 + 模型配置管理                                                                                                                                                    |
@@ -78,7 +78,8 @@ flower web 通用框架是一套**配置驱动**的后端基础设施库，面�
 | 多租户          | 租户上下文校验 + 缓存 Key 租户维度 + SQLAlchemy 条件自动注入 + 多数据源动态路由                                                                                                             |
 | 分片上传        | 初始化/逐片/断点续传/合并校验（MD5+大小），本地 + MinIO 双实现                                                                                                                              |
 | 健康检查/指标   | `/health`（组件连通性探测）+ `/metrics`（Prometheus 文本 + 浏览器 HTML 可视化；连接池/运行时/线程池/缓存/存储/消息队列/注册中心组件指标，按组件启用配置动态采集与展示，自定义分组 SPI） |
-| 支付能力        | 渠道 SPI + 骨架兜底（下单幂等/关单确认/回调校验/流水落库）+ 微信渠道 + 超时关单 + 对账/冲正 + 风控限额 + 审计/权限点（见 [7.12 支付](#712-支付)） |
+| 支付能力        | 渠道 SPI + 骨架兜底（下单幂等/关单确认/回调校验/流水落库）+ 微信渠道 + 超时关单 + 对账/冲正 + 风控限额 + 审计/权限点；**可选能力**：不随顶层导出，依赖 鉴权→认证→用户系统（业务实现），按需主动引入（见 [7.12 支付](#712-支付) / [docs/使用说明.md 4.2](./docs/使用说明.md#42-能力依赖与装配)） |
+| 能力注册表      | `CapabilityRegistry`：能力契约（SPI）+ 依赖包含规则 + 装配校验；依赖链 用户系统→认证→鉴权→支付，启用按包含关系自动带上前置（`app.capabilities.enabled` 声明，见 [docs/使用说明.md 4.2](./docs/使用说明.md#42-能力依赖与装配)） |
 | 通用工具        | 雪花 ID、日期、文件锁、数学、Token 精确计数、PDF 渲染                                                                                                                                    |
 
 ## 3. 技术栈
@@ -105,7 +106,7 @@ python -m venv .venv
 .venv\Scripts\activate
 ```
 
-**最小安装（推荐，仅核心依赖）**——Web / 配置 / 日志 / 错误码 / 认证 / 缓存（内存）/ 监控 / 密码加密，`import web_infra` 与 `create_app()` 开箱即用；**不含** MySQL/Redis/Mongo 数据访问（代码延迟导入）及 MinIO / Nacos / RocketMQ / Alembic / RAG / PDF 等可选组件。数据库与缓存扩展能力需按需安装 extras（见下方"按需追加可选能力"）：
+**最小安装（推荐，仅核心依赖）**——Web / 配置 / 日志 / 错误码 / 安全工具类（JWT、密码加密）/ 缓存（内存）/ 监控 / 韧性，`import web_infra` 与 `create_app()` 开箱即用；**不含** MySQL/Redis/Mongo 数据访问（代码延迟导入）及 MinIO / Nacos / RocketMQ / Alembic / RAG / PDF 等可选组件。数据库与缓存扩展能力需按需安装 extras（见下方"按需追加可选能力"）。**依赖链上的业务可选能力（用户系统 → 认证 → 鉴权 → 支付）默认全部关闭**（认证/鉴权与支付一样依赖用户系统，`app.capabilities.enabled` 默认空，见 [docs/使用说明.md](./docs/使用说明.md) 1.1/4.2 节）：
 
 ```bash
 pip install flower-web-infrastructure
@@ -188,6 +189,8 @@ app:
   logging:
     level: INFO
     format: text
+  capabilities:           # 能力装配（可选能力依赖包含规则，默认空 = 业务可选能力链全部关闭）
+    enabled: []           # 如 [pay] 自动启用 鉴权(authz)→认证(authn)→用户系统(user)（业务实现由业务层提供）
   web:
     middlewares:            # 中间件声明式引入：列出即引入，enabled: false 显式关闭
       idempotency:
@@ -221,6 +224,7 @@ app:
 
 | 配置键                  | 可选值（默认加粗）          | 说明                                             |
 | ----------------------- | --------------------------- | ------------------------------------------------ |
+| `app.capabilities.enabled` | **[]** / 能力名列表    | 能力装配：声明启用的能力（user / authn / authz / pay 等），装配时按依赖包含规则校验并自动带上前置（未知能力/循环抛 ConfigError）；默认空 = 业务可选能力链全部关闭 |
 | `app.web.middlewares` | 声明式清单                  | trace_id 默认引入；auth / idempotency 需自行启用 |
 | `app.cache.type`      | **memory** / redis    | 缓存实现切换                                     |
 | `app.db.type`         | **mysql** / sqlite    | 数据库实现切换                                   |
@@ -657,6 +661,10 @@ StateMachineRegistry.register_engine_factory(OrderStatus, OrderEvent, OrderEO, T
 
 支付模块（`web_infra/payment`）按《Web 系统通用架构规范 · 支付扩展 v1.0》实现渠道接入与资金兜底。
 
+> **可选能力**：支付不随 `web_infra` 顶层导出（`import web_infra` 不加载支付模块、不注册支付错误码），需显式
+> `from web_infra.payment import ...` 或经 `app.capabilities.enabled: [pay]` 主动引入；依赖链
+> 支付 → 鉴权 → 认证 → 用户系统（业务实现），启用按包含关系自动带上前置，见 [docs/使用说明.md 4.2](./docs/使用说明.md#42-能力依赖与装配)。
+
 **装配渠道（内存演示，注入骨架存储即获全套兜底）**：
 
 ```python
@@ -704,8 +712,7 @@ await guard.check_prepay(user_id=1, channel="memory", amount=Decimal("99.50"),
 （`close_expired_orders`）、冲正（`reversal_flow`）、账单文件（`BillFileManager`）、审计
 （`PaymentAuditStore`）、权限点（`PaymentPermission`）、契约测试（`payment/testing`）。
 
-**文档**：[订单兜底策略](./docs/订单兜底策略.md) / [SPI-Extensions §15](./docs/SPI-Extensions.md#15-支付模块payment) /
-[支付扩展规范合规审查报告](./docs/支付扩展规范合规审查报告.md)
+**文档**：[订单兜底策略](./docs/订单兜底策略.md) / [SPI-Extensions §15](./docs/SPI-Extensions.md#15-支付模块payment)
 
 ## 8. 项目结构
 
@@ -746,6 +753,7 @@ src/web_infra/
 ├── error/              # 错误码 + 异常 + 全局异常处理
 ├── constants/          # 常量分类（Auth/Infra/Param/Sys/Biz + CacheKey + MQ）
 ├── config/             # YAML 配置读取（ConfigSource / Settings / Nacos 配置中心 / ConfigCipher 加密值）
+├── capability/         # 能力注册表（能力契约 SPI + 依赖包含规则 + 装配校验：用户系统→认证→鉴权→支付）
 ├── context/            # 请求上下文（contextvars）
 ├── logging/            # 日志（统一格式 / TraceId / 脱敏）
 ├── resilience/         # 韧性设计（重试 / 熔断 / 限流 / 分布式锁）
@@ -753,6 +761,7 @@ src/web_infra/
 ├── db/                 # 数据库接口 + MySQL/MongoDB/Redis/SQLite + 多租户拦截
 ├── mq/                 # 消息队列抽象 + 幂等消费 + Outbox 本地事务表
 ├── storage/            # 对象存储抽象 + 分片上传（本地/MinIO）
+├── payment/            # 支付 SPI（渠道抽象/回调验签/骨架兜底/对账/冲正/风控；可选能力，依赖 鉴权→认证→用户）
 ├── schedule/           # 定时任务调度（asyncio + 可选分布式锁）
 ├── registry/           # 服务注册发现 SPI（内存/Nacos）
 ├── loadbalance/        # 负载均衡 SPI（随机/轮询/平滑加权）
@@ -838,7 +847,6 @@ GitHub Actions 工作流位于 `.github/workflows/ci.yml`，推送 `main` / 版�
 | [CI/CD 文档](./docs/CI-CD.md)              | CI 流水线触发时机、门禁策略、镜像推送开启方式、本地复现                                                    |
 | [SPI 扩展点文档](./docs/SPI-Extensions.md) | 框架预留的全部 SPI 扩展点：接口清单、方法契约、默认实现与扩展接入方式（自定义供应商/存储/缓存/消息队列等） |
 | [常量与错误码](./docs/常量与错误码.md) | **框架常量与错误码的单一权威清单**：全部常量（含 HTTP 状态码 `HttpStatusConstant`）与错误码总览，业务新增/引用前先查阅本文档，防止冲突或重复定义 |
-| [规范符合性审查报告](./docs/规范符合性审查报告.md) | 对照通用架构规范 v1.2 + 多租户/AI 扩展的逐章审查结果与整改清单                                     |
 
 ## 13. 版本与兼容性
 

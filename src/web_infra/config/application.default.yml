@@ -17,6 +17,13 @@ app:
     level: INFO
     format: text
 
+  # 能力装配（可选能力依赖包含规则，2026-08-17）：enabled 声明系统启用的能力，装配时按包含关系校验
+  # （缺前置自动补足；未知能力/依赖循环抛 ConfigError）并自动导入前置能力的框架模块。
+  # 核心依赖链：用户系统(user，契约能力，业务实现) → 认证(authn) → 鉴权(authz) → 支付(pay)，以此类推；
+  # 全能力清单与依赖见 web_infra.capability（CapabilityRegistry）。默认不启用任何可选能力。
+  capabilities:
+    enabled: []
+
   # Web 中间件装配（配置驱动：声明即引入；enabled: false 显式关闭；trace_id 默认引入）
   # 顺序约束：Starlette 后声明者在外层先执行，故 trace_id 必须最后声明（最先执行生成 TraceId），
   # 统一鉴权 auth 次之（随后以 token payload 注入身份，不被外层覆盖），幂等 idempotency 最内层最后执行（此时身份已就绪）。

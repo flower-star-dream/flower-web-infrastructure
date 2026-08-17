@@ -20,6 +20,7 @@ from typing import Any, AsyncGenerator, Callable, cast
 from fastapi import FastAPI
 
 from web_infra.config import ConfigError, CompositeConfigSource, DictConfigSource, Settings
+from web_infra.capability import CapabilityRegistry
 from web_infra.context import RequestContext
 from web_infra.error import register_global_exception_handlers
 from web_infra.logging import configure_logging
@@ -124,8 +125,9 @@ class Application:
         return Settings(CompositeConfigSource(DictConfigSource(settings), Settings.default_source()))
 
     def build(self) -> FastAPI:
-        """装配应用：日志 -> Web 基础能力 -> 中间件组件 -> 多租户 -> 健康检查/指标端点"""
+        """装配应用：日志 -> 能力装配校验 -> Web 基础能力 -> 中间件组件 -> 多租户 -> 健康检查/指标端点"""
         self._setup_logging()
+        self._setup_capabilities()
         self._setup_web()
         self._setup_components()
         self._setup_tenant()
@@ -170,6 +172,27 @@ class Application:
         level_name = self.settings.get("app.logging.level")
         level = getattr(logging, str(level_name).upper(), logging.INFO)
         configure_logging(level=level, fmt=fmt)
+
+    def _setup_capabilities(self) -> None:
+        """能力装配校验与启用（app.capabilities.enabled，可选能力依赖包含规则）。
+
+        启用集合按包含关系校验（缺前置自动补足；未知能力/依赖循环抛 ConfigError），
+        校验通过后按拓扑序启用各能力（自动导入前置能力与目标能力的框架模块，幂等）。
+        未配置 enabled 时跳过（默认不启用任何可选能力，见 yml）。
+        """
+        enabled = self.settings.get("app.capabilities.enabled") or []
+        if not enabled:
+            return
+        validation = CapabilityRegistry.validate(enabled)
+        if not validation.ok:
+            details: list[str] = []
+            if validation.unknown:
+                details.append(f"未注册的能力: {', '.join(sorted(validation.unknown))}")
+            if validation.circular:
+                details.append("能力依赖循环: " + "; ".join(" -> ".join(c) for c in validation.circular))
+            raise ConfigError("能力装配校验失败：" + "；".join(details), key="app.capabilities.enabled")
+        for name in enabled:
+            CapabilityRegistry.enable(name)
 
     def _setup_web(self) -> None:
         """装配 Web 基础能力：全局异常处理 + 配置声明的中间件（app.web.middlewares）"""
