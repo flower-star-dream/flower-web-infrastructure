@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 import uuid
 from typing import TYPE_CHECKING, Any, AsyncIterator
@@ -99,8 +100,13 @@ class ModelGateway:
         self._default_concurrency = default_concurrency
         self._max_retries = max_retries
         self._retry_backoff_base_seconds = retry_backoff_base_seconds
+        # 并发守卫懒创建互斥锁（M2 修复：并发首次调用同一模型仅创建一个守卫，防并发上限分裂超卖）
+        self._guard_lock = threading.Lock()
         # 已注入连接池客户端的模型（避免重复注入）
         self._injected: set[str] = set()
+        # 连接池注入互斥锁：保护「检查-注入-标记」整体原子性（H2 修复，
+        # 避免并发首次调用同一模型时重复创建连接池客户端）
+        self._inject_lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
     # 对外能力
@@ -366,20 +372,24 @@ class ModelGateway:
     async def _attach_pool_clients(self, provider: ModelProviderInterface, model_name: str) -> None:
         """将连接池流式/非流式客户端注入供应商（AI 规范 §5.1 分池生效；仅首次注入）。
 
-        无连接池或供应商未实现 attach_clients（自定义供应商）时静默跳过。
+        并发安全：检查-注入-标记整体置于 asyncio.Lock 内（锁内二次确认），
+        消除并发首次调用同一模型时重复创建连接池客户端的竞态（H2 修复）。
 
         :param provider: 供应商实例
         :param model_name: 模型逻辑名（注入去重键）
         """
-        if self._pool_manager is None or model_name in self._injected:
+        if self._pool_manager is None:
             return
-        attach = getattr(provider, "attach_clients", None)
-        if not callable(attach):
-            return
-        stream_client = await self._pool_manager.get_stream_client()
-        sync_client = await self._pool_manager.get_sync_client()
-        attach(stream_client=stream_client, sync_client=sync_client)
-        self._injected.add(model_name)
+        async with self._inject_lock:
+            if model_name in self._injected:
+                return
+            attach = getattr(provider, "attach_clients", None)
+            if not callable(attach):
+                return
+            stream_client = await self._pool_manager.get_stream_client()
+            sync_client = await self._pool_manager.get_sync_client()
+            attach(stream_client=stream_client, sync_client=sync_client)
+            self._injected.add(model_name)
 
     def _ensure_idempotency_key(self, request: ChatRequest) -> ChatRequest:
         """幂等键兜底：请求未携带时自动生成一次并透传，重试复用同一键（AI 规范 §4.2）。
@@ -424,12 +434,20 @@ class ModelGateway:
             raise AiErrorCode.AI_CONTENT_REJECTED.to_exception(message=result.message)
 
     def _get_guard(self, model_name: str) -> ConcurrencyGuard:
-        """获取单供应商并发控制器（按模型懒创建）"""
+        """获取单供应商并发控制器（按模型懒创建）。
+
+        双重检查锁定（M2 修复）：快路径无锁读 + 锁内二次确认，并发首次调用同一模型
+        仅创建一个守卫实例，避免并发上限被分裂（超卖）。
+        """
         guard = self._guards.get(model_name)
-        if guard is None:
-            guard = ConcurrencyGuard(max_concurrency=self._default_concurrency)
-            self._guards[model_name] = guard
-        return guard
+        if guard is not None:
+            return guard
+        with self._guard_lock:
+            guard = self._guards.get(model_name)
+            if guard is None:
+                guard = ConcurrencyGuard(max_concurrency=self._default_concurrency)
+                self._guards[model_name] = guard
+            return guard
 
     async def _check_quota(self, tenant_id: str, user_id: str, scene: str = "") -> None:
         """模型网关级配额检查（AI-2：按用户/租户/接口限流，配额覆盖 chat/stream/embed，user/scene 维度参与）。

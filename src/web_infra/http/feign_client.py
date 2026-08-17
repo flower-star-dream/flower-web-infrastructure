@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import random
+import threading
 from typing import Any, Awaitable, Callable, Optional
 from urllib.parse import urlparse
 
@@ -112,6 +113,8 @@ class FeignClient:
         self._fallback = fallback or default_service_fallback
         self._url_validator = url_validator
         self._breakers: dict[str, CircuitBreaker] = {}
+        # 熔断器懒创建互斥锁（M1 修复：并发首次请求同一服务仅创建一个熔断器，防计数分裂）
+        self._breaker_lock = threading.Lock()
         limits = httpx.Limits(max_connections=max_connections, max_keepalive_connections=max_keepalive_connections)
         self._client = httpx.AsyncClient(timeout=timeout, limits=limits)
 
@@ -120,9 +123,18 @@ class FeignClient:
         await self._client.aclose()
 
     def _get_breaker(self, service_name: str) -> CircuitBreaker:
-        """按目标服务获取（并按需创建）熔断器，降级回调绑定服务名（§7.4 按服务维度熔断）"""
+        """按目标服务获取（并按需创建）熔断器，降级回调绑定服务名（§7.4 按服务维度熔断）。
+
+        双重检查锁定（M1 修复）：快路径无锁读 + 锁内二次确认，并发首次请求同一服务
+        仅创建一个熔断器实例，避免计数分裂导致熔断阈值判定失真。
+        """
         breaker = self._breakers.get(service_name)
-        if breaker is None:
+        if breaker is not None:
+            return breaker
+        with self._breaker_lock:
+            breaker = self._breakers.get(service_name)
+            if breaker is not None:
+                return breaker
             fallback = None
             fallback_cb = self._fallback
             if fallback_cb is not None:
@@ -131,7 +143,7 @@ class FeignClient:
                 fallback = _fallback
             breaker = CircuitBreaker(service_name, self._circuit_breaker_config, fallback=fallback)
             self._breakers[service_name] = breaker
-        return breaker
+            return breaker
 
     def _calculate_retry_delay(self, attempt: int) -> float:
         """指数退避 + 抖动（退避 = min(base * 2^attempt * jitter, max)，规范 §7.2）"""

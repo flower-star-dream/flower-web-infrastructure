@@ -27,6 +27,10 @@ class PaymentErrorCodeEnum(Enum):
     PAY_AMOUNT_MISMATCH = ErrorCode("E4-PAY-002", "回调金额与订单不符", 422, "E4", log_level=logging.WARNING)
     PAY_ORDER_STATE_CONFLICT = ErrorCode("E4-PAY-003", "订单状态冲突（重复回调/已关闭）", 409, "E4", log_level=logging.WARNING)
     PAY_SCENE_UNSUPPORTED = ErrorCode("E4-PAY-004", "支付场景不支持", 422, "E4", log_level=logging.WARNING)
+    PAY_LIMIT_EXCEEDED = ErrorCode("E4-PAY-005", "单笔/累计限额超限", 422, "E4", log_level=logging.WARNING)
+    PAY_FREQUENCY_LIMITED = ErrorCode("E4-PAY-006", "支付频次超限", 422, "E4", log_level=logging.WARNING)
+    PAY_RISK_BLOCKED = ErrorCode("E4-PAY-007", "风控拦截（可疑交易）", 422, "E4", log_level=logging.WARNING)
+    PAY_CAPABILITY_UNSUPPORTED = ErrorCode("E4-PAY-008", "渠道能力不支持（未声明能力被调用）", 422, "E4", log_level=logging.WARNING)
 
     @classmethod
     def of(cls, code: str) -> "PaymentErrorCodeEnum | None":
@@ -46,6 +50,10 @@ class PaymentErrorCode:
     PAY_AMOUNT_MISMATCH = PaymentErrorCodeEnum.PAY_AMOUNT_MISMATCH.value
     PAY_ORDER_STATE_CONFLICT = PaymentErrorCodeEnum.PAY_ORDER_STATE_CONFLICT.value
     PAY_SCENE_UNSUPPORTED = PaymentErrorCodeEnum.PAY_SCENE_UNSUPPORTED.value
+    PAY_LIMIT_EXCEEDED = PaymentErrorCodeEnum.PAY_LIMIT_EXCEEDED.value
+    PAY_FREQUENCY_LIMITED = PaymentErrorCodeEnum.PAY_FREQUENCY_LIMITED.value
+    PAY_RISK_BLOCKED = PaymentErrorCodeEnum.PAY_RISK_BLOCKED.value
+    PAY_CAPABILITY_UNSUPPORTED = PaymentErrorCodeEnum.PAY_CAPABILITY_UNSUPPORTED.value
 
 
 def _register_payment_codes() -> None:

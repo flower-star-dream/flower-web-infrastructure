@@ -13,6 +13,7 @@ from __future__ import annotations
 import base64
 import logging
 import os
+import tempfile
 
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
@@ -53,6 +54,9 @@ class WeChatCertificateStore:
     def persist_certificates(self, items: list[dict]) -> None:
         """解密平台证书列表并落盘 <序列号>.pem（公钥 PEM）；成功后清理 data 中不存在的旧证书
 
+        并发安全（H1 修复）：先写同目录临时文件再 os.replace 原子替换，并发 load
+        只会读到旧完整文件或新完整文件，杜绝半截 PEM；异常时清理临时文件避免残留。
+
         :param items: /v3/certificates 响应 data 列表（每项含 serial_no / encrypt_certificate）
         """
         os.makedirs(self._config.platform_cert_dir, exist_ok=True)
@@ -65,8 +69,14 @@ class WeChatCertificateStore:
             cert_pem = self.decrypt_certificate(self._config.api_v3_key, item.get("encrypt_certificate") or {})
             public_key_pem = self._to_public_key_pem(cert_pem)
             path = os.path.join(self._config.platform_cert_dir, f"{serial_no}.pem")
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(public_key_pem)
+            fd, tmp_path = tempfile.mkstemp(dir=self._config.platform_cert_dir, prefix=f".{serial_no}.", suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    f.write(public_key_pem)
+                os.replace(tmp_path, path)
+            except BaseException:
+                os.unlink(tmp_path)  # 写入/替换失败：清理临时文件，避免残留
+                raise
             kept.add(serial_no)
             logger.info("平台证书已更新 serial=%s", serial_no)
         # 清理本次列表外残留的旧证书（仅下载成功路径调用，下载失败不会走到这里，避免误删）
@@ -77,9 +87,10 @@ class WeChatCertificateStore:
                     logger.info("平台证书已清理 serial=%s", name[:-4])
 
     def load(self, serial: str) -> str | None:
-        """按序列号加载本地证书公钥 PEM；不存在返回 None"""
+        """按序列号加载本地证书公钥 PEM；不存在（含并发清理竞态窗口）返回 None"""
         path = os.path.join(self._config.platform_cert_dir, f"{serial}.pem")
-        if not os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return f.read()
+        except FileNotFoundError:
             return None
-        with open(path, "r", encoding="utf-8") as f:
-            return f.read()

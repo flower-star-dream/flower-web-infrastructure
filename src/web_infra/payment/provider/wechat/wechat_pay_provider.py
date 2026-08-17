@@ -3,15 +3,21 @@
 
 @Author: 花海
 @Date: 2026/08/16 10:00
-@Description: 微信支付渠道实现（PaymentGateway SPI）：JSAPI/Native/H5/App 四场景下单、
-              查单、关单、退款、查退款。金额统一 Decimal 元，内部转分。
+@Description: 微信支付渠道实现（PaymentChannelTemplate 骨架，规范 §3.1）：JSAPI/Native/H5/App
+              四场景下单、查单、关单、退款、查退款、回调解析。金额统一 Decimal 元，内部转分。
+              骨架 final 流程（下单幂等/退款幂等/关单查单确认/回调校验入账）由模板层固化，
+              本类只填充渠道特有 _do_* 与 _parse_callback。
               接口路径参考官方文档（pay.weixin.qq.com/doc/v3/merchant）。
 """
 from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+from threading import Lock
+from typing import Any, Mapping
 
+from web_infra.payment.payment_callback import PaymentCallback
+from web_infra.payment.payment_channel_template import PaymentChannelTemplate
 from web_infra.payment.payment_constant import PaymentConstant
 from web_infra.payment.payment_error_code import PaymentErrorCode
 from web_infra.payment.payment_gateway_interface import PaymentGateway
@@ -35,15 +41,45 @@ SCENE_PATH: dict[PaymentScene, str] = {
 }
 
 
-class WeChatPayProvider(PaymentGateway):
-    """微信支付渠道实现（PaymentGateway SPI，四场景）"""
+class WeChatPayProvider(PaymentChannelTemplate, PaymentGateway):
+    """微信支付渠道实现（渠道骨架实现，四场景）"""
 
-    def __init__(self, config: WechatPayConfig, client: WeChatPayClient | None = None) -> None:
+    # 能力位声明（规范 §3.4）：微信支持查单/关单/退款/查退款/回调解析
+    capabilities = frozenset({"query_order", "close_order", "refund", "query_refund", "parse_callback"})
+
+    def __init__(self, config: WechatPayConfig, client: WeChatPayClient | None = None, *,
+                 flow_store: Any | None = None, order_store: Any | None = None) -> None:
+        """初始化微信渠道。
+
+        :param config: 微信支付配置
+        :param client: 微信 APIv3 客户端（缺省按配置创建）
+        :param flow_store: 支付流水存储（PaymentFlowStoreInterface，§5.2）；None 时跳过流水落库（降级）
+        :param order_store: 本地支付订单存储（PaymentOrderStoreInterface，§4.2/§5.5）；None 时跳过本地幂等/校验（降级）
+        """
+        super().__init__(flow_store=flow_store, order_store=order_store)
         self._config = config
         self._client = client or WeChatPayClient(config)
+        self._callback_verifier: Any | None = None
+        self._callback_verifier_lock = Lock()  # 懒加载 DCL：并发首次回调只构造一次 verifier
 
-    async def prepay(self, request: PaymentPrepayRequest) -> PaymentPrepayResponse:
-        """下单：按场景组装请求体并返回 prepay_id/调起参数/code_url/h5_url"""
+    # ------------------------------------------------------------------
+    # PaymentGateway 协议：骨架 final 之外的查询入口
+    # ------------------------------------------------------------------
+
+    async def query_order(self, out_trade_no: str) -> PaymentOrder | None:
+        """按商户订单号查单（渠道权威状态，掉单补偿/关单确认依赖，§3.2/§3.4）"""
+        return await self._do_query_order(out_trade_no)
+
+    async def query_refund(self, out_refund_no: str) -> PaymentRefundResponse | None:
+        """按商户退款单号查退款（退款超时兜底，§7.6）"""
+        return await self._do_query_refund(out_refund_no)
+
+    # ------------------------------------------------------------------
+    # 骨架必选能力：渠道特有逻辑（骨架流程 final 不可覆写）
+    # ------------------------------------------------------------------
+
+    async def _do_prepay(self, request: PaymentPrepayRequest) -> PaymentPrepayResponse:
+        """渠道特有下单：按场景组装请求体并返回 prepay_id/调起参数/code_url/h5_url"""
         path = SCENE_PATH.get(request.scene)
         if path is None:
             raise PaymentErrorCode.PAY_SCENE_UNSUPPORTED.to_exception(message=f"不支持的支付场景：{request.scene}")
@@ -72,7 +108,9 @@ class WeChatPayProvider(PaymentGateway):
         elif request.scene == PaymentScene.H5:
             payload["scene_info"] = {"payer_client_ip": request.client_ip, "h5_info": {"type": "Wap"}}
 
-        data = await self._client.request("POST", path, payload)
+        # 下单为资金操作：retryable=False 禁止盲目重试（规范 §2.6/§7.2，
+        # 防重复下单/重复扣款；失败由业务先查单确认再决策）
+        data = await self._client.request("POST", path, payload, retryable=False)
         prepay_id = data.get("prepay_id")
         if request.scene == PaymentScene.NATIVE:
             return PaymentPrepayResponse(scene=request.scene, code_url=data.get("code_url"))
@@ -82,8 +120,8 @@ class WeChatPayProvider(PaymentGateway):
             return PaymentPrepayResponse(scene=request.scene, prepay_id=prepay_id, pay_params=self._app_pay_params(prepay_id))
         return PaymentPrepayResponse(scene=request.scene, prepay_id=prepay_id, pay_params=self._jsapi_pay_params(prepay_id))
 
-    async def query_order(self, out_trade_no: str) -> PaymentOrder | None:
-        """查单：微信 404 转 None（对齐 FeignClient 404→None 语义）"""
+    async def _do_query_order(self, out_trade_no: str) -> PaymentOrder | None:
+        """渠道特有查单：微信 404 转 None（对齐 FeignClient 404→None 语义）"""
         path = f"/v3/pay/transactions/out-trade-no/{out_trade_no}?mchid={self._config.mchid}"
         data = await self._client.request("GET", path, not_found_ok=True)
         if data is None:
@@ -98,13 +136,28 @@ class WeChatPayProvider(PaymentGateway):
             paid_at=self._parse_time(data.get("success_time")),
         )
 
-    async def close_order(self, out_trade_no: str) -> None:
-        """关闭订单（订单支付失败重新下单前调用，防重复支付）"""
+    async def _do_close_order(self, out_trade_no: str) -> None:
+        """渠道特有关单（骨架 close_order 已前置查单确认未支付，§5.5）"""
         path = f"/v3/pay/transactions/out-trade-no/{out_trade_no}/close"
         await self._client.request("POST", path, {"mchid": self._config.mchid})
 
-    async def refund(self, request: PaymentRefundRequest) -> PaymentRefundResponse:
-        """申请退款（out_refund_no 幂等）"""
+    async def _parse_callback(self, headers: Mapping[str, str], body: str) -> PaymentCallback | None:
+        """渠道特有回调验签解密（复用 WeChatCallbackVerifier，规范 §2.3；失败返回 None）"""
+        # 双重检查锁定（DCL）：并发首次回调只构造一次 verifier（构造为同步短临界区，线程安全）
+        if self._callback_verifier is None:
+            with self._callback_verifier_lock:
+                if self._callback_verifier is None:
+                    from web_infra.payment.provider.wechat.wechat_callback_verifier import WeChatCallbackVerifier
+
+                    self._callback_verifier = WeChatCallbackVerifier(self._config, client=self._client)
+        return await self._callback_verifier.parse(headers, body)
+
+    # ------------------------------------------------------------------
+    # 骨架可选能力：退款 / 查退款（微信支持）
+    # ------------------------------------------------------------------
+
+    async def _do_refund(self, request: PaymentRefundRequest) -> PaymentRefundResponse:
+        """渠道特有退款（out_refund_no 幂等，§5.3）"""
         payload: dict = {
             "out_trade_no": request.out_trade_no,
             "out_refund_no": request.out_refund_no,
@@ -127,8 +180,8 @@ class WeChatPayProvider(PaymentGateway):
             refund_amount=self._to_yuan(amount.get("refund", request.refund_amount)),
         )
 
-    async def query_refund(self, out_refund_no: str) -> PaymentRefundResponse | None:
-        """按商户退款单号查退款；不存在返回 None"""
+    async def _do_query_refund(self, out_refund_no: str) -> PaymentRefundResponse | None:
+        """渠道特有查退款（退款超时兜底，§7.6）"""
         path = f"/v3/refund/domestic/refunds/{out_refund_no}?mchid={self._config.mchid}"
         data = await self._client.request("GET", path, not_found_ok=True)
         if data is None:
@@ -178,11 +231,8 @@ class WeChatPayProvider(PaymentGateway):
         }
 
     def _private_key_pem(self) -> str:
-        """商户 API 私钥（内容优先，其次文件路径）"""
-        if self._config.private_key:
-            return self._config.private_key
-        with open(self._config.private_key_path, "r", encoding="utf-8") as f:
-            return f.read()
+        """商户 API 私钥（复用 WeChatPayClient 的 mtime 缓存实现，P1 优化避免重复读盘）"""
+        return self._client._private_key_pem()
 
     @staticmethod
     def _to_fen(amount: Decimal) -> int:

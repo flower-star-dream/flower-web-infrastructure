@@ -155,3 +155,36 @@ async def test_unbind_owner_check():
         await service.unbind("demo", "openid-x", "u-2")
     assert exc.value.code == "E2-PERM-000"
     assert await service.unbind("demo", "openid-x", "u-1") is True
+
+
+@pytest.mark.asyncio
+async def test_bind_race_conflict_idempotent_fallback():
+    """绑定竞态：检查与落库间另一请求已先行绑定时，服务层捕获冲突幂等返回（M3 修复）"""
+    registry = SocialPlatformRegistry()
+    registry.register(DemoSocialPlatform())
+    existing = SocialBinding("demo", "demo-openid-demo-st-5", "u-5", datetime.now(timezone.utc))
+
+    class RacingStore(InMemorySocialBindingStore):
+        """模拟竞态窗口：首次 find 未发现（窗口），bind 抛冲突，冲突后重查返回既有绑定"""
+
+        def __init__(self, raced: SocialBinding) -> None:
+            super().__init__()
+            self._raced = raced
+            self._calls = 0
+
+        async def find_by_platform(self, provider, openid):
+            self._calls += 1
+            return None if self._calls == 1 else self._raced
+
+        async def bind(self, binding) -> None:
+            raise CommonErrorCode.COMMON_CONFLICT.to_exception(message="三方账号已绑定")
+
+    service = SocialLoginService(registry, RacingStore(existing))
+    result = await service.bind("demo", "demo-st-5", "https://cb.example.com/cb", "u-5")
+    assert result == existing  # 幂等返回既有绑定，不抛 500
+    # 属主不同：冲突后重查发现被他人绑定 → E2-AUTH-008
+    other = SocialBinding("demo", "demo-openid-demo-st-6", "u-6", datetime.now(timezone.utc))
+    service2 = SocialLoginService(registry, RacingStore(other))
+    with pytest.raises(BizException) as exc:
+        await service2.bind("demo", "demo-st-6", "https://cb.example.com/cb", "u-other")
+    assert exc.value.code == "E2-AUTH-008"

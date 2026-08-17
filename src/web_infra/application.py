@@ -196,6 +196,8 @@ class Application:
         self.app.state.components = self._components
         for name, component in self._components.items():
             setattr(self.app.state, name, component)
+        # 配置挂载到 app.state.settings（业务/组件装配期读取统一配置，如 app.mq.outbox）
+        self.app.state.settings = self.settings
 
     def _setup_tenant(self) -> None:
         """多租户装配（app.tenant.enabled=true）：将租户条件过滤器挂载到数据库会话（多租户规范 §2）。

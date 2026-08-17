@@ -79,6 +79,13 @@ class MySQLDatabase(SessionScopeMixin):
         session = await self._config.new_session()
         return SqlAlchemyDatabaseSession(session)
 
+    @property
+    def session_factory(self) -> Any:
+        """SQLAlchemy 异步会话工厂（async_sessionmaker，供 MysqlOutboxStore 等组件装配；
+        引擎未初始化或配置替身缺该属性时返回 None，调用方自行决定兜底）
+        """
+        return getattr(self._config, "session_factory", None)
+
     def install_tenant_filter(self, tenant_filter: Any) -> None:
         """装配租户条件过滤器（多租户规范 §2：引擎初始化后自动挂载会话工厂，SQL 自动注入租户条件）"""
         self._tenant_filter = tenant_filter

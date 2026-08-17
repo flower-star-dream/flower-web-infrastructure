@@ -119,6 +119,31 @@ async def test_gateway_injects_pool_clients_to_provider(clean_registry):
 
 
 @pytest.mark.asyncio
+async def test_attach_pool_clients_concurrent_single_injection(clean_registry):
+    """并发首次注入：多个并发调用仅注入一次连接池客户端（H2 修复防重复创建）"""
+    provider = OpenAICompatibleProvider(_config())
+    provider.name = "mock-chat"
+    attach_count = {"n": 0}
+    original_attach = provider.attach_clients
+
+    def counting_attach(**kwargs):
+        attach_count["n"] += 1
+        original_attach(**kwargs)
+
+    provider.attach_clients = counting_attach
+    ModelProviderRegistry.register(provider)
+    pool = ConnectionPoolManager()
+    try:
+        gateway = _gateway({"chat": RouteEntry("mock-chat")}, pool_manager=pool)
+        await asyncio.gather(*[gateway._attach_pool_clients(provider, "mock-chat") for _ in range(10)])
+        assert attach_count["n"] == 1  # 仅注入一次，未重复创建连接池客户端
+        assert provider._get_client(stream=True) is await pool.get_stream_client()
+        assert provider._get_client(stream=False) is await pool.get_sync_client()
+    finally:
+        await pool.close()
+
+
+@pytest.mark.asyncio
 async def test_attach_clients_does_not_override_explicit_client():
     """构造注入的客户端（MockTransport 测试）优先于连接池客户端，保持向后兼容"""
     mock_client = httpx.AsyncClient(

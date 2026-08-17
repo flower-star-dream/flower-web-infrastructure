@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from web_infra.error import CommonErrorCode
+from web_infra.error import BizException, CommonErrorCode
 from web_infra.security.jwt_util import JWTUtil
 from web_infra.security.social.social_binding_store import SocialBinding, SocialBindingStore
 from web_infra.security.social.social_login_result import SocialLoginResult
@@ -62,7 +62,11 @@ class SocialLoginService:
         return SocialLoginResult(access_token=None, user_id=None, user_info=user_info, bound=False)
 
     async def bind(self, provider: str, code: str, redirect_uri: str, user_id: str) -> SocialBinding:
-        """已登录用户绑定三方账号：拉取 userinfo → 已被其他用户绑定抛 E2-AUTH-008 → 落库（同用户幂等）"""
+        """已登录用户绑定三方账号：拉取 userinfo → 已被其他用户绑定抛 E2-AUTH-008 → 落库（同用户幂等）。
+
+        并发容错（M3 修复）：绑定前检查与落库间的竞态窗口内另一请求可能已先行绑定，
+        捕获 COMMON_CONFLICT 后重查，属主为当前用户则幂等返回既有绑定。
+        """
         platform = self._require_platform(provider)
         token = await platform.exchange_token(code, redirect_uri)
         user_info = await platform.fetch_userinfo(token)
@@ -79,7 +83,18 @@ class SocialLoginService:
             user_id=user_id,
             bound_at=datetime.now(timezone.utc),
         )
-        await self._binding_store.bind(binding)
+        try:
+            await self._binding_store.bind(binding)
+        except BizException as exc:
+            if exc.code != CommonErrorCode.COMMON_CONFLICT.code:
+                raise
+            # 并发竞态：另一请求已先行绑定（M3 修复），属主为当前用户则幂等返回
+            raced = await self._binding_store.find_by_platform(provider, user_info.openid)
+            if raced is not None and raced.user_id == user_id:
+                return raced
+            raise CommonErrorCode.AUTH_SOCIAL_ALREADY_BOUND.to_exception(
+                message=f"三方账号已被其他用户绑定: {provider}/{user_info.openid}"
+            )
         return binding
 
     async def unbind(self, provider: str, openid: str, user_id: str) -> bool:

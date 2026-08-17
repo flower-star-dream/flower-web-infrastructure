@@ -34,19 +34,26 @@ class WechatPayConfig(BaseModel):
     public_key: str = Field(default="", description="微信支付公钥 PEM 内容（public_key 模式）")
     connect_timeout: float = Field(default=5.0, description="连接超时（秒）")
     read_timeout: float = Field(default=30.0, description="读超时（秒）")
+    # 渠道调用失败兜底（默认开启，可配置关闭/调整）：
+    # 支付接口 out_trade_no / out_refund_no 天然幂等，网络抖动 / 5xx / 429 可安全重试；
+    # 4xx 业务错误（参数/状态冲突）不重试，由调用方按业务处理。
+    retries: int = Field(default=2, description="渠道调用失败重试次数（可重试故障：网络/5xx/429；0 关闭重试）")
+    retry_delay_base: float = Field(default=0.5, description="重试退避基数（秒），指数退避 base * 2^attempt")
+    retry_delay_max: float = Field(default=4.0, description="重试退避上限（秒）")
 
     def load_verify_key(self, serial: str) -> str | None:
         """按证书序列号加载验签公钥 PEM：
         public_key 模式返回静态公钥；platform_cert 模式读取 <platform_cert_dir>/<serial>.pem。
-        未找到返回 None。
+        未找到返回 None（含并发清理竞态窗口的 FileNotFoundError 容错，H1 修复）。
         """
         if self.verify_mode == "public_key":
             return self.public_key or None
         cert_path = os.path.join(self.platform_cert_dir, f"{serial}.pem")
-        if not os.path.exists(cert_path):
+        try:
+            with open(cert_path, "r", encoding="utf-8") as f:
+                return f.read()
+        except FileNotFoundError:
             return None
-        with open(cert_path, "r", encoding="utf-8") as f:
-            return f.read()
 
 
 class PaymentConfig(BaseModel):

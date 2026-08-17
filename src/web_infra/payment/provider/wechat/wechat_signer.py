@@ -6,10 +6,12 @@
 @Description: 微信支付 APIv3 签名工具：商户请求签名（SHA256withRSA）、应答/回调验签、
               授权头构造、JSAPI/App 调起支付签名。参考微信支付官方文档
               （APIv3 总述-签名验签：pay.weixin.qq.com/doc/v3/merchant/4012365342）。
+              密钥 PEM 解析结果按内容进程内缓存（P1 优化：高频下单/验签避免重复解析 RSA）。
 """
 from __future__ import annotations
 
 import base64
+import functools
 import time
 import uuid
 
@@ -22,13 +24,15 @@ class WeChatSigner:
     """微信支付 APIv3 签名工具（商户私钥签名 + 平台证书/公钥验签）"""
 
     @staticmethod
+    @functools.lru_cache(maxsize=8)
     def load_private_key(private_key_pem: str):
-        """加载商户 API 私钥（PKCS8 PEM）"""
+        """加载商户 API 私钥（PKCS8 PEM；解析结果按内容缓存，密钥轮换换内容自动换缓存）"""
         return serialization.load_pem_private_key(private_key_pem.encode("utf-8"), password=None)
 
     @staticmethod
+    @functools.lru_cache(maxsize=8)
     def load_public_key(public_key_pem: str):
-        """加载验签公钥（微信支付公钥或平台证书内公钥，SPKI PEM）"""
+        """加载验签公钥（微信支付公钥或平台证书内公钥，SPKI PEM；解析结果按内容缓存）"""
         return serialization.load_pem_public_key(public_key_pem.encode("utf-8"))
 
     @staticmethod

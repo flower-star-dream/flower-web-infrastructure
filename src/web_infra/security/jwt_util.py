@@ -20,7 +20,7 @@ import asyncio
 import threading
 import uuid
 from datetime import timedelta
-from typing import Any, Optional
+from typing import Any, ClassVar, Optional
 
 import jwt
 
@@ -51,6 +51,9 @@ class JWTUtil:
     _key_provider: JwtKeyProvider | None = None
     # 框架 Redis 连接配置（Application 装配时经 set_redis_config 注入；启用 Redis 时默认状态存储走 Redis）
     _redis_config: RedisConfig | None = None
+    # 类级锁：保护 SPI 注入与懒初始化的 check-then-act（H3 修复：
+    # 多线程首次并发调用仅构建一个 store/key_provider，避免状态写入丢失导致随机 401）
+    _config_lock: ClassVar[threading.Lock] = threading.Lock()
 
     @classmethod
     def configure(cls, token_store: JwtTokenStore | None = None, key_provider: JwtKeyProvider | None = None) -> None:
@@ -59,13 +62,15 @@ class JWTUtil:
         :param token_store: Token 状态存储（None 回落框架默认：启用 Redis 则 RedisJwtTokenStore，否则 InMemoryJwtTokenStore）
         :param key_provider: 签名密钥/算法（None 回落默认 EnvJwtKeyProvider）
         """
-        cls._token_store = token_store
-        cls._key_provider = key_provider
+        with cls._config_lock:
+            cls._token_store = token_store
+            cls._key_provider = key_provider
 
     @classmethod
     def set_redis(cls, redis: Any) -> None:
         """注入 Redis 客户端，用于 token 状态存储与校验（兼容入口：显式切换为 RedisJwtTokenStore）"""
-        cls._token_store = RedisJwtTokenStore(redis=redis)
+        with cls._config_lock:
+            cls._token_store = RedisJwtTokenStore(redis=redis)
 
     @classmethod
     def set_redis_config(cls, config: RedisConfig | None) -> None:
@@ -74,27 +79,43 @@ class JWTUtil:
         :param config: Redis 连接配置；None 时回落内存实现（清空由默认装配创建的 Redis store，
             显式 configure 注入的自定义 store 不受影响）
         """
-        cls._redis_config = config
-        if config is None and isinstance(cls._token_store, RedisJwtTokenStore):
-            cls._token_store = None
+        with cls._config_lock:
+            cls._redis_config = config
+            if config is None and isinstance(cls._token_store, RedisJwtTokenStore):
+                cls._token_store = None
 
     @classmethod
     def _get_token_store(cls) -> JwtTokenStore:
-        """获取 Token 状态存储（优先级：configure 自定义 > set_redis 显式 > 框架 Redis 默认 > 内存回落）"""
-        if cls._token_store is not None:
-            return cls._token_store
-        if cls._redis_config is not None:
-            cls._token_store = RedisJwtTokenStore(config=cls._redis_config)
-            return cls._token_store
-        cls._token_store = InMemoryJwtTokenStore()
-        return cls._token_store
+        """获取 Token 状态存储（优先级：configure 自定义 > set_redis 显式 > 框架 Redis 默认 > 内存回落）。
+
+        双重检查锁定：快路径无锁读（GIL 保证单次读原子），未命中才加锁构建，锁内二次确认。
+        """
+        store = cls._token_store
+        if store is not None:
+            return store
+        with cls._config_lock:
+            store = cls._token_store
+            if store is not None:
+                return store
+            if cls._redis_config is not None:
+                store = RedisJwtTokenStore(config=cls._redis_config)
+            else:
+                store = InMemoryJwtTokenStore()
+            cls._token_store = store
+            return store
 
     @classmethod
     def _get_key_provider(cls) -> JwtKeyProvider:
-        """获取签名密钥/算法提供器（未注入回落默认环境变量实现）"""
-        if cls._key_provider is None:
-            cls._key_provider = EnvJwtKeyProvider()
-        return cls._key_provider
+        """获取签名密钥/算法提供器（未注入回落默认环境变量实现）；锁内构建保证单实例"""
+        provider = cls._key_provider
+        if provider is not None:
+            return provider
+        with cls._config_lock:
+            provider = cls._key_provider
+            if provider is None:
+                provider = EnvJwtKeyProvider()
+                cls._key_provider = provider
+            return provider
 
     @classmethod
     async def generate_token(
@@ -274,13 +295,36 @@ class JWTUtil:
         return payload.get("sub") if payload else None
 
     @classmethod
+    async def get_current_device_jti_async(
+        cls, user_id: str, client_id: str | None = None, device_id: str | None = None
+    ) -> Optional[str]:
+        """异步查询同设备当前有效 jti（规范 §6.2 同设备最多 1 个有效凭证并复用）。
+
+        推荐入口（H3 修复）：异步调用方直接 await，无同步桥接的线程创建与事件循环绑定风险；
+        Redis 状态存储（注入 loop-bound 客户端）场景必须使用本方法。
+
+        :param user_id: 用户标识
+        :param client_id: 客户端标识
+        :param device_id: 设备标识
+        :return: 当前有效 jti；无记录返回 None
+        """
+        return await cls._get_token_store().current_jti(user_id, client_id, device_id)
+
+    @classmethod
     def get_current_device_jti(cls, user_id: str, client_id: str | None = None, device_id: str | None = None) -> Optional[str]:
         """查询同设备当前有效 jti（规范 §6.2 同设备最多 1 个有效凭证并复用）。
 
-        供登录/登出/校验场景判断该设备最新凭证；不传 client_id/device_id 时按 user_id 聚合查询。
-        兼容说明：JwtTokenStore.current_jti 为异步 SPI（Protocol 定义 async），本方法保持同步签名
-        （向后兼容历史调用方），协程结果经事件循环桥接同步取值：无运行中 loop 直接 asyncio.run，
-        已有运行中 loop（异步服务/异步测试内同步调用）经独立线程执行并阻塞等待。
+        兼容入口（历史调用方保持同步签名）：JwtTokenStore.current_jti 为异步 SPI，协程结果
+        经事件循环桥接同步取值：无运行中 loop 直接 asyncio.run，已有运行中 loop（异步服务/
+        异步测试内同步调用）经独立线程执行并阻塞等待。
+        **局限（H3 修复说明）**：桥接线程每次调用新建一个事件循环，仅适用于不绑定事件循环的
+        内存实现；Redis 状态存储（注入 loop-bound 客户端）在跨循环场景会抛错，请改用
+        get_current_device_jti_async。
+
+        :param user_id: 用户标识
+        :param client_id: 客户端标识（不传按 user_id 聚合查询）
+        :param device_id: 设备标识
+        :return: 当前有效 jti；无记录返回 None
         """
         result = cls._get_token_store().current_jti(user_id, client_id, device_id)
         if not asyncio.iscoroutine(result):

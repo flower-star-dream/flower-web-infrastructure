@@ -575,6 +575,7 @@
 | `async unbind(provider: str, openid: str) -> bool` | 解绑，返回是否实际删除 |
 
 - 默认实现：`InMemorySocialBindingStore`（`in_memory_social_binding_store.py`，单实例）；多实例需业务扩展 Redis/DB 实现。
+- 并发（2026-08-16 加固）：内存实现 bind 的"检查-写入"由 RLock 原子化；`SocialLoginService.bind` 对并发竞态（检查与落库间另一请求已先行绑定）捕获 COMMON_CONFLICT 后重查，属主为当前用户则幂等返回，多实例下由 DB 唯一约束兜底。
 
 ### 11.4 JwtTokenStore —— JWT Token 状态存储接口
 
@@ -591,6 +592,10 @@
 
 - 默认实现：框架启用 Redis（`app.cache.type=redis`，Application 装配自动注入）时默认 `RedisJwtTokenStore`（分布式，Key 经 CacheKeyBuilder 生成）；未启用 Redis 回落 `InMemoryJwtTokenStore`（单实例）。
 - 注入：`JWTUtil.configure(token_store=..., key_provider=...)` 注入自定义实现（**优先级最高**，覆盖框架默认）；`JWTUtil.set_redis(redis)` 显式指定 Redis 客户端；均未注入时按"Redis 默认 → 内存回落"自动选择。
+- 并发/内存（2026-08-16 加固）：
+  - `JWTUtil` SPI 注入与懒初始化由类级锁保护（双重检查），多线程首次并发调用仅构建一个 store/key_provider，避免状态写入丢失。
+  - `InMemoryJwtTokenStore` 惰性清理过期条目（`exists`/`save` 时同步回收 `_states`/`_device_map`/`_user_jtis`），RLock 保护复合读写，防内存无界增长与跨线程状态丢失。
+  - 同设备当前 jti 查询：异步调用方推荐 `await JWTUtil.get_current_device_jti_async(...)`（无同步桥接的线程创建与事件循环绑定风险，Redis 状态存储场景必须使用）；同步兼容入口 `JWTUtil.get_current_device_jti(...)` 保留，仅适用于内存实现。
 
 ### 11.5 JwtKeyProvider —— JWT 签名密钥/算法接口
 
@@ -714,6 +719,22 @@
 - 微信平台证书：`platform_cert` 模式下可开启 `cert_auto_download`（配置 `app.payment.wechat.cert_auto_download: true`），
   应答验签遇未知证书序列号时自动调用 `GET /v3/certificates` 下载平台证书并缓存至 `platform_cert_dir`（默认关闭，首次可用
   `WeChatPayClient.download_certificates()` 主动预热）。
+- 并发/性能（2026-08-16 加固）：证书落盘采用"临时文件 + `os.replace`"原子写，并发验签不会读到半截 PEM；证书/私钥文件读取对
+  并发清理与密钥轮换容错（缺失返回 None、mtime 变化自动重读）；商户私钥 PEM 与解析后的 RSA 密钥按内容进程内缓存，高频下单/验签避免重复读盘与重复解析。
+- 渠道调用失败兜底（2026-08-16 新增）：`WeChatPayClient` 对网络异常 / 微信 5xx / 429 按指数退避（含抖动）自动重试
+  （默认 `retries=2`，`WechatPayConfig.retries` 可调、`0` 关闭）；4xx 业务错误不重试，重试耗尽统一抛 `E3-PAY-000`（渠道可重试错误码）。
+  支付接口 `out_trade_no` / `out_refund_no` 天然幂等，重试安全；失败后建议调用 `query_order` 查单确认实际状态再决策。
+  下单为资金操作，`request(retryable=False)` 禁止盲目重试（规范 §7.2 红线），失败由业务先查单确认再决策。
+- 渠道骨架层（2026-08-16 新增，规范 §3.1/§3.2）：`PaymentChannelTemplate`（ABC）固化资金流程骨架，
+  `prepay/refund/close_order/handle_callback/validate_callback` 为 final 入口不可覆写，渠道实现方只填充必选抽象
+  `_do_prepay/_do_query_order/_do_close_order/_parse_callback`（漏实现无法实例化）与可选 `_do_refund/_do_query_refund`
+  （默认抛 `E4-PAY-008`）。骨架统一编排：下单幂等（§4.2）→ 渠道调用 → 三态收敛 → 流水落库（§5.2）；
+  关单前查单确认防已支付被关闭（§5.5）；回调金额/attach/状态机强校验（§4.3/§4.5）。
+  注入 `flow_store`（支付流水）与 `order_store`（本地支付订单）后兜底全量生效；未注入降级为纯渠道调用（兼容 SPI 直用）。
+  默认实现 `InMemoryPaymentGateway` 已骨架化（可注入存储，测试/单机即获全套兜底）；`WeChatPayProvider` 为微信骨架实现。
+- 契约测试与回调模拟器（2026-08-16 新增，规范 §3.3/§10.3）：`web_infra.payment.testing` 提供
+  `PaymentChannelContract`（9 个资金场景契约用例，任意骨架实现 run_all() 校验）与 `PaymentCallbackSimulator`
+  （支付/退款/金额不符/attach 不符回调报文构造，可注入签名钩子）。
 
 ### 15.2 PaymentCallbackVerifier —— 支付回调验签解密接口
 
@@ -739,6 +760,41 @@
 | `async handle(callback: PaymentCallback) -> None` | 处理一条支付/退款回调 |
 
 - 装配：`PaymentCallbackDispatcher.register(handler)`；`dispatch` 顺序调用全部注册处理器，无处理器时静默兜底（日志告警）。
+
+### 15.4 对账机制（§6，2026-08-17 新增）
+
+- 文件：`src/web_infra/payment/reconciliation/`
+- 定位：对账是回调通道之外的第二道资金一致性防线（规范 §6）：渠道账单 vs 本地流水逐笔对齐。
+- 组件：
+  - `BillRecord`：渠道账单统一交易明细（订单号 + 事件类型 + 金额 + 状态，对齐 §2.2）。
+  - `ReconciliationService.reconcile(bill_records, local_flows, ...)`：对齐 → 差异分类（§6.3 五类 + 风险等级）→ 自动处理（§6.4：CHANNEL_ONLY 查单确认后补记、LOCAL_ONLY 查单确认未支付后冲正；金额/状态不一致强制人工 P0 告警，未确认不处理资金）。
+  - `ReconciliationAuditStore`（SPI + InMemory）：差异清单/处理动作只增不改（§6.6）。
+  - `run_reconciliation(...)`：T+1 对账任务函数（唯一标识 `pay:job:reconcile:{channel}:{biz_date}` + 分布式防重，§6.5），由业务注册到 `TaskScheduler`。
+  - `BillFileManager`：账单文件完整性校验（文件头/长度/校验和）+ 按账期组织 + 保留期 ≥ 90 天归档（§6.7）。
+- 生产化依赖：本地流水查询（MySQL 本地事务表）、账单下载/解析（渠道 API）、审计/账单对象存储由业务接入。
+
+### 15.5 冲正（§7.5，2026-08-17 新增）
+
+- 文件：`src/web_infra/payment/payment_reversal.py`
+- 定位：对"不应发生或状态未知"的本地记账做反向调整；只适用支付后阶段，必须基于渠道权威状态。
+- `reversal_flow(flow_store, original_flow, ...)`：新增反向冲正流水（不可删原流水，原流水自动标记 REVERSED）+ 幂等（原流水号 + REVERSAL 唯一）+ 禁止冲正冲正流水 + 冲正事件钩子（下游业务补偿，失败不阻塞冲正流水）。
+
+### 15.6 风控限额（§9，2026-08-17 新增）
+
+- 文件：`src/web_infra/payment/risk/`
+- 定位：资金流出/流入受限额与频次约束（工程可配置约束）。
+- 组件：`PaymentLimitConfig`（渠道 → `LimitRule` 配置化）、`LimitCounterStore`（Decimal 精确累计 + 原子，SPI + InMemory；生产 Redis 跨实例）、`PaymentRiskGuard.check_prepay(...)`（单笔/日/月限额 E4-PAY-005、频次 E4-PAY-006、可疑拆分 E4-PAY-007）。
+
+### 15.7 支付审计（§8.3，2026-08-17 新增）
+
+- 文件：`src/web_infra/payment/payment_audit_store.py`
+- 定位：支付全链路审计（下单/回调/入账/退款/冲正/对账差异），只增不改，成功与失败同样留痕，携带 TraceId/订单号/渠道交易号；渠道原始报文（raw）仅落审计不落业务日志（§8.6）。
+- 接入：`PaymentAuditStoreInterface`（SPI + InMemory）；渠道骨架 final 入口（prepay/refund/close_order/handle_callback）构造时注入 `audit_store` 即自动埋点（未注入默认关闭）。
+
+### 15.8 支付权限点（§8.4，2026-08-17 新增）
+
+- 文件：`src/web_infra/payment/payment_permission.py`
+- 定位：`PaymentPermission` 常量（`AUTH_PERM_` 前缀）：下单/查单/关单/退款/冲正/对账/账单管理分离；退款/冲正/人工补记属高风险操作（独立权限点 + 审批流 + 全量审计），由业务接入框架 RBAC/审批组件按权限点拦截。
 
 ## 16. 扩展接入指引
 
@@ -845,4 +901,4 @@ MetricGroupProviderRegistry.register(OrderMetricsGroup())
 | 新增默认实现 | 提供默认实现类并在总览表登记；同步补充单元测试 |
 | 修改接口方法 | 同步修改全部实现类与本文档对应方法表 |
 | 涉及数据库存储实现 | 同步更新 `db/init/ddl/001-mq-init-ddl.sql` 及对应 DML |
-| 新增支付渠道 | 在 `src/web_infra/payment/provider/` 实现 `PaymentGateway` 并注册 `PaymentGatewayRegistry`，同步更新本文档 §15.1 |
+| 新增支付渠道 | 在 `src/web_infra/payment/provider/` 继承 `PaymentChannelTemplate`（§3.1 骨架）填充 `_do_*`/`_parse_callback`、声明 `capabilities` 并注册 `PaymentGatewayRegistry`；同步补充契约测试（§15.1/§15.4） |

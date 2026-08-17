@@ -282,3 +282,150 @@ async def test_auto_download_disabled_still_rejects(config, tmp_path):
     with pytest.raises(BizException) as exc_info:
         await client.request("GET", "/v3/pay/transactions/out-trade-no/T1?mchid=1")
     assert exc_info.value.code == PaymentErrorCode.PAY_CHANNEL_ERROR.code
+
+
+def test_private_key_file_read_cached(tmp_path, monkeypatch):
+    """私钥文件按 mtime 缓存：多次读取仅首次触发文件 I/O（P1 优化）"""
+    key_file = tmp_path / "merchant_key.pem"
+    key_file.write_text("dummy-private-key-pem", encoding="utf-8")
+    cfg = WechatPayConfig(private_key_path=str(key_file))
+    client = WeChatPayClient(cfg)
+    reads: dict[str, int] = {"n": 0}
+    real_open = open
+
+    def counting_open(path, *args, **kwargs):
+        if str(path) == str(key_file):
+            reads["n"] += 1
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.open", counting_open)
+    assert client._private_key_pem() == "dummy-private-key-pem"
+    assert client._private_key_pem() == "dummy-private-key-pem"
+    assert reads["n"] == 1
+    # 内容模式不走文件
+    assert WeChatPayClient(WechatPayConfig(private_key="inline-key"))._private_key_pem() == "inline-key"
+
+
+def test_private_key_file_reload_after_mtime_change(tmp_path):
+    """私钥文件 mtime 变化后自动重读（密钥轮换场景，P1 优化）"""
+    import os
+    import time
+
+    key_file = tmp_path / "merchant_key.pem"
+    key_file.write_text("key-v1", encoding="utf-8")
+    cfg = WechatPayConfig(private_key_path=str(key_file))
+    client = WeChatPayClient(cfg)
+    assert client._private_key_pem() == "key-v1"
+    # 重写文件并显式推进 mtime（避免同秒写入 mtime 相同导致缓存未失效）
+    key_file.write_text("key-v2", encoding="utf-8")
+    os.utime(key_file, (time.time() + 2, time.time() + 2))
+    assert client._private_key_pem() == "key-v2"
+
+
+# ---------------------------------------------------------------------------
+# 渠道调用失败兜底（网络/5xx/429 指数退避重试，4xx 业务错误不重试）
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_retry_on_network_error_then_success(config):
+    """渠道调用兜底：网络故障自动重试（默认 2 次），恢复后成功"""
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            raise httpx.ConnectError("connection refused")
+        return httpx.Response(200, json={"out_trade_no": "T1"}, headers={"Content-Type": "application/json"})
+
+    cfg = config.model_copy(update={"retry_delay_base": 0.01, "retry_delay_max": 0.05})
+    client = WeChatPayClient(cfg, http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    result = await client.request("POST", "/v3/pay/transactions/jsapi", {"out_trade_no": "T1"})
+    assert result == {"out_trade_no": "T1"}
+    assert calls["n"] == 3  # 首次 + 2 次重试
+
+
+@pytest.mark.asyncio
+async def test_retry_on_5xx_then_success(config):
+    """渠道调用兜底：微信 5xx（SYSTEM_ERROR）自动重试，恢复后成功"""
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            return httpx.Response(500, json={"code": "SYSTEM_ERROR", "message": "系统繁忙"})
+        return httpx.Response(200, json={"out_trade_no": "T1"})
+
+    cfg = config.model_copy(update={"retry_delay_base": 0.01, "retry_delay_max": 0.05})
+    client = WeChatPayClient(cfg, http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    result = await client.request("POST", "/v3/pay/transactions/jsapi", {"out_trade_no": "T1"})
+    assert result == {"out_trade_no": "T1"}
+    assert calls["n"] == 3
+
+
+@pytest.mark.asyncio
+async def test_retry_on_429_then_success(config):
+    """渠道调用兜底：微信 429 限流自动重试，恢复后成功"""
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            return httpx.Response(429, json={"code": "RATE_LIMITED", "message": "频率限制"})
+        return httpx.Response(200, json={"out_trade_no": "T1"})
+
+    cfg = config.model_copy(update={"retry_delay_base": 0.01, "retry_delay_max": 0.05})
+    client = WeChatPayClient(cfg, http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    result = await client.request("POST", "/v3/pay/transactions/jsapi", {"out_trade_no": "T1"})
+    assert result == {"out_trade_no": "T1"}
+    assert calls["n"] == 3
+
+
+@pytest.mark.asyncio
+async def test_no_retry_on_biz_error(config):
+    """渠道调用兜底：4xx 业务错误（PARAM_ERROR）不重试，直接抛 E3-PAY-000"""
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(400, json={"code": "PARAM_ERROR", "message": "参数错误"})
+
+    client = WeChatPayClient(config, http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    with pytest.raises(BizException) as exc_info:
+        await client.request("POST", "/v3/pay/transactions/jsapi", {})
+    assert exc_info.value.code == PaymentErrorCode.PAY_CHANNEL_ERROR.code
+    assert calls["n"] == 1  # 业务错误不重试
+
+
+@pytest.mark.asyncio
+async def test_retry_disabled_via_config(config):
+    """渠道调用兜底：retries=0 关闭重试，一次失败即抛错"""
+    cfg = config.model_copy(update={"retries": 0})
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        raise httpx.ConnectError("down")
+
+    client = WeChatPayClient(cfg, http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    with pytest.raises(BizException) as exc_info:
+        await client.request("POST", "/v3/pay/transactions/jsapi", {})
+    assert exc_info.value.code == PaymentErrorCode.PAY_CHANNEL_ERROR.code
+    assert calls["n"] == 1
+
+
+@pytest.mark.asyncio
+async def test_retry_exhausted_raises(config):
+    """渠道调用兜底：可重试故障重试耗尽仍抛 E3-PAY-000（渠道可重试错误码）"""
+    cfg = config.model_copy(update={"retry_delay_base": 0.01, "retry_delay_max": 0.05})
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(500, json={"code": "SYSTEM_ERROR", "message": "忙"})
+
+    client = WeChatPayClient(cfg, http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    with pytest.raises(BizException) as exc_info:
+        await client.request("POST", "/v3/pay/transactions/jsapi", {})
+    assert exc_info.value.code == PaymentErrorCode.PAY_CHANNEL_ERROR.code
+    assert calls["n"] == 3  # 首次 + 2 次重试

@@ -78,7 +78,8 @@ flower web 通用框架是一套**配置驱动**的后端基础设施库，面�
 | 多租户          | 租户上下文校验 + 缓存 Key 租户维度 + SQLAlchemy 条件自动注入 + 多数据源动态路由                                                                                                             |
 | 分片上传        | 初始化/逐片/断点续传/合并校验（MD5+大小），本地 + MinIO 双实现                                                                                                                              |
 | 健康检查/指标   | `/health`（组件连通性探测）+ `/metrics`（Prometheus 文本 + 浏览器 HTML 可视化；连接池/运行时/线程池/缓存/存储/消息队列/注册中心组件指标，按组件启用配置动态采集与展示，自定义分组 SPI） |
-| 通用工具        | 雪花 ID、日期、文件锁、数学、Token 精确计数、PDF 渲染                                                                                                                                       |
+| 支付能力        | 渠道 SPI + 骨架兜底（下单幂等/关单确认/回调校验/流水落库）+ 微信渠道 + 超时关单 + 对账/冲正 + 风控限额 + 审计/权限点（见 [7.12 支付](#712-支付)） |
+| 通用工具        | 雪花 ID、日期、文件锁、数学、Token 精确计数、PDF 渲染                                                                                                                                    |
 
 ## 3. 技术栈
 
@@ -647,6 +648,60 @@ StateMachineRegistry.register_engine_factory(OrderStatus, OrderEvent, OrderEO, T
 
 **开箱即用**：启用/禁用互转无需声明，直接使用 `BaseStatus` / `StartStopEvent` / `BaseStatusRouter`
 （状态翻转后自行落库）。
+
+### 7.12 支付
+
+支付模块（`web_infra/payment`）按《Web 系统通用架构规范 · 支付扩展 v1.0》实现渠道接入与资金兜底。
+
+**装配渠道（内存演示，注入骨架存储即获全套兜底）**：
+
+```python
+from web_infra.payment import (
+    InMemoryPaymentFlowStore, InMemoryPaymentOrderStore,
+    InMemoryPaymentGateway, PaymentGatewayRegistry,
+)
+
+gateway = InMemoryPaymentGateway(
+    flow_store=InMemoryPaymentFlowStore(),   # 支付流水本地事务表（§5.2）
+    order_store=InMemoryPaymentOrderStore(), # 本地支付订单（§4.2/§5.5）
+)
+PaymentGatewayRegistry.register("memory", gateway)  # 生产替换为 WeChatPayProvider 并注入 WechatPayConfig
+```
+
+**下单 / 回调校验（骨架自动完成：下单幂等 / 金额 / attach / 状态机 / 流水落库）**：
+
+```python
+from web_infra.payment import PaymentPrepayRequest, PaymentScene
+from decimal import Decimal
+
+resp = await gateway.prepay(PaymentPrepayRequest(
+    scene=PaymentScene.APP, out_trade_no="T20260817001",
+    description="测试订单", total_amount=Decimal("99.50"),
+))
+# 回调入口（渠道验签后）：await gateway.validate_callback(callback) 通过后再分发业务处理器
+```
+
+**对账 / 冲正 / 风控 / 审计（框架 SPI + 内存默认实现）**：
+
+```python
+from web_infra.payment import (
+    ReconciliationService, InMemoryReconciliationAuditStore,
+    PaymentRiskGuard, InMemoryLimitCounterStore, LimitRule,
+)
+
+service = ReconciliationService(flow_store, InMemoryReconciliationAuditStore(),
+                                query_order=gateway.query_order)   # T+1 对账：差异分类 + 查单补记/冲正
+guard = PaymentRiskGuard(InMemoryLimitCounterStore())             # 下单前风控：限额/频次/可疑拆分
+await guard.check_prepay(user_id=1, channel="memory", amount=Decimal("99.50"),
+                         rule=LimitRule(per_transaction=Decimal("5000")))
+```
+
+**能力速查**：渠道骨架（`PaymentChannelTemplate`）、状态机（`PaymentStateMachine`）、超时关单
+（`close_expired_orders`）、冲正（`reversal_flow`）、账单文件（`BillFileManager`）、审计
+（`PaymentAuditStore`）、权限点（`PaymentPermission`）、契约测试（`payment/testing`）。
+
+**文档**：[订单兜底策略](./docs/订单兜底策略.md) / [SPI-Extensions §15](./docs/SPI-Extensions.md#15-支付模块payment) /
+[支付扩展规范合规审查报告](./docs/支付扩展规范合规审查报告.md)
 
 ## 8. 项目结构
 

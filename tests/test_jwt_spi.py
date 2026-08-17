@@ -186,3 +186,32 @@ async def test_no_redis_falls_back_memory():
     JWTUtil.configure(None, None)
     await JWTUtil.generate_token(user_id="u-mem", username="tester", client_id="web", device_id="d1")
     assert JWTUtil.get_current_device_jti("u-mem", "web", "d1") is not None
+
+
+@pytest.mark.asyncio
+async def test_get_current_device_jti_async_matches_sync():
+    """异步查询入口：get_current_device_jti_async 与同步兼容入口结果一致（H3 修复）"""
+    JWTUtil.set_redis_config(None)
+    JWTUtil.configure(None, None)
+    await JWTUtil.generate_token(user_id="u-async", username="tester", client_id="web", device_id="d1")
+    sync_jti = JWTUtil.get_current_device_jti("u-async", "web", "d1")
+    async_jti = await JWTUtil.get_current_device_jti_async("u-async", "web", "d1")
+    assert async_jti is not None
+    assert async_jti == sync_jti
+    assert await JWTUtil.get_current_device_jti_async("u-async", "web", "no-such-device") is None
+
+
+@pytest.mark.asyncio
+async def test_in_memory_store_prunes_expired_entries():
+    """InMemoryJwtTokenStore：过期条目惰性清理，不残留内存（M5 修复）"""
+    store = InMemoryJwtTokenStore()
+    await store.save("u-exp", "jti-old", 0, "web", "d1")  # ttl=0 立即过期
+    assert await store.exists("u-exp", "jti-old") is False
+    assert "u-exp:jti-old" not in store._states
+    assert store._user_jtis.get("u-exp") is None  # 集合同步回收
+    # save 触发 prune：旧过期条目被清理，仅保留有效凭证
+    await store.save("u-exp", "jti-new", 120, "web", "d1")
+    assert "u-exp:jti-old" not in store._states
+    assert store._user_jtis.get("u-exp") == {"jti-new"}
+    # device_map 指向已过期 jti 的条目同步清理
+    assert store._device_map.get(("u-exp", "web", "d1")) == "jti-new"

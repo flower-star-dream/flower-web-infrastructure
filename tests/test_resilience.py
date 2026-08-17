@@ -221,6 +221,21 @@ async def test_feign_client_without_circuit_breaker_unchanged():
 
 
 @pytest.mark.asyncio
+async def test_feign_client_concurrent_breaker_single_instance():
+    """FeignClient 熔断器懒创建：多线程并发首次获取同一服务仅一个实例（M1 修复防计数分裂）"""
+    from web_infra.http import FeignClient
+    from web_infra.registry import InMemoryServiceRegistry
+
+    registry = InMemoryServiceRegistry()
+    client = FeignClient(registry, circuit_breaker_config=CircuitBreakerConfig())
+    try:
+        await asyncio.gather(*[asyncio.to_thread(client._get_breaker, "svc-a") for _ in range(8)])
+        assert len(client._breakers) == 1
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
 async def test_feign_client_default_fallback():
     """FeignClient 未传 fallback 时采用框架默认兜底：统一 503 服务不可用响应（S7-4）
 

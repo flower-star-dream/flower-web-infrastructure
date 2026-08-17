@@ -159,12 +159,40 @@ async def test_query_order_not_found_returns_none():
 
 @pytest.mark.asyncio
 async def test_close_order():
-    """close_order：调用关单接口（请求体含 mchid）"""
-    captured: dict = {}
-    provider = _make_provider(_capture_handler(captured, httpx.Response(204)))
+    """close_order：骨架先查单确认未支付，再调关单接口（§5.5 防已支付被关闭）"""
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/close"):
+            calls.append("close")
+            return httpx.Response(204)
+        calls.append("query")
+        return httpx.Response(200, json={
+            "out_trade_no": "T1", "trade_state": "NOTPAY", "amount": {"total": 100},
+        }, headers={"Content-Type": "application/json"})
+
+    provider = _make_provider(handler)
     await provider.close_order("T1")
-    assert captured["url"].endswith("/v3/pay/transactions/out-trade-no/T1/close")
-    assert captured["body"] == {"mchid": "1900000001"}
+    assert calls == ["query", "close"]  # 查单确认未支付 → 关单
+    assert provider._client is not None
+
+
+@pytest.mark.asyncio
+async def test_close_order_refuses_paid_order():
+    """close_order：查单确认已支付 → 禁止关单（抛 E4-PAY-003，§5.5）"""
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(200, json={
+            "out_trade_no": "T1", "trade_state": "SUCCESS", "amount": {"total": 100},
+        }, headers={"Content-Type": "application/json"})
+
+    provider = _make_provider(handler)
+    with pytest.raises(BizException) as exc_info:
+        await provider.close_order("T1")
+    assert exc_info.value.code == "E4-PAY-003"
+    assert calls["n"] == 1  # 查单后即拒绝，未调关单
 
 
 @pytest.mark.asyncio
@@ -183,3 +211,40 @@ async def test_refund():
     assert captured["body"]["amount"] == {"refund": 50, "total": 200, "currency": "CNY"}
     assert resp.status.value == "PROCESSING"
     assert resp.refund_amount == Decimal("0.50")
+
+
+@pytest.mark.asyncio
+async def test_prepay_no_blind_retry():
+    """下单重试边界（规范 §7.2）：prepay 失败禁止盲目重试，仅调用一次（防重复下单/重复扣款）"""
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(500, json={"code": "SYSTEM_ERROR", "message": "系统繁忙"})
+
+    provider = _make_provider(handler)
+    req = PaymentPrepayRequest(scene=PaymentScene.NATIVE, out_trade_no="T-NO-RETRY", description="商品", total_amount=Decimal("1.00"))
+    with pytest.raises(BizException) as exc_info:
+        await provider.prepay(req)
+    assert exc_info.value.code == PaymentErrorCode.PAY_CHANNEL_ERROR.code
+    assert calls["n"] == 1  # 下单不自动重试，由业务查单确认后决策
+
+
+@pytest.mark.asyncio
+async def test_query_order_retains_retry():
+    """下单重试边界：幂等接口（查单）保留自动重试（out_trade_no 天然幂等，重试安全）"""
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            return httpx.Response(500, json={"code": "SYSTEM_ERROR", "message": "系统繁忙"})
+        return httpx.Response(200, json={
+            "out_trade_no": "T1", "trade_state": "SUCCESS", "amount": {"total": 100},
+        }, headers={"Content-Type": "application/json"})
+
+    provider = _make_provider(handler)
+    order = await provider.query_order("T1")
+    assert order is not None
+    assert order.status == PaymentStatus.SUCCESS
+    assert calls["n"] == 3  # 首次 + 2 次重试

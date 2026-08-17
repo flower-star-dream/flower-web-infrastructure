@@ -108,3 +108,13 @@ def test_load_missing_returns_none(tmp_path):
     config = WechatPayConfig(api_v3_key=API_V3_KEY, verify_mode="platform_cert", platform_cert_dir=str(tmp_path))
     store = WeChatCertificateStore(config)
     assert store.load("NOT-EXIST") is None
+
+
+def test_persist_atomic_no_temp_file(tmp_path):
+    """persist_certificates：原子写（临时文件 + os.replace）后目录无 .tmp 残留（H1 修复）"""
+    config = WechatPayConfig(api_v3_key=API_V3_KEY, verify_mode="platform_cert", platform_cert_dir=str(tmp_path))
+    store = WeChatCertificateStore(config)
+    store.persist_certificates([_cert_item("S-ATOMIC", _make_cert_pem())])
+    names = [p.name for p in tmp_path.iterdir()]
+    assert "S-ATOMIC.pem" in names
+    assert not any(n.endswith(".tmp") for n in names)

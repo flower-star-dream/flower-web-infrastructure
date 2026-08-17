@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 import time
 from typing import Any, AsyncIterator
 
@@ -53,6 +54,8 @@ class OpenAICompatibleProvider(ModelProviderInterface):
         # 模型网关连接池注入的客户端（流式/非流式分池，AI 规范 §5.1；生命周期由连接池管理）
         self._stream_client: httpx.AsyncClient | None = None
         self._sync_client: httpx.AsyncClient | None = None
+        # 懒创建互斥锁（M2 修复：并发首次调用仅创建一个 httpx 客户端，防重复创建泄漏）
+        self._client_lock = threading.Lock()
 
     def attach_clients(
         self,
@@ -233,11 +236,18 @@ class OpenAICompatibleProvider(ModelProviderInterface):
         return self._lazy_client()
 
     def _lazy_client(self) -> httpx.AsyncClient:
-        """懒创建 httpx 客户端（超时取自模型配置；仅未注入任何客户端时兜底）"""
-        if self._client is None:
-            self._client = httpx.AsyncClient(timeout=httpx.Timeout(self._config.timeout))
-            self._owns_client = True
-        return self._client
+        """懒创建 httpx 客户端（超时取自模型配置；仅未注入任何客户端时兜底）。
+
+        双重检查锁定（M2 修复）：并发首次调用仅创建一个客户端，防重复创建泄漏；
+        close() 将 _client 置 None 后重新创建亦受锁保护。
+        """
+        if self._client is not None:
+            return self._client
+        with self._client_lock:
+            if self._client is None:
+                self._client = httpx.AsyncClient(timeout=httpx.Timeout(self._config.timeout))
+                self._owns_client = True
+            return self._client
 
     def _resolve_timeouts(self, request: ChatRequest) -> tuple[float, float]:
         """解析 TTFT 首包超时与全量生成超时（AI 规范 §4.1）。
