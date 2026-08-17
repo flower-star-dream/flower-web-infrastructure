@@ -4,7 +4,8 @@
 @Date: 2026/08/17 22:00
 @Description: dev→main 的 PR 合并成功后，自动在 main 生成正式版本：
               计算正式版本号并同步版本文件后，通过「release 分支 + PR 合并」通道合入 main——
-              推送到 release/vX.Y.Z 临时分支 → 创建 PR（自动触发 CI）→ 等待检查通过 →
+              推送到 release/vX.Y.Z 临时分支（推送前自动清理上次运行失败遗留的同名分支，
+              避免 non-fast-forward 拒绝）→ 创建 PR（自动触发 CI）→ 等待检查通过 →
               自动合并 PR → 清理临时分支。全程走 PR 通道，使自动发版提交在推送 main 前
               已跑过 CI，规避 main 分支保护「推送前必须通过状态检查」的拦截。
               仅更新版本号，不打 tag（正式镜像发布仍由手动 v* tag 触发）。
@@ -241,6 +242,20 @@ def wait_for_checks(api: GitHubApi, sha: str, timeout_seconds: int, interval_sec
         time.sleep(interval_seconds)
 
 
+def _clean_stale_release_branch(repo_root: Path, release_branch: str) -> None:
+    """清理上次运行失败遗留的同名远端 release 分支。
+
+    main 未达到目标版本时，同名远端分支必为上次运行残留（如推送成功但创建 PR 失败），
+    直接推送会因 non-fast-forward 被拒；先删除再推送保证流程可重复执行。
+
+    :param repo_root: 仓库根目录
+    :param release_branch: release 分支名（如 release/v0.1.1）
+    """
+    if git(["ls-remote", "--heads", "origin", release_branch], repo_root).strip():
+        print(f"[release] 远端已存在 {release_branch}（疑似上次运行残留），清理后重新推送")
+        git(["push", "origin", "--delete", release_branch], repo_root)
+
+
 def main() -> int:
     """入口：解析 PR 标题 → 计算正式版本 → 更新版本文件 → release 分支 PR 合入 main。
 
@@ -299,6 +314,8 @@ def main() -> int:
 
     # 2) 推送 release 临时分支（不受 main 保护影响）
     release_branch = f"release/v{new_version}"
+    # 清理上次运行失败遗留的同名远端分支，避免 non-fast-forward 拒绝
+    _clean_stale_release_branch(repo_root, release_branch)
     git(["checkout", "-b", release_branch], repo_root)
     git(["push", "origin", release_branch], repo_root)
     print(f"[release] 已推送 release 分支 {release_branch}")

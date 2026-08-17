@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from release_after_merge import (  # noqa: E402
     GitHubApi,
+    _clean_stale_release_branch,
     evaluate_check_runs,
     parse_repo_remote,
     release_version,
@@ -209,6 +210,38 @@ class TestGitHubApi:
         with pytest.raises(httpx.HTTPStatusError) as exc:
             self._api().delete_branch("release/v0.6.0")
         assert "Internal Server Error" in str(exc.value)
+
+
+class TestCleanStaleReleaseBranch:
+    """远端遗留 release 分支清理（上次运行失败残留，避免 non-fast-forward）。"""
+
+    @staticmethod
+    def _monkeypatch_git(monkeypatch: pytest.MonkeyPatch, results: dict[tuple[str, ...], str]) -> list[list[str]]:
+        """替换 git 执行器：按命令元组返回预设 stdout，并记录调用。"""
+
+        calls: list[list[str]] = []
+
+        def fake_git(args: list[str], repo_root: Path) -> str:
+            calls.append(args)
+            return results.get(tuple(args), "")
+
+        monkeypatch.setattr("release_after_merge.git", fake_git)
+        return calls
+
+    def test_branch_exists_deletes_then_push(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # 远端存在同名分支：先 delete 再返回（后续正常推送）
+        calls = self._monkeypatch_git(monkeypatch, {
+            ("ls-remote", "--heads", "origin", "release/v0.1.1"): "abc123\trefs/heads/release/v0.1.1\n",
+        })
+        _clean_stale_release_branch(Path("."), "release/v0.1.1")
+        assert ["ls-remote", "--heads", "origin", "release/v0.1.1"] in calls
+        assert ["push", "origin", "--delete", "release/v0.1.1"] in calls
+
+    def test_branch_not_exists_no_delete(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # 远端无同名分支：仅探测，不删除
+        calls = self._monkeypatch_git(monkeypatch, {})
+        _clean_stale_release_branch(Path("."), "release/v0.2.0")
+        assert calls == [["ls-remote", "--heads", "origin", "release/v0.2.0"]]
 
 
 class TestWaitForChecks:
