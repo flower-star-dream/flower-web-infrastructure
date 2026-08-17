@@ -15,7 +15,7 @@ import json
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, AsyncIterator, Callable
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -56,7 +56,7 @@ class MysqlOutboxStore(OutboxStoreInterface):
         self._session_factory = session_factory
 
     @asynccontextmanager
-    async def _session_scope(self, session: AsyncSession | None = None) -> AsyncIterator[AsyncSession]:
+    async def _session_scope(self, session: AsyncSession | None = None) -> AsyncGenerator[AsyncSession, None]:
         """会话作用域：无外部会话时自建并提交/关闭；传入业务会话时不提交（由业务事务统一提交）"""
         own = session is None
         current = session or self._session_factory()

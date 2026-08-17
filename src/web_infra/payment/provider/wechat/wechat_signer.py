@@ -17,7 +17,7 @@ import uuid
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
 
 class WeChatSigner:
@@ -49,6 +49,7 @@ class WeChatSigner:
     def sign(private_key_pem: str, message: str) -> str:
         """SHA256withRSA 签名，返回 base64 签名"""
         private_key = WeChatSigner.load_private_key(private_key_pem)
+        assert isinstance(private_key, rsa.RSAPrivateKey)  # 微信支付 APIv3 仅支持 RSA 商户密钥（SHA256withRSA）
         signature = private_key.sign(message.encode("utf-8"), padding.PKCS1v15(), hashes.SHA256())
         return base64.b64encode(signature).decode("utf-8")
 
@@ -57,6 +58,7 @@ class WeChatSigner:
         """用平台公钥验签（SHA256withRSA）；失败返回 False"""
         try:
             public_key = WeChatSigner.load_public_key(public_key_pem)
+            assert isinstance(public_key, rsa.RSAPublicKey)  # 微信支付 APIv3 平台公钥固定为 RSA
             public_key.verify(
                 base64.b64decode(signature),
                 message.encode("utf-8"),

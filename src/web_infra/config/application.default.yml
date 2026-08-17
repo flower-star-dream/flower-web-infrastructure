@@ -112,7 +112,14 @@ app:
   # AI 与大模型（特殊场景：默认不启用，需业务显式开启）
   ai:
     enabled: false
-    # 模型清单（页面化配置的 yml 等价物）：按清单自动注册供应商，默认 OpenAI 兼容协议；
+    # 模型配置来源：
+    # - yml（默认）：app.ai.models 清单在代码/配置中写死供应商与模型，启动即注册；
+    # - db：模型配置入库 ai_model_config 表（SqlAlchemyModelConfigStore），启动生命周期自动注册；
+    #   数据库初始化见 db/init/ddl/002 + db/init/dml/002；api_key 列仅存 env:VAR 引用，
+    #   真实密钥经环境变量/.env 注入（如 LLM_API_KEY=sk-xxx），禁止明文落盘（AI 规范 §3.1/AI-7）
+    store:
+      type: yml
+    # 模型清单（store.type=yml 时生效；store.type=db 时改由数据库提供，此处忽略）：
     # 字段与 ModelConfig 对齐，provider 缺省回落 openai_compatible
     models: []
     model_gateway:

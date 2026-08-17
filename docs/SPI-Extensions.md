@@ -103,7 +103,7 @@
 | registry | `ServiceRegistryInterface` | Protocol | `InMemoryServiceRegistry` | Nacos/Eureka/Consul |
 | loadbalance | `LoadBalancerInterface` | ABC | `RandomBalancer` / `RoundRobinBalancer` / `WeightedRoundRobinBalancer` | 自定义策略 |
 | ai | `ModelProviderInterface` | ABC | `OpenAICompatibleProvider` | Anthropic/DeepSeek 等 |
-| ai | `ModelConfigStoreInterface` | Protocol | `DictModelConfigStore` | 数据库/配置中心 |
+| ai | `ModelConfigStoreInterface` | Protocol | `DictModelConfigStore` / `SqlAlchemyModelConfigStore`（数据库 ai_model_config 表） | 配置中心 |
 | ai | `ContentGuardInterface` | ABC | `RuleBasedContentGuard` | 第三方审核服务 |
 | ai | `QuotaStoreInterface` | ABC | `InMemoryQuotaStore` | Redis（INCR + TTL 窗口） |
 | ai | `PromptTemplateStoreInterface` | ABC | `InMemoryPromptTemplateStore` | 数据库 prompt_templates 表 |
@@ -273,8 +273,12 @@
 | ---- | ---- |
 | `async load(model_code: str \| None = None) -> ModelConfig \| None` | 加载模型配置，未找到返回 None |
 | `async load_all() -> list[ModelConfig]` | 加载全部模型配置（页面化配置自动注册依据，规范 §17.4/§3.2） |
+| `async upsert(config: ModelConfig) -> ModelConfig` | 幂等写入（页面化配置落库入口，按 model_code 存在即更新、缺失即插入；非 SPI 必需，数据库实现提供） |
 
-- 默认实现：`DictModelConfigStore`（`dict_model_config_store.py`）。
+- 默认实现一：`DictModelConfigStore`（`dict_model_config_store.py`）——内存/yml 清单（`app.ai.models`，`app.ai.store.type=yml` 默认装配）。
+- 默认实现二：`SqlAlchemyModelConfigStore`（`sqlalchemy_model_config_store.py`）——数据库 `ai_model_config` 表（基线 DDL/DML 见 `db/init/ddl/002-ai-model-config-init-ddl.sql`、`db/init/dml/002-ai-model-config-init-dml.sql`），`app.ai.store.type=db` 装配，启动生命周期自动同步 SPI 注册表。
+  - 构造：接收 SQLAlchemy `async_sessionmaker[AsyncSession]` 会话工厂（复用 `app.db.type=mysql` 数据库组件的 `session_factory`）；非 MySQL 数据源时装配快速失败（`ConfigError`）。
+  - 密钥安全（AI 规范 §3.1/AI-7）：`api_key` 列仅存 `env:VAR` 环境变量引用（如 `env:LLM_API_KEY`），真实密钥由应用进程从环境变量/.env 注入，`ModelConfig.resolved_api_key` 运行时解析，禁止明文落盘。
 
 ### 7.3 ContentGuardInterface —— 内容安全审核接口
 

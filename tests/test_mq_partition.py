@@ -113,8 +113,8 @@ async def test_send_delay_delivers_after_expiry():
     assert await mq.send_delay(message, 0.05) == message.message_id
 
     # 轮询等待投递（最多 2s），避免固定 sleep 在高负载下的时序抖动（flaky 治理）
-    deadline = asyncio.get_event_loop().time() + 2.0
-    while not received and asyncio.get_event_loop().time() < deadline:
+    deadline = asyncio.get_running_loop().time() + 2.0
+    while not received and asyncio.get_running_loop().time() < deadline:
         await asyncio.sleep(0.02)
     await mq.stop()
 

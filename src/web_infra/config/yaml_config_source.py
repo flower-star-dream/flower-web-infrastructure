@@ -38,7 +38,9 @@ class YamlConfigSource(ConfigSourceInterface):
                     self._data = resolve_env_placeholders(yaml.safe_load(f) or {})
             else:
                 self._data = {}
-        return self._data
+        loaded = self._data
+        assert loaded is not None
+        return loaded
 
     def get(self, key: str, default: Any = None) -> Any:
         return _get_nested(self._load(), key, default)

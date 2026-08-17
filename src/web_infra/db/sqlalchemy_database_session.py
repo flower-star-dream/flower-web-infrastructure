@@ -27,7 +27,8 @@ class SqlAlchemyDatabaseSession(DatabaseSessionInterface):
         from sqlalchemy import text
 
         result = await self._session.execute(text(sql), params or {})
-        return result.rowcount or 0
+        # Result 基类无 rowcount（DML 实际返回 CursorResult 才暴露），用 getattr 兼容类型与运行时
+        return getattr(result, "rowcount", 0) or 0
 
     async def query_one(self, sql: str, params: Any = None) -> dict[str, Any] | None:
         from sqlalchemy import text

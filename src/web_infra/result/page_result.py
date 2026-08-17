@@ -23,7 +23,7 @@ class PageResult(BaseModel, Generic[T]):
 
     code: str = Field(default=SUCCESS_CODE, description="业务错误码")
     message: str = Field(default=SUCCESS_MESSAGE, description="可读提示")
-    data: PageData[T] = Field(default_factory=PageData, description="分页数据")
+    data: PageData[T] = Field(default_factory=lambda: PageData[T](), description="分页数据")
 
     @staticmethod
     def success(records: list[T], total: int, message: str = SUCCESS_MESSAGE) -> "PageResult[T]":
@@ -31,5 +31,5 @@ class PageResult(BaseModel, Generic[T]):
         return PageResult[T](
             code=SUCCESS_CODE,
             message=message,
-            data=PageData[T](items=records, total=total),
+            data=PageData[T](list=records, total=total),
         )

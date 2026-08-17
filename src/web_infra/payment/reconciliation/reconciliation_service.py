@@ -244,9 +244,11 @@ class ReconciliationService:
             diff.action = "查单确认未支付，暂不补记（下期对账再核）"
             return
         # 补记账（§6.4）：走本地事务表写入成功流水（幂等：唯一键兜底）
+        channel_amount = diff.channel_amount
+        assert channel_amount is not None  # 渠道侧金额必有值（账单来源），此处仅供类型收窄
         await self._flow_store.append(PaymentFlowRecord(
             out_trade_no=diff.out_trade_no, event_type=diff.event_type,
-            amount=diff.channel_amount, status=PaymentFlowStatus.BOOKED,
+            amount=channel_amount, status=PaymentFlowStatus.BOOKED,
             channel=channel, transaction_id=diff.channel_transaction_id,
             raw={"reconciled": True, "biz_date": biz_date},
         ))
@@ -291,9 +293,11 @@ class ReconciliationService:
         if refund is None or getattr(refund, "status", None) != RefundStatus.SUCCESS:
             diff.action = "查退款确认未成功，转人工核查（§6.4）"
             return
+        local_amount = diff.local_amount
+        assert local_amount is not None  # 本地侧金额必有值（本地流水来源），此处仅供类型收窄
         await self._flow_store.append(PaymentFlowRecord(
             out_trade_no=diff.out_trade_no, event_type=PaymentFlowEvent.REFUND,
-            amount=diff.local_amount, status=PaymentFlowStatus.BOOKED,
+            amount=local_amount, status=PaymentFlowStatus.BOOKED,
             out_refund_no=diff.out_refund_no, channel=channel,
             raw={"reconciled": True, "biz_date": biz_date},
         ))

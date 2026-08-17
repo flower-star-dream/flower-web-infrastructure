@@ -31,7 +31,9 @@ class JsonFileConfigSource(ConfigSourceInterface):
                     self._data = json.load(f)
             else:
                 self._data = {}
-        return self._data
+        loaded = self._data
+        assert loaded is not None
+        return loaded
 
     def get(self, key: str, default: Any = None) -> Any:
         return _get_nested(self._load(), key, default)

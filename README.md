@@ -466,7 +466,11 @@ DataPermissionGuard.check(owner_id=row.owner_id, required_owner_id=row.owner_id,
 
 ### 7.8 AI 模型网关
 
-模型无需代码手动注册：在 `application.yml` 的 `app.ai.models` 配置模型清单，应用启动时自动注册供应商并装配网关；默认支持 OpenAI 兼容协议（`/v1/chat/completions`），私有化/自建供应商经供应商 SPI 接入。
+模型无需代码手动注册：在 `application.yml` 的 `app.ai` 配置模型清单，应用启动时自动注册供应商并装配网关；默认支持 OpenAI 兼容协议（`/v1/chat/completions`），私有化/自建供应商经供应商 SPI 接入。
+
+模型配置来源两套方案（`app.ai.store.type`，默认 `yml`）：
+- `yml`：`app.ai.models` 清单在代码/配置中写死供应商与模型，启动即注册（下方示例）；
+- `db`：模型配置入库 `ai_model_config` 表（框架内置 `SqlAlchemyModelConfigStore`，基线 DDL/DML 见 `db/init/ddl/002` 与 `db/init/dml/002`），启动生命周期自动同步注册；`api_key` 列仅存 `env:VAR` 引用，真实密钥经环境变量/.env 注入（如 `LLM_API_KEY=sk-xxx`），禁止明文落盘。
 
 ```yaml
 app:
@@ -514,7 +518,7 @@ from web_infra import ModelProviderFactory
 ModelProviderFactory.register_factory("my-vendor", lambda config: MyVendorProvider(config))
 ```
 
-页面化模型配置：实现 `ModelConfigStoreInterface`（从数据库/配置中心加载），启动时自动同步至 SPI 注册表：
+页面化模型配置：框架内置数据库实现 `SqlAlchemyModelConfigStore`（`app.ai.store.type=db` 自动装配，启动同步 SPI 注册表，页面化新增/修改经 `upsert` 幂等落库）；也可自定义 `ModelConfigStoreInterface`（配置中心等），启动时手动同步：
 
 ```python
 async def startup():

@@ -189,6 +189,7 @@ class PaymentChannelContract:
             status="SUCCESS", transaction_id="WX-CT-1",
         ))
         local = await self._order_store.find_by_out_trade_no(out_trade_no)
+        assert local is not None, "回调入账后应能查到本地订单"
         assert local.status == PaymentStatus.SUCCESS, "回调入账后本地订单应为 SUCCESS"
         flow = await self._flow_store.find_by_order_and_event(out_trade_no, PaymentFlowEvent.PAY)
         assert flow is not None, "回调入账应写 PAY 流水（§5.2）"

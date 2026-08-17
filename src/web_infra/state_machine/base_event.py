@@ -17,6 +17,8 @@ from web_infra.state_machine.state_machine_error import StateMachineErrorCode
 class BaseEvent(Enum):
     """事件枚举基类：业务侧 `class OrderEvent(BaseEvent): PAY = (1, "支付")` 声明"""
 
+    _description_: str  # 实例属性类型声明（由 __new__ 写入，供静态检查识别，非枚举成员）
+
     def __new__(cls, code: int | str, description: str) -> "BaseEvent":
         obj = object.__new__(cls)
         obj._value_ = code

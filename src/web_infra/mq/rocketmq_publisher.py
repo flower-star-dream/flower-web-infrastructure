@@ -38,7 +38,7 @@ def _build_rocket_message(message: Message) -> Any:
 
     填充主题/正文/标签/业务键；返回 RocketMessage 对象供 send_sync/send_delay 使用。
     """
-    from rocketmq.client import Message as RocketMessage  # 延迟导入
+    from rocketmq.client import Message as RocketMessage  # type: ignore[reportMissingImports]  # 延迟导入（extras[rocketmq] 可选依赖）
 
     msg = RocketMessage(message.topic)
     msg.set_body(json.dumps(message.body, ensure_ascii=False))
@@ -74,7 +74,7 @@ class RocketMqPublisher(MessagePublisherInterface):
         :param config: RocketMQ 配置
         :param selector: 分区选择器（默认 HashMessageQueueSelector，规范 §9.2 按业务主键哈希选分区）
         """
-        from rocketmq.client import Producer  # 延迟导入，避免强制依赖
+        from rocketmq.client import Producer  # type: ignore[reportMissingImports]  # 延迟导入（extras[rocketmq] 可选依赖）
 
         self.config = config
         self.selector = selector or HashMessageQueueSelector()

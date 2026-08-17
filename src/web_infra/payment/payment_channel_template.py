@@ -104,7 +104,7 @@ class PaymentChannelTemplate(ABC):
                 out_trade_no=request.out_trade_no,
                 amount=request.total_amount,
                 status=PaymentStatus.NOTPAY,
-                attach=request.attach,
+                attach=request.attach or "",
                 expire_at=request.time_expire,
             ))
         return result

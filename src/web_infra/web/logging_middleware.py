@@ -13,6 +13,7 @@ import uuid
 
 from fastapi import FastAPI, Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
+from starlette.types import ASGIApp
 
 from web_infra.constants import AUTH_HEADER_TRACE_ID, HttpStatusConstant
 from web_infra.constants.sys_constant import SysConstant
@@ -78,7 +79,7 @@ def _record_slow_sample(
 class LoggingMiddleware(BaseHTTPMiddleware):
     """FastAPI 访问日志中间件"""
 
-    def __init__(self, app: FastAPI, service_name: str = "app") -> None:
+    def __init__(self, app: ASGIApp, service_name: str = "app") -> None:
         super().__init__(app)
         self.logger = get_logger(f"{service_name}.access")
         self.service_name = service_name

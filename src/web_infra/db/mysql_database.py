@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import time
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Any, AsyncIterator
+from typing import TYPE_CHECKING, Any, AsyncGenerator
 
 from prometheus_client import Counter
 
@@ -92,7 +92,7 @@ class MySQLDatabase(SessionScopeMixin):
         self._config.install_tenant_filter(tenant_filter)
 
     @asynccontextmanager
-    async def orm_session(self, read_replica: bool = False) -> AsyncIterator[AsyncSession]:
+    async def orm_session(self, read_replica: bool = False) -> AsyncGenerator[AsyncSession, None]:
         """SQLAlchemy ORM 会话上下文管理器（规范 §10.6：框架统一管理连接生命周期，禁止裸获取连接）。
 
         进入创建原生 AsyncSession（支持 select(Model) 等 ORM 查询），

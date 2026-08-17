@@ -15,7 +15,7 @@ import inspect
 import threading
 import time
 from collections import deque
-from typing import Any, Callable, TypeVar
+from typing import Any, Awaitable, Callable, TypeVar
 
 from web_infra.resilience.circuit_breaker_config import CircuitBreakerConfig
 from web_infra.resilience.circuit_breaker_state_enum import CircuitBreakerState
@@ -171,6 +171,6 @@ class CircuitBreaker:
             raise TypeError("异步函数请使用 execute_async")
         return self._execute_sync(func, *args, **kwargs)
 
-    async def execute_async(self, func: Callable[..., R], *args: Any, **kwargs: Any) -> R:
+    async def execute_async(self, func: Callable[..., Awaitable[R]], *args: Any, **kwargs: Any) -> R:
         """异步执行受熔断保护的调用"""
         return await self._execute_async(func, *args, **kwargs)

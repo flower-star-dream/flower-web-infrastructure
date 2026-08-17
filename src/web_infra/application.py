@@ -15,7 +15,7 @@ import asyncio
 import inspect
 import logging
 from contextlib import asynccontextmanager
-from typing import Any, Callable, cast
+from typing import Any, AsyncGenerator, Callable, cast
 
 from fastapi import FastAPI
 
@@ -48,6 +48,7 @@ from web_infra.db.database_manager import DatabaseManager
 from web_infra.db.database_router import TenantDatabaseRouter
 from web_infra.ai.model_gateway import ModelRouter, RouteEntry, ModelGateway
 from web_infra.ai.model_auto_registrar import ModelAutoRegistrar
+from web_infra.ai.sqlalchemy_model_config_store import SqlAlchemyModelConfigStore
 from web_infra.ai.connection_pool import ConnectionPoolConfig, ConnectionPoolManager
 from web_infra.ai.quota import QuotaConfig, QuotaManager
 from web_infra.mq import InMemoryMessageQueue, RocketMqConfig, RocketMqPublisher
@@ -62,6 +63,8 @@ from web_infra.registry import (
     NacosDiscoveryClient,
 )
 from web_infra.config import NacosProperties
+
+logger = logging.getLogger(__name__)
 
 # 框架提供的中间件注册表（name -> (中间件类, 构造参数构建器)）：
 # 业务在 app.web.middlewares 中声明是否引入及参数，如何引入由配置决定
@@ -312,17 +315,24 @@ class Application:
     def _build_ai(self) -> Any:
         """AI 组件：app.ai.enabled=true 时装配统一模型网关（AI 规范 §2.2/§17.4）。
 
-        模型自动注册：yml app.ai.models 配置清单 -> 供应商 SPI 注册表，业务代码无需手动注册；
+        模型配置来源（app.ai.store.type）：
+        - yml（默认）：app.ai.models 配置清单 -> 供应商 SPI 注册表（业务代码/配置文件写死供应商）；
+        - db：ai_model_config 表（SqlAlchemyModelConfigStore），启动生命周期内经 register_from_store 自动注册。
         默认 OpenAI 兼容协议（/v1/chat/completions），自定义供应商经 ModelProviderFactory 注册后
         按 provider 字段自动装配。路由由 app.ai.model_gateway.routes 按模型逻辑名声明场景主备。
         默认不启用（yml app.ai.enabled=false），需业务配置显式开启。"""
         if not self.settings.get_bool("app.ai.enabled"):
             return None
-        # 1) 自动注册：yml 配置清单 -> 供应商注册表（同 model_code 覆盖注册）
+        # 1) 自动注册：配置清单/数据库 -> 供应商注册表（同 model_code 覆盖注册）
         registrar = ModelAutoRegistrar()
-        models = self.settings.get("app.ai.models") or []
-        if models:
-            registrar.register_configs(ModelAutoRegistrar.from_dicts(list(models)))
+        store_type = self.settings.get("app.ai.store.type") or "yml"
+        if store_type == "db":
+            # 数据库模型配置来源：store 挂到组件，启动生命周期内经 register_from_store 自动注册（异步 I/O）
+            self._components["ai_model_config_store"] = self._build_ai_model_store()
+        else:
+            models = self.settings.get("app.ai.models") or []
+            if models:
+                registrar.register_configs(ModelAutoRegistrar.from_dicts(list(models)))
         self._components["ai_registrar"] = registrar
         # 2) 场景路由（按模型逻辑名声明主备降级）
         routes = self.settings.get("app.ai.model_gateway.routes") or {}
@@ -357,15 +367,59 @@ class Application:
         )
         return ModelGateway(router, pool_manager=pool_manager, quota_manager=quota_manager)
 
+    def _build_ai_model_store(self) -> Any:
+        """构建数据库模型配置来源（app.ai.store.type=db）：复用已装配数据库组件的 SQLAlchemy 会话工厂。
+
+        多数据源（DatabaseManager）场景取首个已注册数据源的会话工厂（模型配置表与业务库同库部署）。
+
+        :raises ConfigError: 数据库组件非 MySQL 数据源或引擎未初始化（拿不到 session_factory）时快速失败，
+            提示启用 app.db.type=mysql（SqlAlchemyModelConfigStore 依赖原生 AsyncSession）
+        """
+        db = self._components.get("db")
+        session_factory = None
+        if isinstance(db, MySQLDatabase):
+            session_factory = db.session_factory
+        elif isinstance(db, DatabaseManager):
+            names = db.names
+            if names:
+                session_factory = getattr(db.get(names[0]), "session_factory", None)
+        if session_factory is None:
+            raise ConfigError(
+                "app.ai.store.type=db 需要已初始化的 MySQL 数据源（app.db.type=mysql），"
+                "当前拿不到 SQLAlchemy 会话工厂",
+                key="app.ai.store.type",
+            )
+        return SqlAlchemyModelConfigStore(session_factory)
+
     # ------------------------------------------------------------------
     # 内部：生命周期（优雅停机，规范 §19.6）
     # ------------------------------------------------------------------
 
-    async def _lifespan(self, app: FastAPI) -> Any:
-        """应用生命周期：启动前清理上下文，停机时释放可关闭组件"""
+    @asynccontextmanager
+    async def _lifespan(self, app: FastAPI) -> AsyncGenerator[None, None]:
+        """应用生命周期：启动前清理上下文、数据库模型配置来源自动注册；停机时释放可关闭组件"""
         RequestContext.clear()
+        await self._register_ai_models_from_db()
         yield
         await self._shutdown()
+
+    async def _register_ai_models_from_db(self) -> None:
+        """数据库模型配置来源（app.ai.store.type=db）：启动时全量加载并自动同步 SPI 注册表（AI 规范 §17.4）。
+
+        注册失败仅记录 error 日志不阻断启动（数据库暂不可用时应用仍可提供非 AI 能力），
+        模型调用将回落 E4-AI-001（模型/供应商未配置）明确错误。
+        """
+        if (self.settings.get("app.ai.store.type") or "yml") != "db":
+            return
+        registrar = self._components.get("ai_registrar")
+        store = self._components.get("ai_model_config_store")
+        if registrar is None or store is None:
+            return
+        try:
+            registered = await registrar.register_from_store(store)
+            logger.info("ai_model_config_db_register_count=%d", len(registered))
+        except Exception as exc:  # 数据库未就绪/表缺失：记录错误，不阻断应用启动
+            logger.error("ai_model_config_db_register_failed err=%s", exc)
 
     async def _shutdown(self) -> None:
         """优雅停机（规范 §19.2 摘流量→等待窗口→连接排空→优雅退出）。

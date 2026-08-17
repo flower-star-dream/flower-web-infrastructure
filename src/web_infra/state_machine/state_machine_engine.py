@@ -14,7 +14,7 @@ from typing import Protocol, TypeVar, runtime_checkable
 from web_infra.state_machine.state_route_params import StateRouteParams
 
 S = TypeVar("S")
-E = TypeVar("E")
+E = TypeVar("E", contravariant=True)  # E 仅出现在协议方法参数位置，声明逆变消除 reportInvalidTypeVarUse
 
 
 @runtime_checkable
@@ -23,6 +23,8 @@ class StateMachineEngine(Protocol[S, E]):
 
     def fire(self, current_state: S | None, event: E, params: StateRouteParams | None = None) -> S:
         """触发状态流转（同步处理器）并返回目标状态。"""
+        ...
 
     async def fire_async(self, current_state: S | None, event: E, params: StateRouteParams | None = None) -> S:
         """触发状态流转（支持同步/异步处理器）并返回目标状态。"""
+        ...

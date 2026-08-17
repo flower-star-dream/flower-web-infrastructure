@@ -16,7 +16,7 @@ from functools import lru_cache
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
-    from transformers import PreTrainedTokenizerFast
+    from transformers import PreTrainedTokenizerFast  # type: ignore[reportMissingImports]  # 可选依赖（extras[rag]）
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ def _load_tokenizer_from_disk(model_dir: str) -> Optional["PreTrainedTokenizerFa
     加载失败返回 None（调用方降级为字符估算），并记录 warning 日志。
     """
     try:
-        from transformers import AutoTokenizer
+        from transformers import AutoTokenizer  # type: ignore[reportMissingImports]  # 可选依赖（extras[rag]）
 
         return AutoTokenizer.from_pretrained(model_dir, trust_remote_code=True)
     except Exception as e:  # noqa: BLE001

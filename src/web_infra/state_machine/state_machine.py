@@ -10,7 +10,7 @@
 from __future__ import annotations
 
 import inspect
-from typing import Any, Generic, TypeVar
+from typing import Any, Coroutine, Generic, TypeVar, cast
 
 from web_infra.state_machine.state_machine_engine import StateMachineEngine
 from web_infra.state_machine.state_machine_error import StateMachineErrorCode
@@ -67,10 +67,11 @@ class StateMachine(Generic[S, E, D], StateMachineEngine[S, E]):
         :raises TypeError: 处理器为 async 函数时（请改用 fire_async）
         """
         self._validate(current_state, event, params)
+        assert current_state is not None and params is not None  # _validate 已保证非空（否则抛异常），此处仅供类型收窄
         target = self._router.route(event, current_state, params)
         if inspect.isawaitable(target):
             # 关闭未 await 的协程避免 ResourceWarning，再提示改用 fire_async
-            target.close()
+            cast("Coroutine[Any, Any, Any]", target).close()
             raise TypeError("同步 fire 不能处理 async 处理器，请改用 fire_async")
         return self._ensure_target(target)
 
@@ -84,6 +85,7 @@ class StateMachine(Generic[S, E, D], StateMachineEngine[S, E]):
         :raises BizException: EMPTY_STATE / EMPTY_PARAMETER / ILLEGAL_STATE_TRANSITION
         """
         self._validate(current_state, event, params)
+        assert current_state is not None and params is not None  # _validate 已保证非空（否则抛异常），此处仅供类型收窄
         target = self._router.route(event, current_state, params)
         if inspect.isawaitable(target):
             target = await target

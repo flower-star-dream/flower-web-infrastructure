@@ -111,13 +111,16 @@ class WeChatPayProvider(PaymentChannelTemplate, PaymentGateway):
         # 下单为资金操作：retryable=False 禁止盲目重试（规范 §2.6/§7.2，
         # 防重复下单/重复扣款；失败由业务先查单确认再决策）
         data = await self._client.request("POST", path, payload, retryable=False)
+        assert data is not None  # 下单非 404 场景，request 失败会抛异常而非返回 None
         prepay_id = data.get("prepay_id")
         if request.scene == PaymentScene.NATIVE:
             return PaymentPrepayResponse(scene=request.scene, code_url=data.get("code_url"))
         if request.scene == PaymentScene.H5:
             return PaymentPrepayResponse(scene=request.scene, h5_url=data.get("h5_url"))
         if request.scene == PaymentScene.APP:
+            assert prepay_id is not None  # APP/JSAPI 下单成功必返回 prepay_id（§4.1），此处仅供类型收窄
             return PaymentPrepayResponse(scene=request.scene, prepay_id=prepay_id, pay_params=self._app_pay_params(prepay_id))
+        assert prepay_id is not None  # APP/JSAPI 下单成功必返回 prepay_id（§4.1），此处仅供类型收窄
         return PaymentPrepayResponse(scene=request.scene, prepay_id=prepay_id, pay_params=self._jsapi_pay_params(prepay_id))
 
     async def _do_query_order(self, out_trade_no: str) -> PaymentOrder | None:
@@ -172,6 +175,7 @@ class WeChatPayProvider(PaymentChannelTemplate, PaymentGateway):
         if request.reason:
             payload["reason"] = request.reason
         data = await self._client.request("POST", "/v3/refund/domestic/refunds", payload)
+        assert data is not None  # 退款非 404 场景，request 失败会抛异常而非返回 None
         amount = data.get("amount") or {}
         return PaymentRefundResponse(
             out_refund_no=data["out_refund_no"],

@@ -17,7 +17,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from inspect import isawaitable
-from typing import Any, AsyncIterator
+from typing import Any, AsyncGenerator
 
 from web_infra.context import RequestContext
 from web_infra.db.database_router import DatabaseRouterInterface
@@ -135,7 +135,7 @@ class DatabaseManager:
         return list(self._router.registered_tenants()) if self._router is not None else []
 
     @asynccontextmanager
-    async def session(self, name: str | None = None) -> AsyncIterator[DatabaseSessionInterface]:
+    async def session(self, name: str | None = None) -> AsyncGenerator[DatabaseSessionInterface, None]:
         """默认数据源会话上下文管理器：进入创建会话，退出自动提交（异常回滚）并关闭。
 
         :param name: 数据源名（默认使用构造时 default_name）
@@ -144,7 +144,7 @@ class DatabaseManager:
             yield session
 
     @asynccontextmanager
-    async def orm_session(self, name: str | None = None) -> AsyncIterator[Any]:
+    async def orm_session(self, name: str | None = None) -> AsyncGenerator[Any, None]:
         """默认数据源 SQLAlchemy ORM 会话上下文管理器（规范 §10.6：框架统一管理连接生命周期）。
 
         退出自动提交（异常自动回滚）并关闭；业务无需 try/finally。

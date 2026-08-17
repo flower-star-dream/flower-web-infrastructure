@@ -94,7 +94,7 @@ class WeChatPayClient:
                     path, attempt + 1, delay, exc,
                 )
                 await asyncio.sleep(delay)
-        raise last_error  # 不可达（循环内已 raise/return）
+        raise last_error or RuntimeError("微信支付请求异常：无可用错误信息")  # 不可达（循环内已 raise/return）
 
     async def _request_once(self, method: str, path: str, payload: dict | None, *,
                             not_found_ok: bool, verify_response: bool) -> dict | None:

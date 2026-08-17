@@ -23,6 +23,7 @@ from web_infra.error.ai_error_code import AiErrorCode
 from web_infra.ai.model_config import ModelConfig
 from web_infra.ai.model_config_store_interface import ModelConfigStoreInterface
 from web_infra.ai.dict_model_config_store import DictModelConfigStore
+from web_infra.ai.sqlalchemy_model_config_store import SqlAlchemyModelConfigStore
 from web_infra.ai.model_config_manager import ModelConfigManager
 from web_infra.ai.prompt.prompt_template import PromptTemplate
 from web_infra.ai.prompt.prompt_template_store_interface import PromptTemplateStoreInterface
@@ -77,6 +78,7 @@ __all__ = [
     "ModelConfig",
     "ModelConfigStoreInterface",
     "DictModelConfigStore",
+    "SqlAlchemyModelConfigStore",
     "ModelConfigManager",
     "PromptTemplate",
     "PromptTemplateStoreInterface",
