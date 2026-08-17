@@ -17,6 +17,7 @@ from web_infra.mq.message_consumer_interface import MessageConsumerInterface
 from web_infra.mq.in_memory_message_queue import InMemoryMessageQueue
 from web_infra.mq.rocketmq_config import RocketMqConfig
 from web_infra.mq.rocketmq_publisher import RocketMqPublisher
+from web_infra.mq.message_queue_registry import MessageQueueRegistry
 from web_infra.mq.message_idempotency_store_interface import MessageIdempotencyStoreInterface
 from web_infra.mq.in_memory_message_idempotency_store import InMemoryMessageIdempotencyStore
 from web_infra.mq.redis_message_idempotency_store import RedisMessageIdempotencyStore
@@ -55,6 +56,7 @@ __all__ = [
     "INFRA_MQ_GROUP_ORDER_PAY",
     "RocketMqConfig",
     "RocketMqPublisher",
+    "MessageQueueRegistry",
     "MessageIdempotencyStoreInterface",
     "InMemoryMessageIdempotencyStore",
     "RedisMessageIdempotencyStore",

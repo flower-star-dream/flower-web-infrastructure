@@ -48,6 +48,11 @@ class RedisCacheBackend(CacheBackendInterface):
         self._key_prefix = key_prefix
         self._default_ttl_jitter_seconds = default_ttl_jitter_seconds
 
+    @property
+    def config(self) -> RedisConfig:
+        """Redis 连接配置（供幂等存储等组件复用同一客户端实例，避免重复建连）"""
+        return self._config
+
     async def _redis(self) -> Any:
         """懒连接并返回 Redis 客户端"""
         return await self._config.connect()

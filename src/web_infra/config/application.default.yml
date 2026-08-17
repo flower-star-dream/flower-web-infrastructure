@@ -31,6 +31,8 @@ app:
     middlewares:
       idempotency:
         enabled: false          # API 幂等键中间件默认不引入，需业务自行启用
+        store_type: memory      # 幂等键存储：memory（默认，单实例）/ redis（跨实例原子，
+                                # 复用 cache 组件 Redis 客户端，需 app.cache.type=redis）
         ttl_seconds: 86400
       auth:
         enabled: false          # 统一鉴权中间件默认不引入，需业务自行启用
@@ -59,7 +61,7 @@ app:
     enabled: false
     strict: true
 
-  # 缓存
+  # 缓存（CacheBackendRegistry 按 type 装配：内置 memory/redis，自定义经 register 注册后接入）
   cache:
     type: memory
     max_size: 10000
@@ -78,9 +80,15 @@ app:
       health_check_interval: 30
       retry_on_timeout: true
 
-  # 数据库
+  # 数据库（DatabaseFactoryInterface SPI，DatabaseRegistry 按 type 装配：内置 mysql/sqlite，
+  # 自定义如 PostgreSQL 经 DatabaseRegistry.register 注册后按 app.db.type 接入；
+  # 未注册的 type 启动期快速失败（ConfigError））
   db:
     type: mysql
+    # 混合多数据源（同一应用并存多种数据库，如 order→mysql、audit→pg）：每实例带 type 字段
+    # （缺省 mysql），按 DatabaseRegistry 按名构建，装配为 DatabaseManager 按名/租户路由
+    # （业务 db.get("audit") 使用对应数据库）。与下方 mysql.instances 多租户独立库二选一。
+    instances: {}
     router:
       mapping: {}
       pattern: "tenant_{tenant_id}"
@@ -118,14 +126,18 @@ app:
   # AI 与大模型（特殊场景：默认不启用，需业务显式开启）
   ai:
     enabled: false
-    # 模型配置来源：
+    # 模型配置来源（ModelConfigStoreInterface SPI，ModelConfigStoreRegistry 按名装配）：
     # - yml（默认）：app.ai.models 清单在代码/配置中写死供应商与模型，启动即注册；
-    # - db：模型配置入库 ai_model_config 表（SqlAlchemyModelConfigStore），启动生命周期自动注册；
-    #   数据库初始化见 db/init/ddl/002 + db/init/dml/002；api_key 列仅存 env:VAR 引用，
-    #   真实密钥经环境变量/.env 注入（如 LLM_API_KEY=sk-xxx），禁止明文落盘（AI 规范 §3.1/AI-7）
+    # - db：模型配置入库 ai_model_config 表（SqlAlchemyModelConfigStore），数据源跟随 app.db.type
+    #   （mysql 复用数据库组件 AsyncSession 会话工厂；sqlite 走独立 SQLAlchemy aiosqlite 引擎），
+    #   启动生命周期自动注册；数据库初始化见 db/init/ddl/002 + db/init/dml/002；
+    #   api_key 列仅存 env:VAR 引用，真实密钥经环境变量/.env 注入（如 LLM_API_KEY=sk-xxx），
+    #   禁止明文落盘（AI 规范 §3.1/AI-7）；
+    # - 自定义来源（配置中心/Redis 等）：经 ModelConfigStoreRegistry.register 注册工厂后按 type 装配，
+    #   未注册的 store.type 启动期快速失败（ConfigError）
     store:
       type: yml
-    # 模型清单（store.type=yml 时生效；store.type=db 时改由数据库提供，此处忽略）：
+    # 模型清单（store.type=yml 时生效；store.type=db/自定义来源时由来源提供，此处忽略）：
     # 字段与 ModelConfig 对齐，provider 缺省回落 openai_compatible
     models: []
     model_gateway:
@@ -163,7 +175,7 @@ app:
     heartbeat_frequency_ms: 10000
     retry_writes: true
 
-  # 对象存储
+  # 对象存储（ObjectStorageRegistry 按 type 装配：内置 local/minio，自定义经 register 注册后接入）
   storage:
     type: local
     base_dir: ./data
@@ -176,7 +188,7 @@ app:
       default_bucket: default
       presign_expires: 600
 
-  # 消息队列
+  # 消息队列（MessageQueueRegistry 按 type 装配：内置 memory/rocketmq，自定义经 register 注册后接入）
   mq:
     type: memory
     rocketmq:
@@ -215,7 +227,7 @@ app:
       connect_timeout: 5
       read_timeout: 30
 
-  # 服务注册发现
+  # 服务注册发现（ServiceDiscoveryRegistry 按 type 装配：内置 memory/nacos，自定义经 register 注册后接入）
   registry:
     type: memory
     expire_seconds: 15

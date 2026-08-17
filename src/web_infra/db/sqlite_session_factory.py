@@ -24,6 +24,11 @@ class SqliteSessionFactory:
         self._db_path = self._parse_path(self.config.url) or db_path
         self._conn = sqlite3.connect(self._db_path, check_same_thread=False)
 
+    @property
+    def db_path(self) -> str:
+        """数据库文件路径（供 SQLAlchemy 异步引擎复用同一数据文件；:memory: 为每连接独立内存库）"""
+        return self._db_path
+
     @staticmethod
     def _parse_path(url: str) -> str:
         """解析 sqlite:///path 形式的连接地址"""
@@ -45,3 +50,12 @@ class SqliteSessionFactory:
     def close(self) -> None:
         """关闭底层连接"""
         self._conn.close()
+
+    async def health_check(self) -> bool:
+        """健康检查：SQLite 连接可用性探测（SELECT 1 失败视为不健康）"""
+        try:
+            with self._conn:
+                self._conn.execute("SELECT 1")
+            return True
+        except sqlite3.Error:
+            return False

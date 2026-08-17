@@ -11,6 +11,7 @@ from web_infra.storage.object_storage_interface import ObjectStorageInterface
 from web_infra.storage.local_object_storage import LocalObjectStorage
 from web_infra.storage.minio_storage_config import MinioStorageConfig
 from web_infra.storage.minio_storage import MinioObjectStorage
+from web_infra.storage.object_storage_registry import ObjectStorageRegistry
 from web_infra.storage.upload import (
     UploadStatus,
     UploadTask,
@@ -28,6 +29,7 @@ __all__ = [
     "LocalObjectStorage",
     "MinioStorageConfig",
     "MinioObjectStorage",
+    "ObjectStorageRegistry",
     "UploadStatus",
     "UploadTask",
     "UploadStoreInterface",

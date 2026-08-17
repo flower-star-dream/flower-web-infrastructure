@@ -2,9 +2,10 @@
 # flower-web-infrastructure 自动发版（PR 合入后生成正式版本）
 # @Author: 花海
 # @Date: 2026/08/17 22:00
-# @Description: dev→main 的 PR 合并成功后，在 main 分支自动生成正式版本号
-#               （剥离 .devN 测试后缀并按 PR 标题前缀递增），同步更新
-#               pyproject.toml / __init__.py / README / docs 版本引用并推送 main。
+# @Description: dev→main 的 PR 合并成功后，自动在 main 生成正式版本号：
+#               计算版本号并同步版本文件后，经「release 分支 + PR 合并」通道合入 main
+#               （推送 release/vX.Y.Z → 创建 PR 触发 CI → 检查通过后自动合并 → 清理分支），
+#               使自动发版提交在推送 main 前已跑过 CI，规避 main 分支保护的推送检查限制。
 #               仅更新版本号，不打 tag（正式镜像发布仍由手动 v* tag 触发，见 ci.yml）。
 # =====================================================================
 name: release
@@ -16,11 +17,13 @@ on:
 jobs:
   auto-release:
     name: dev→main 合入后自动发版
-    # 仅 dev→main 且合并成功的 PR 触发（普通 close 或非 dev 源分支不触发）
+    # 仅 dev→main 且合并成功的 PR 触发（普通 close 或非 dev 源分支不触发，
+    # release 分支自身创建的 PR 亦不触发，避免循环）
     if: github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.ref == 'dev'
     runs-on: ubuntu-latest
     permissions:
-      contents: write   # 推送版本号变更到 main 分支
+      contents: write        # 推送 release 分支、合并 PR、删除临时分支
+      pull-requests: write   # 创建发版 PR
     steps:
       - name: 检出 main 分支
         uses: actions/checkout@v4
@@ -33,7 +36,12 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: 自动生成正式版本并推送 main
+      - name: 安装依赖（httpx，GitHub API 客户端）
+        run: pip install httpx
+
+      - name: 自动发版（release 分支 PR 合入 main）
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
         run: python scripts/release_after_merge.py --pr-title "$PR_TITLE"

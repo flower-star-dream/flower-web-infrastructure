@@ -18,6 +18,7 @@ from web_infra.db.sqlite_session import SqliteSession
 from web_infra.db.sqlite_session_factory import SqliteSessionFactory
 from web_infra.db.database_session_interface import DatabaseSessionInterface
 from web_infra.db.database_factory_interface import DatabaseFactoryInterface
+from web_infra.db.database_registry import DatabaseRegistry
 from web_infra.db.mysql_connection_settings import MySQLConnectionSettings
 from web_infra.db.session_utils import (
     connection_released,
@@ -78,6 +79,7 @@ __all__ = [
     # 通用数据库交互接口（SPI）
     "DatabaseSessionInterface",
     "DatabaseFactoryInterface",
+    "DatabaseRegistry",
     "SessionScopeMixin",
     "provide_db_session",
     # MySQL 连接配置（仅依赖核心 pydantic，可安全导入 *）
