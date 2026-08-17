@@ -4,15 +4,17 @@
 @Date: 2026/08/17 22:00
 @Description: 覆盖 scripts/release_after_merge.py 的正式版本计算规则（dev→main 合入发版）、
               git remote 解析、check runs 评估、GitHub API 客户端（httpx MockTransport）
-              与等待检查轮询逻辑。
+              与等待检查轮询逻辑；API 错误路径验证响应体打印与 403（GITHUB_TOKEN 场景）提示。
 """
 
 from __future__ import annotations
 
+import json
 import sys
 import time
 from pathlib import Path
 
+import httpx
 import pytest
 from httpx import MockTransport, Request, Response
 
@@ -148,6 +150,12 @@ class TestGitHubApi:
         def handler(request: Request) -> Response:
             path = request.url.path
             if path.endswith("/pulls") and request.method == "POST":
+                head = json.loads(request.content)["head"]
+                if head == "release/v0.4.0":
+                    # 403：pull_request 事件下用 GITHUB_TOKEN 创建 PR 的典型拒绝
+                    return Response(403, json={"message": "Resource not accessible by integration"})
+                if head == "release/v0.5.0":
+                    return Response(422, json={"message": "Validation Failed", "errors": [{"field": "head"}]})
                 return Response(201, json={"number": 42})
             if path.endswith("/commits/abc123/check-runs") and request.method == "GET":
                 return Response(200, json={"check_runs": [{"name": "CI", "status": "completed", "conclusion": "success"}]})
@@ -155,6 +163,8 @@ class TestGitHubApi:
                 return Response(200, json={"merged": True})
             if path.endswith("/git/refs/heads/release/v0.2.0") and request.method == "DELETE":
                 return Response(204)
+            if path.endswith("/git/refs/heads/release/v0.6.0") and request.method == "DELETE":
+                return Response(500, json={"message": "Internal Server Error"})
             if path.endswith("/pulls/99/merge") and request.method == "PUT":
                 return Response(405, json={"message": "Pull request is not mergeable"})
             return Response(404)
@@ -166,6 +176,19 @@ class TestGitHubApi:
 
     def test_create_pull(self) -> None:
         assert self._api().create_pull("chore(release): 发布正式版 v0.2.0", "release/v0.2.0", "main", "自动发版") == 42
+
+    def test_create_pull_403_raises_with_hint(self) -> None:
+        # 403 应附带 RELEASE_TOKEN / GITHUB_TOKEN 限制提示，便于 CI 排障
+        with pytest.raises(httpx.HTTPStatusError) as exc:
+            self._api().create_pull("chore(release): 发布正式版 v0.4.0", "release/v0.4.0", "main", "自动发版")
+        assert "403" in str(exc.value)
+        assert "RELEASE_TOKEN" in str(exc.value)
+
+    def test_create_pull_error_includes_body(self) -> None:
+        # 非 403 错误也应携带响应体正文（422 Validation Failed）
+        with pytest.raises(httpx.HTTPStatusError) as exc:
+            self._api().create_pull("chore(release): 发布正式版 v0.5.0", "release/v0.5.0", "main", "自动发版")
+        assert "Validation Failed" in str(exc.value)
 
     def test_list_check_runs(self) -> None:
         runs = self._api().list_check_runs("abc123")
@@ -180,6 +203,12 @@ class TestGitHubApi:
 
     def test_delete_branch(self) -> None:
         self._api().delete_branch("release/v0.2.0")
+
+    def test_delete_branch_error_includes_body(self) -> None:
+        # 500 错误应携带响应体正文，便于排障
+        with pytest.raises(httpx.HTTPStatusError) as exc:
+            self._api().delete_branch("release/v0.6.0")
+        assert "Internal Server Error" in str(exc.value)
 
 
 class TestWaitForChecks:

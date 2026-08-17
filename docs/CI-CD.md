@@ -137,6 +137,7 @@ docker rm -f web-infra-smoke
 - **pyright 报新增错误**：不阻塞流水线，但应在本地修复（`pyright` 输出定位），保持新增代码 0 错误。
 - **GHCR 推送失败（403 / denied）**：确认 `build-image` Job 的 `permissions.packages: write` 已声明；首次推送时需在 GitHub Settings → Packages 中授权该镜像包（Package visibility 至少设为 private，并为本组织成员配置读权限）。
 - **keyless 签名失败（OIDC token / 5xx）**：确认 `build-image` Job 的 `permissions.id-token: write` 已声明；签名需要访问 `token.actions.githubusercontent.com` 与 Rekor 日志服务，自托管 runner / 受限网络需放行这两个域名。
+- **自动发版失败（创建 PR 403 Forbidden）**：release workflow 创建发版 PR 被 403 拒绝（`Resource not accessible by integration`）。根因：流程使用了默认 `GITHUB_TOKEN`——`pull_request` 事件下用其创建 PR 常被 403，且其创建的 PR 不会触发 CI（`wait_for_checks` 必超时）。修复：在仓库 Secrets 配置 `RELEASE_PAT`（经典 PAT，勾选 `repo` scope），workflow 已改为 checkout 与脚本均使用该 PAT。
 
 ## 8. 仓库配置（Settings / Secrets）
 
@@ -146,6 +147,7 @@ docker rm -f web-infra-smoke
 | ---- | ---- | ---- | ---- | ---- |
 | 镜像包可见性与权限 | 包设置 | 本仓库 Settings → Packages → flower-web-infrastructure | 首次推送后配置 | 首次 CI 推送成功后在 GitHub 生成镜像包，设置可见性（public/private）与成员读权限。**私有包拉取方**（如脚手架仓库 CI、部署环境）需在包设置中授权读权限 |
 | `GITHUB_TOKEN` | 自动注入 | 无需配置 | — | GHCR 登录与推送凭据（`packages: write` 已在 ci.yml 声明） |
+| `RELEASE_PAT` | 仓库 Secret | Settings → Secrets and variables → Actions | **发版必需** | 自动发版（release.yml）专用经典 PAT，勾选 `repo` scope（contents + pull_requests 写权限）。**不能用默认 GITHUB_TOKEN**：GitHub 规定其创建 PR / 推送不触发新的 workflow run（发版 PR 无法触发 CI），且 `pull_request` 事件下创建 PR 常被 403 拒绝。配置步骤见 §13.1.1（README） |
 | OIDC 身份（keyless 签名） | 自动注入 | 无需配置 | — | `id-token: write` 权限已在 ci.yml 声明，cosign 自动获取 Actions OIDC token 签名 |
 
 **镜像签名与校验**（规范 §20.4）：

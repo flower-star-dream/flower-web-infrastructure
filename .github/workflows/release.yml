@@ -7,6 +7,15 @@
 #               （推送 release/vX.Y.Z → 创建 PR 触发 CI → 检查通过后自动合并 → 清理分支），
 #               使自动发版提交在推送 main 前已跑过 CI，规避 main 分支保护的推送检查限制。
 #               仅更新版本号，不打 tag（正式镜像发布仍由手动 v* tag 触发，见 ci.yml）。
+#
+# Token 要求：必须使用【仓库 Secret RELEASE_PAT】（经典 PAT，勾选 repo scope，覆盖
+#   contents + pull_requests 写权限），不能只用默认 GITHUB_TOKEN：
+#   - GitHub 规定用 GITHUB_TOKEN 创建 PR / 推送不会触发新的 workflow run，
+#     发版 PR 将无法触发 CI（wait_for_checks 必然超时）；
+#   - pull_request 事件下用 GITHUB_TOKEN 创建 PR 常被 403（Resource not accessible
+#     by integration）。
+#   checkout 用该 PAT 使 git push（脚本第 2 步）也走 PAT；脚本第 3~5 步（创建/合并 PR、
+#   清理分支）读 RELEASE_TOKEN 环境变量。
 # =====================================================================
 name: release
 
@@ -25,11 +34,12 @@ jobs:
       contents: write        # 推送 release 分支、合并 PR、删除临时分支
       pull-requests: write   # 创建发版 PR
     steps:
-      - name: 检出 main 分支
+      - name: 检出 main 分支（使用 RELEASE_PAT，使后续 git push 走 PAT）
         uses: actions/checkout@v4
         with:
           ref: main
           fetch-depth: 0
+          token: ${{ secrets.RELEASE_PAT }}
 
       - name: 安装 Python 3.11
         uses: actions/setup-python@v5
@@ -42,6 +52,6 @@ jobs:
       - name: 自动发版（release 分支 PR 合入 main）
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TOKEN: ${{ secrets.RELEASE_PAT }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: python scripts/release_after_merge.py --pr-title "$PR_TITLE"
