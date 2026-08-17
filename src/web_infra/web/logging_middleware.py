@@ -13,8 +13,9 @@ import uuid
 
 from fastapi import FastAPI, Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
+from starlette.types import ASGIApp
 
-from web_infra.constants import AUTH_HEADER_TRACE_ID
+from web_infra.constants import AUTH_HEADER_TRACE_ID, HttpStatusConstant
 from web_infra.constants.sys_constant import SysConstant
 from web_infra.context import RequestContext
 from web_infra.logging import get_logger
@@ -78,7 +79,7 @@ def _record_slow_sample(
 class LoggingMiddleware(BaseHTTPMiddleware):
     """FastAPI 访问日志中间件"""
 
-    def __init__(self, app: FastAPI, service_name: str = "app") -> None:
+    def __init__(self, app: ASGIApp, service_name: str = "app") -> None:
         super().__init__(app)
         self.logger = get_logger(f"{service_name}.access")
         self.service_name = service_name
@@ -129,7 +130,13 @@ class LoggingMiddleware(BaseHTTPMiddleware):
                 )
 
             user_id = RequestContext.get_user_id()
-            log_level = "error" if status_code >= 500 else "warning" if status_code >= 400 or duration_ms > SysConstant.SYS_SLOW_REQUEST_THRESHOLD_MS else "info"
+            log_level = (
+                "error"
+                if status_code >= HttpStatusConstant.HTTP_SERVER_ERROR_MIN
+                else "warning"
+                if status_code >= HttpStatusConstant.HTTP_CLIENT_ERROR_MIN or duration_ms > SysConstant.SYS_SLOW_REQUEST_THRESHOLD_MS
+                else "info"
+            )
             phase_fields = " ".join(f"{k}={v}" for k, v in phase_timer.to_log_fields().items())
             getattr(self.logger, log_level)(
                 "request_out trace_id=%s method=%s path=%s status=%s duration_ms=%.3f user_id=%s %s",

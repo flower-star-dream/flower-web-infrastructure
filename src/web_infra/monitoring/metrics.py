@@ -15,6 +15,8 @@ from typing import Any
 
 from prometheus_client import Counter, Gauge, Histogram
 
+from web_infra.constants import HttpStatusConstant
+
 _service_name = "unknown"
 
 
@@ -65,8 +67,8 @@ _SLOW_SQL_CACHE_LOCK = Lock()
 def record_http_request(method: str, path: str, duration_seconds: float, status_code: int, is_error: bool = False, service: str | None = None) -> None:
     """记录一条 HTTP 请求的 RED 指标"""
     service = service or _service()
-    if status_code >= 500 or is_error:
-        status_class = "5xx" if status_code >= 500 else "error"
+    if status_code >= HttpStatusConstant.HTTP_SERVER_ERROR_MIN or is_error:
+        status_class = "5xx" if status_code >= HttpStatusConstant.HTTP_SERVER_ERROR_MIN else "error"
         HTTP_REQUEST_ERRORS_TOTAL.labels(service, method, path).inc()
     else:
         status_class = str(status_code)

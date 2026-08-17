@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from web_infra.error import BizException, CommonErrorCode
+from web_infra.error import CommonErrorCode
 
 
 class ConcurrencyGuard:
@@ -49,7 +49,7 @@ class ConcurrencyGuard:
                     self._queue_slots.release()
                 raise
         except asyncio.TimeoutError:
-            raise BizException(CommonErrorCode.RATE_LIMITED, message="模型调用并发超限，请稍后重试")
+            raise CommonErrorCode.RATE_LIMITED.to_exception(message="模型调用并发超限，请稍后重试")
 
     def release(self) -> None:
         """释放执行槽与排队槽"""

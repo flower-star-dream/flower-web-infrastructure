@@ -11,7 +11,6 @@ from typing import ClassVar
 
 from web_infra.ai.model_provider_interface import ModelProviderInterface
 from web_infra.error.ai_error_code import AiErrorCode
-from web_infra.error.biz_exception import BizException
 
 
 class ModelProviderRegistry:
@@ -30,7 +29,7 @@ class ModelProviderRegistry:
         """按逻辑名获取供应商；未配置时快速失败并抛出 E4-AI-001（AI 规范 §2.1）"""
         provider = cls._providers.get(name)
         if provider is None:
-            raise BizException(AiErrorCode.AI_NOT_CONFIGURED, message=f"模型供应商未配置：{name}")
+            raise AiErrorCode.AI_NOT_CONFIGURED.to_exception(message=f"模型供应商未配置：{name}")
         return provider
 
     @classmethod

@@ -62,8 +62,8 @@ flower web 通用框架是一套**配置驱动**的后端基础设施库，面�
 | 对象存储        | `ObjectStorage` 抽象 + 本地 / MinIO 实现，分片上传/断点续传                                                                                                                               |
 | 服务注册发现    | `ServiceRegistry` 抽象 + 内存 / Nacos 实现，负载均衡与 Feign 调用                                                                                                                         |
 | 韧性设计        | 重试（指数退避）、熔断、令牌桶限流、Redis 分布式锁                                                                                                                                          |
-| 认证与安全      | JWT 签发校验/登出、密码加密、图形验证码、登录防爆破锁定                                                                                                                                     |
-| 统一鉴权中间件  | 统一入口 Bearer 校验 + 白名单 + 上下文注入，RBAC 声明式权限守卫                                                                                                                             |
+| 认证与安全      | JWT 签发校验/登出、密码加密、图形验证码、登录防爆破锁定（**认证/鉴权能力依赖用户系统（业务实现），默认关闭**，见 [6 配置说明](#6-配置说明)） |
+| 统一鉴权中间件  | 统一入口 Bearer 校验 + 白名单 + 上下文注入，RBAC 声明式权限守卫（默认关闭，需显式启用） |
 | API 幂等键      | 写接口幂等键占用 + 结果缓存（内存/Redis），重复请求返回首次结果                                                                                                                             |
 | OAuth2          | 客户端注册 SPI + 令牌签发/校验/撤销（client_credentials 最小实现）                                                                                                                          |
 | AI 供应商抽象   | Provider SPI + 统一出入参 + 模型配置管理                                                                                                                                                    |
@@ -78,7 +78,9 @@ flower web 通用框架是一套**配置驱动**的后端基础设施库，面�
 | 多租户          | 租户上下文校验 + 缓存 Key 租户维度 + SQLAlchemy 条件自动注入 + 多数据源动态路由                                                                                                             |
 | 分片上传        | 初始化/逐片/断点续传/合并校验（MD5+大小），本地 + MinIO 双实现                                                                                                                              |
 | 健康检查/指标   | `/health`（组件连通性探测）+ `/metrics`（Prometheus 文本 + 浏览器 HTML 可视化；连接池/运行时/线程池/缓存/存储/消息队列/注册中心组件指标，按组件启用配置动态采集与展示，自定义分组 SPI） |
-| 通用工具        | 雪花 ID、日期、文件锁、数学、Token 精确计数、PDF 渲染                                                                                                                                       |
+| 支付能力        | 渠道 SPI + 骨架兜底（下单幂等/关单确认/回调校验/流水落库）+ 微信渠道 + 超时关单 + 对账/冲正 + 风控限额 + 审计/权限点；**可选能力**：不随顶层导出，依赖 鉴权→认证→用户系统（业务实现），按需主动引入（见 [7.12 支付](#712-支付) / [docs/使用说明.md 4.2](./docs/使用说明.md#42-能力依赖与装配)） |
+| 能力注册表      | `CapabilityRegistry`：能力契约（SPI）+ 依赖包含规则 + 装配校验；依赖链 用户系统→认证→鉴权→支付，启用按包含关系自动带上前置（`app.capabilities.enabled` 声明，见 [docs/使用说明.md 4.2](./docs/使用说明.md#42-能力依赖与装配)） |
+| 通用工具        | 雪花 ID、日期、文件锁、数学、Token 精确计数、PDF 渲染                                                                                                                                    |
 
 ## 3. 技术栈
 
@@ -104,7 +106,7 @@ python -m venv .venv
 .venv\Scripts\activate
 ```
 
-**最小安装（推荐，仅核心依赖）**——Web / 配置 / 日志 / 错误码 / 认证 / 缓存（内存）/ 监控 / 密码加密，`import web_infra` 与 `create_app()` 开箱即用；**不含** MySQL/Redis/Mongo 数据访问（代码延迟导入）及 MinIO / Nacos / RocketMQ / Alembic / RAG / PDF 等可选组件。数据库与缓存扩展能力需按需安装 extras（见下方"按需追加可选能力"）：
+**最小安装（推荐，仅核心依赖）**——Web / 配置 / 日志 / 错误码 / 安全工具类（JWT、密码加密）/ 缓存（内存）/ 监控 / 韧性，`import web_infra` 与 `create_app()` 开箱即用；**不含** MySQL/Redis/Mongo 数据访问（代码延迟导入）及 MinIO / Nacos / RocketMQ / Alembic / RAG / PDF 等可选组件。数据库与缓存扩展能力需按需安装 extras（见下方"按需追加可选能力"）。**依赖链上的业务可选能力（用户系统 → 认证 → 鉴权 → 支付）默认全部关闭**（认证/鉴权与支付一样依赖用户系统，`app.capabilities.enabled` 默认空，见 [docs/使用说明.md](./docs/使用说明.md) 1.1/4.2 节）：
 
 ```bash
 pip install flower-web-infrastructure
@@ -151,7 +153,7 @@ pip install -e "f:\baseProject\flower-web-infrastructure[all]"
 推荐通过 `create_app` 启动项目，自动装配日志、中间件、异常处理与各组件：
 
 ```python
-from web_infra import create_app, Result, BizException, CommonErrorCode
+from web_infra import create_app, Result, CommonErrorCode
 
 # settings 参数为可选覆盖层（dict 优先级高于 YAML），配置主来源仍是 application.yml
 app = create_app({"app.name": "demo"})
@@ -159,7 +161,7 @@ app = create_app({"app.name": "demo"})
 @app.get("/v1/orders/{order_id}")
 def get_order(order_id: str):
     if order_id == "0":
-        raise BizException(CommonErrorCode.COMMON_NOT_FOUND)
+        raise CommonErrorCode.COMMON_NOT_FOUND.to_exception()
     return Result.success(data={"orderId": order_id})
 
 if __name__ == "__main__":
@@ -187,6 +189,8 @@ app:
   logging:
     level: INFO
     format: text
+  capabilities:           # 能力装配（可选能力依赖包含规则，默认空 = 业务可选能力链全部关闭）
+    enabled: []           # 如 [pay] 自动启用 鉴权(authz)→认证(authn)→用户系统(user)（业务实现由业务层提供）
   web:
     middlewares:            # 中间件声明式引入：列出即引入，enabled: false 显式关闭
       idempotency:
@@ -220,6 +224,7 @@ app:
 
 | 配置键                  | 可选值（默认加粗）          | 说明                                             |
 | ----------------------- | --------------------------- | ------------------------------------------------ |
+| `app.capabilities.enabled` | **[]** / 能力名列表    | 能力装配：声明启用的能力（user / authn / authz / pay 等），装配时按依赖包含规则校验并自动带上前置（未知能力/循环抛 ConfigError）；默认空 = 业务可选能力链全部关闭 |
 | `app.web.middlewares` | 声明式清单                  | trace_id 默认引入；auth / idempotency 需自行启用 |
 | `app.cache.type`      | **memory** / redis    | 缓存实现切换                                     |
 | `app.db.type`         | **mysql** / sqlite    | 数据库实现切换                                   |
@@ -239,14 +244,14 @@ app:
 ### 7.1 统一响应与业务异常
 
 ```python
-from web_infra import Result, PageResult, BizException, CommonErrorCode
+from web_infra import Result, PageResult, CommonErrorCode
 
 # 成功
 return Result.success(data={"orderId": "1001"})
 # 分页（data.list + data.total）
 return PageResult.success(records=[...], total=100)
-# 业务异常（全局异常处理自动转换为统一错误响应）
-raise BizException(CommonErrorCode.PARAM_INVALID, message="订单号不能为空")
+# 业务异常（统一抛出约定：错误码.to_exception()，全局异常处理自动转换为统一错误响应）
+raise CommonErrorCode.PARAM_INVALID.to_exception(message="订单号不能为空")
 ```
 
 ### 7.2 日志与请求上下文
@@ -465,7 +470,11 @@ DataPermissionGuard.check(owner_id=row.owner_id, required_owner_id=row.owner_id,
 
 ### 7.8 AI 模型网关
 
-模型无需代码手动注册：在 `application.yml` 的 `app.ai.models` 配置模型清单，应用启动时自动注册供应商并装配网关；默认支持 OpenAI 兼容协议（`/v1/chat/completions`），私有化/自建供应商经供应商 SPI 接入。
+模型无需代码手动注册：在 `application.yml` 的 `app.ai` 配置模型清单，应用启动时自动注册供应商并装配网关；默认支持 OpenAI 兼容协议（`/v1/chat/completions`），私有化/自建供应商经供应商 SPI 接入。
+
+模型配置来源两套方案（`app.ai.store.type`，默认 `yml`）：
+- `yml`：`app.ai.models` 清单在代码/配置中写死供应商与模型，启动即注册（下方示例）；
+- `db`：模型配置入库 `ai_model_config` 表（框架内置 `SqlAlchemyModelConfigStore`，基线 DDL/DML 见 `db/init/ddl/002` 与 `db/init/dml/002`），启动生命周期自动同步注册；`api_key` 列仅存 `env:VAR` 引用，真实密钥经环境变量/.env 注入（如 `LLM_API_KEY=sk-xxx`），禁止明文落盘。
 
 ```yaml
 app:
@@ -513,7 +522,7 @@ from web_infra import ModelProviderFactory
 ModelProviderFactory.register_factory("my-vendor", lambda config: MyVendorProvider(config))
 ```
 
-页面化模型配置：实现 `ModelConfigStoreInterface`（从数据库/配置中心加载），启动时自动同步至 SPI 注册表：
+页面化模型配置：框架内置数据库实现 `SqlAlchemyModelConfigStore`（`app.ai.store.type=db` 自动装配，启动同步 SPI 注册表，页面化新增/修改经 `upsert` 幂等落库）；也可自定义 `ModelConfigStoreInterface`（配置中心等），启动时手动同步：
 
 ```python
 async def startup():
@@ -555,6 +564,156 @@ done = await upload.list_uploaded_parts(task.upload_id)     # 断点续传：查
 object_key = await upload.complete(task.upload_id, expected_md5=md5)  # 合并校验后返回对象 Key
 ```
 
+### 7.11 状态机
+
+框架级通用状态机组件（`web_infra/state_machine/`）。引擎只做「流转合法性校验 + 事件分发」，不触碰持久层（持久化由路由处理器完成）。
+
+**声明状态与事件**：状态/事件为**任意 hashable 值**（不限枚举）；`BaseState`/`BaseEvent` 是推荐便捷基类
+（成员 value 即业务码，`description` 为中文名，`of(code)` 反查）：
+
+```python
+from web_infra import BaseState, BaseEvent
+
+class OrderStatus(BaseState):
+    PENDING_PAYMENT = (1, "待支付")
+    PAID = (2, "已支付")
+    CANCELLED = (3, "已取消")
+
+class OrderEvent(BaseEvent):
+    PAY = (1, "支付")
+    CANCEL = (2, "取消")
+```
+
+**声明流转路由**：两张声明表——合法流转（仅做合法性校验，不强制目标一致）+ 事件处理器
+（签名 `handler(current_state, params)`，同一事件可按当前状态分叉；持久化在此完成）：
+
+```python
+from web_infra import StateRouter, StateMachineRegistry, StateRouteParams
+
+@StateMachineRegistry.register
+class OrderStateRouter(StateRouter[OrderStatus, OrderEvent, OrderEO]):
+    def get_state_event_target_config(self):
+        return {
+            OrderStatus.PENDING_PAYMENT: {OrderEvent.PAY: OrderStatus.PAID,
+                                          OrderEvent.CANCEL: OrderStatus.CANCELLED},
+        }
+
+    def get_event_dispatcher(self):
+        return {OrderEvent.PAY: self._pay, OrderEvent.CANCEL: self._cancel}
+
+    def _pay(self, current_state, params):
+        order = params.get_param("order")
+        order.status = OrderStatus.PAID
+        self.session.add(order)
+        return OrderStatus.PAID
+```
+
+**触发流转**：非法流转 / 空状态 / 空参数抛 `E4-STATE-000~004` 业务异常：
+
+```python
+fsm = StateMachineRegistry.get(OrderStatus, OrderEvent, OrderEO)
+new_status = fsm.fire(order.status, OrderEvent.PAY, StateRouteParams.create().add_param("order", order))
+# 异步处理器：await fsm.fire_async(...)
+```
+
+**扩展/无限状态场景**：状态值不限于枚举。重试/累加类「无限状态」可用组合值表达，迁移表可程序化生成：
+
+```python
+class RetryRouter(StateRouter[tuple, str, OrderEO]):
+    def get_state_event_target_config(self):
+        return {(f"RETRYING_{n}"): {"RETRY": f"RETRYING_{n + 1}"} for n in range(3)}
+
+    def get_event_dispatcher(self):
+        return {"RETRY": lambda current_state, params: f"RETRYING_{int(current_state.split('_')[1]) + 1}"}
+```
+
+真正的「无界状态流/工作流」不属于本组件范畴，应使用工作流/任务编排引擎。
+
+**引擎 SPI（可替换为第三方状态机库）**：`StateMachineEngine` 为引擎契约（`fire`/`fire_async`），
+默认实现为自研 `StateMachine`。如需基于其他成熟状态机库（如 transitions）实现，可自定义引擎并注册替换
+（须在 `get` 之前）：
+
+```python
+from web_infra import StateMachineEngine, StateMachineRegistry
+
+class TransitionsEngine(StateMachineEngine[OrderStatus, OrderEvent]):
+    def fire(self, current_state, event, params=None):
+        ...  # 适配第三方库逻辑
+    async def fire_async(self, current_state, event, params=None):
+        ...  # 适配第三方库逻辑
+
+StateMachineRegistry.register_engine_factory(OrderStatus, OrderEvent, OrderEO, TransitionsEngine)
+```
+
+**并发模型与线程安全**：引擎层无状态（`fire` 只读声明表、不修改共享状态），多线程/多协程并发调用安全；
+`StateMachineRegistry` 为**进程内单例**，注册/获取的 check-then-act 由类级锁保护（并发首次 `get` 只构建一次、
+并发注册仅一个成功），但**建议注册集中在启动期完成**、运行期只读 `get`。跨进程/多实例并发流转同一实体的
+互斥由乐观锁或分布式锁负责（见下）。
+
+**并发与事务约定**：引擎只计算状态、不写库。多实例并发触发同一实体流转（如支付成功 + 超时取消同时发生）
+会状态错乱，**并发控制由调用方负责**：优先用数据库乐观锁（version 字段 CAS 更新，写入失败则本次流转失败重试），
+或使用框架 `DistributedLock` 包住 fire。事务边界在路由处理器内用框架 `provide_db_session` 自行管理，引擎不介入。
+
+**开箱即用**：启用/禁用互转无需声明，直接使用 `BaseStatus` / `StartStopEvent` / `BaseStatusRouter`
+（状态翻转后自行落库）。
+
+### 7.12 支付
+
+支付模块（`web_infra/payment`）按《Web 系统通用架构规范 · 支付扩展 v1.0》实现渠道接入与资金兜底。
+
+> **可选能力**：支付不随 `web_infra` 顶层导出（`import web_infra` 不加载支付模块、不注册支付错误码），需显式
+> `from web_infra.payment import ...` 或经 `app.capabilities.enabled: [pay]` 主动引入；依赖链
+> 支付 → 鉴权 → 认证 → 用户系统（业务实现），启用按包含关系自动带上前置，见 [docs/使用说明.md 4.2](./docs/使用说明.md#42-能力依赖与装配)。
+
+**装配渠道（内存演示，注入骨架存储即获全套兜底）**：
+
+```python
+from web_infra.payment import (
+    InMemoryPaymentFlowStore, InMemoryPaymentOrderStore,
+    InMemoryPaymentGateway, PaymentGatewayRegistry,
+)
+
+gateway = InMemoryPaymentGateway(
+    flow_store=InMemoryPaymentFlowStore(),   # 支付流水本地事务表（§5.2）
+    order_store=InMemoryPaymentOrderStore(), # 本地支付订单（§4.2/§5.5）
+)
+PaymentGatewayRegistry.register("memory", gateway)  # 生产替换为 WeChatPayProvider 并注入 WechatPayConfig
+```
+
+**下单 / 回调校验（骨架自动完成：下单幂等 / 金额 / attach / 状态机 / 流水落库）**：
+
+```python
+from web_infra.payment import PaymentPrepayRequest, PaymentScene
+from decimal import Decimal
+
+resp = await gateway.prepay(PaymentPrepayRequest(
+    scene=PaymentScene.APP, out_trade_no="T20260817001",
+    description="测试订单", total_amount=Decimal("99.50"),
+))
+# 回调入口（渠道验签后）：await gateway.validate_callback(callback) 通过后再分发业务处理器
+```
+
+**对账 / 冲正 / 风控 / 审计（框架 SPI + 内存默认实现）**：
+
+```python
+from web_infra.payment import (
+    ReconciliationService, InMemoryReconciliationAuditStore,
+    PaymentRiskGuard, InMemoryLimitCounterStore, LimitRule,
+)
+
+service = ReconciliationService(flow_store, InMemoryReconciliationAuditStore(),
+                                query_order=gateway.query_order)   # T+1 对账：差异分类 + 查单补记/冲正
+guard = PaymentRiskGuard(InMemoryLimitCounterStore())             # 下单前风控：限额/频次/可疑拆分
+await guard.check_prepay(user_id=1, channel="memory", amount=Decimal("99.50"),
+                         rule=LimitRule(per_transaction=Decimal("5000")))
+```
+
+**能力速查**：渠道骨架（`PaymentChannelTemplate`）、状态机（`PaymentStateMachine`）、超时关单
+（`close_expired_orders`）、冲正（`reversal_flow`）、账单文件（`BillFileManager`）、审计
+（`PaymentAuditStore`）、权限点（`PaymentPermission`）、契约测试（`payment/testing`）。
+
+**文档**：[订单兜底策略](./docs/订单兜底策略.md) / [SPI-Extensions §15](./docs/SPI-Extensions.md#15-支付模块payment)
+
 ## 8. 项目结构
 
 数据库脚本（DDL/DML）按规范 §13.2 存放于项目根 `db/` 目录（与代码一同纳入版本控制）：基线脚本 `db/init/ddl|dml/`（命名 `序号-模块-init-ddl/dml.sql`，如 `001-mq-init-ddl.sql`），增量脚本 `db/versions/`（命名 `V{版本号}-模块-{变更描述}-ddl/dml.sql`）。
@@ -594,6 +753,7 @@ src/web_infra/
 ├── error/              # 错误码 + 异常 + 全局异常处理
 ├── constants/          # 常量分类（Auth/Infra/Param/Sys/Biz + CacheKey + MQ）
 ├── config/             # YAML 配置读取（ConfigSource / Settings / Nacos 配置中心 / ConfigCipher 加密值）
+├── capability/         # 能力注册表（能力契约 SPI + 依赖包含规则 + 装配校验：用户系统→认证→鉴权→支付）
 ├── context/            # 请求上下文（contextvars）
 ├── logging/            # 日志（统一格式 / TraceId / 脱敏）
 ├── resilience/         # 韧性设计（重试 / 熔断 / 限流 / 分布式锁）
@@ -601,6 +761,7 @@ src/web_infra/
 ├── db/                 # 数据库接口 + MySQL/MongoDB/Redis/SQLite + 多租户拦截
 ├── mq/                 # 消息队列抽象 + 幂等消费 + Outbox 本地事务表
 ├── storage/            # 对象存储抽象 + 分片上传（本地/MinIO）
+├── payment/            # 支付 SPI（渠道抽象/回调验签/骨架兜底/对账/冲正/风控；可选能力，依赖 鉴权→认证→用户）
 ├── schedule/           # 定时任务调度（asyncio + 可选分布式锁）
 ├── registry/           # 服务注册发现 SPI（内存/Nacos）
 ├── loadbalance/        # 负载均衡 SPI（随机/轮询/平滑加权）
@@ -686,7 +847,7 @@ GitHub Actions 工作流位于 `.github/workflows/ci.yml`，推送 `main` / `dev
 | [使用说明](./docs/使用说明.md)              | 业务项目接入指南：最小/全量/按需安装、快速开始、配置说明、能力与依赖对照表                                  |
 | [CI/CD 文档](./docs/CI-CD.md)              | CI 流水线触发时机、门禁策略、镜像推送开启方式、本地复现                                                    |
 | [SPI 扩展点文档](./docs/SPI-Extensions.md) | 框架预留的全部 SPI 扩展点：接口清单、方法契约、默认实现与扩展接入方式（自定义供应商/存储/缓存/消息队列等） |
-| [规范符合性审查报告](./docs/规范符合性审查报告.md) | 对照通用架构规范 v1.2 + 多租户/AI 扩展的逐章审查结果与整改清单                                     |
+| [常量与错误码](./docs/常量与错误码.md) | **框架常量与错误码的单一权威清单**：全部常量（含 HTTP 状态码 `HttpStatusConstant`）与错误码总览，业务新增/引用前先查阅本文档，防止冲突或重复定义 |
 
 ## 13. 版本与兼容性
 

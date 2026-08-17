@@ -34,6 +34,10 @@ class CommonErrorCode:
     AUTH_REFRESH_REQUIRED: ErrorCode = CommonErrorCodeEnum.AUTH_REFRESH_REQUIRED.value
     AUTH_KICKED: ErrorCode = CommonErrorCodeEnum.AUTH_KICKED.value
     PERM_DENIED: ErrorCode = CommonErrorCodeEnum.PERM_DENIED.value
+    AUTH_SOCIAL_PLATFORM_NOT_CONFIGURED: ErrorCode = CommonErrorCodeEnum.AUTH_SOCIAL_PLATFORM_NOT_CONFIGURED.value
+    AUTH_SOCIAL_TOKEN_FAILED: ErrorCode = CommonErrorCodeEnum.AUTH_SOCIAL_TOKEN_FAILED.value
+    AUTH_SOCIAL_NOT_BOUND: ErrorCode = CommonErrorCodeEnum.AUTH_SOCIAL_NOT_BOUND.value
+    AUTH_SOCIAL_ALREADY_BOUND: ErrorCode = CommonErrorCodeEnum.AUTH_SOCIAL_ALREADY_BOUND.value
 
     COMMON_NOT_FOUND: ErrorCode = CommonErrorCodeEnum.COMMON_NOT_FOUND.value
     COMMON_CONFLICT: ErrorCode = CommonErrorCodeEnum.COMMON_CONFLICT.value

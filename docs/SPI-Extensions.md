@@ -49,6 +49,10 @@
   - [10.3 ThreadPoolMetrics —— 线程池指标注册表（SPI 风格）](#103-threadpoolmetrics--线程池指标注册表spi-风格)
 - [11. 安全模块（security）](#11-安全模块security)
   - [11.1 CaptchaStoreInterface —— 验证码存储接口](#111-captchastoreinterface--验证码存储接口)
+  - [11.2 SocialPlatform —— 三方平台适配接口](#112-socialplatform--三方平台适配接口)
+  - [11.3 SocialBindingStore —— 三方账号绑定存储接口](#113-socialbindingstore--三方账号绑定存储接口)
+  - [11.4 JwtTokenStore —— JWT Token 状态存储接口](#114-jwttokenstore--jwt-token-状态存储接口)
+  - [11.5 JwtKeyProvider —— JWT 签名密钥/算法接口](#115-jwtkeyprovider--jwt-签名密钥算法接口)
 - [12. 存储模块（storage）](#12-存储模块storage)
   - [12.1 ObjectStorageInterface —— 对象存储统一抽象接口](#121-objectstorageinterface--对象存储统一抽象接口)
   - [12.2 PartStorageInterface —— 分片存储接口](#122-partstorageinterface--分片存储接口)
@@ -57,13 +61,20 @@
   - [13.1 TaskRecordStoreInterface —— 任务记录存储接口](#131-taskrecordstoreinterface--任务记录存储接口)
 - [14. Web 模块（web）](#14-web-模块web)
   - [14.1 IdempotencyStoreInterface —— API 幂等键存储接口](#141-idempotencystoreinterface--api-幂等键存储接口)
-- [15. 扩展接入指引](#15-扩展接入指引)
-  - [15.1 接入步骤](#151-接入步骤)
-  - [15.2 自定义模型供应商示例（参照 `OpenAICompatibleProvider`）](#152-自定义模型供应商示例参照-openaicompatibleprovider)
-  - [15.3 自定义对象存储实现示例（参照 `MinioStorage`）](#153-自定义对象存储实现示例参照-miniostorage)
-  - [15.4 自定义指标分组示例（参照 `metric_group_provider_interface.py`）](#154-自定义指标分组示例参照-metricgroupproviderinterfacepy)
-  - [15.5 常见替换对照](#155-常见替换对照)
-- [16. 维护指南](#16-维护指南)
+- [15. 支付模块（payment）](#15-支付模块payment)
+- [16. 扩展接入指引](#16-扩展接入指引)
+  - [16.1 接入步骤](#161-接入步骤)
+  - [16.2 三方平台接入步骤（参照 `DemoSocialPlatform`）](#162-三方平台接入步骤参照-demosocialplatform)
+  - [16.3 自定义模型供应商示例（参照 `OpenAICompatibleProvider`）](#163-自定义模型供应商示例参照-openaicompatibleprovider)
+  - [16.4 自定义对象存储实现示例（参照 `MinioStorage`）](#164-自定义对象存储实现示例参照-miniostorage)
+  - [16.5 自定义指标分组示例（参照 `metric_group_provider_interface.py`）](#165-自定义指标分组示例参照-metricgroupproviderinterfacepy)
+  - [16.6 常见替换对照](#166-常见替换对照)
+- [17. 能力注册表（capability）](#17-能力注册表capability)
+  - [17.1 能力契约与内置依赖图](#171-能力契约与内置依赖图)
+  - [17.2 依赖解析（resolve）与装配校验（validate）](#172-依赖解析resolve与装配校验validate)
+  - [17.3 启用能力（enable / app.capabilities.enabled）](#173-启用能力enable--appcapabilitiesenabled)
+  - [17.4 业务扩展自定义能力](#174-业务扩展自定义能力)
+- [18. 维护指南](#18-维护指南)
 
 ## 1. SPI 机制概述
 
@@ -97,7 +108,7 @@
 | registry | `ServiceRegistryInterface` | Protocol | `InMemoryServiceRegistry` | Nacos/Eureka/Consul |
 | loadbalance | `LoadBalancerInterface` | ABC | `RandomBalancer` / `RoundRobinBalancer` / `WeightedRoundRobinBalancer` | 自定义策略 |
 | ai | `ModelProviderInterface` | ABC | `OpenAICompatibleProvider` | Anthropic/DeepSeek 等 |
-| ai | `ModelConfigStoreInterface` | Protocol | `DictModelConfigStore` | 数据库/配置中心 |
+| ai | `ModelConfigStoreInterface` | Protocol | `DictModelConfigStore` / `SqlAlchemyModelConfigStore`（数据库 ai_model_config 表） | 配置中心 |
 | ai | `ContentGuardInterface` | ABC | `RuleBasedContentGuard` | 第三方审核服务 |
 | ai | `QuotaStoreInterface` | ABC | `InMemoryQuotaStore` | Redis（INCR + TTL 窗口） |
 | ai | `PromptTemplateStoreInterface` | ABC | `InMemoryPromptTemplateStore` | 数据库 prompt_templates 表 |
@@ -123,6 +134,13 @@
 | storage | `UploadStoreInterface` | Protocol | `InMemoryUploadStore` | Redis/MySQL |
 | task | `TaskRecordStoreInterface` | ABC | `InMemoryTaskRecordStore` | MySQL（乐观锁） |
 | web | `IdempotencyStoreInterface` | Protocol | `InMemoryIdempotencyStore` | Redis/DB |
+| security | `SocialPlatform` | Protocol | `DemoSocialPlatform` | 微信/GitHub/钉钉等 |
+| security | `SocialBindingStore` | Protocol | `InMemorySocialBindingStore` | Redis/MySQL |
+| security | `JwtTokenStore` | Protocol | `InMemoryJwtTokenStore` / `RedisJwtTokenStore` | 共享存储 |
+| security | `JwtKeyProvider` | Protocol | `EnvJwtKeyProvider` | RS256/KMS 托管 |
+| payment | `PaymentGateway` | Protocol | `InMemoryPaymentGateway` | 微信/支付宝等渠道 |
+| payment | `PaymentCallbackVerifier` | Protocol | `InMemoryPaymentCallbackVerifier` | 微信回调验签（平台证书/公钥） |
+| payment | `PaymentCallbackHandler` | ABC | 无（业务必选） | 支付/退款回调业务处理 |
 
 ## 3. 配置模块（config）
 
@@ -260,8 +278,12 @@
 | ---- | ---- |
 | `async load(model_code: str \| None = None) -> ModelConfig \| None` | 加载模型配置，未找到返回 None |
 | `async load_all() -> list[ModelConfig]` | 加载全部模型配置（页面化配置自动注册依据，规范 §17.4/§3.2） |
+| `async upsert(config: ModelConfig) -> ModelConfig` | 幂等写入（页面化配置落库入口，按 model_code 存在即更新、缺失即插入；非 SPI 必需，数据库实现提供） |
 
-- 默认实现：`DictModelConfigStore`（`dict_model_config_store.py`）。
+- 默认实现一：`DictModelConfigStore`（`dict_model_config_store.py`）——内存/yml 清单（`app.ai.models`，`app.ai.store.type=yml` 默认装配）。
+- 默认实现二：`SqlAlchemyModelConfigStore`（`sqlalchemy_model_config_store.py`）——数据库 `ai_model_config` 表（基线 DDL/DML 见 `db/init/ddl/002-ai-model-config-init-ddl.sql`、`db/init/dml/002-ai-model-config-init-dml.sql`），`app.ai.store.type=db` 装配，启动生命周期自动同步 SPI 注册表。
+  - 构造：接收 SQLAlchemy `async_sessionmaker[AsyncSession]` 会话工厂（复用 `app.db.type=mysql` 数据库组件的 `session_factory`）；非 MySQL 数据源时装配快速失败（`ConfigError`）。
+  - 密钥安全（AI 规范 §3.1/AI-7）：`api_key` 列仅存 `env:VAR` 环境变量引用（如 `env:LLM_API_KEY`），真实密钥由应用进程从环境变量/.env 注入，`ModelConfig.resolved_api_key` 运行时解析，禁止明文落盘。
 
 ### 7.3 ContentGuardInterface —— 内容安全审核接口
 
@@ -533,6 +555,71 @@
 
 - 默认实现：`InMemoryCaptchaStore`（`in_memory_captcha_store.py`）；多实例实现：`RedisCaptchaStore`（`redis_captcha_store.py`）。
 
+### 11.2 SocialPlatform —— 三方平台适配接口
+
+- 文件：`src/web_infra/security/social/social_platform_interface.py`
+- 定位：三方登录平台适配 SPI（规范 §6.8 认证域），业务实现具体平台（微信/GitHub/钉钉等）后注册进 `SocialPlatformRegistry`。
+- 类型：`Protocol`（`@runtime_checkable`）
+
+| 成员 | 说明 |
+| ---- | ---- |
+| `provider: str` | 平台标识（注册表键），如 wechat_open / github / demo |
+| `async build_authorize_url(state: str, redirect_uri: str) -> str` | 生成授权跳转 URL（state 由调用方生成用于防 CSRF） |
+| `async exchange_token(code: str, redirect_uri: str) -> SocialAccessToken` | 授权码换取平台 token |
+| `async fetch_userinfo(token: SocialAccessToken) -> SocialUserInfo` | 拉取三方用户信息（token 内含 access_token/openid/raw，供微信等需 openid 的接口使用） |
+
+- 默认实现：`DemoSocialPlatform`（`demo_social_platform.py`，模拟平台不触网，测试/演示/回落）。
+
+### 11.3 SocialBindingStore —— 三方账号绑定存储接口
+
+- 文件：`src/web_infra/security/social/social_binding_store.py`
+- 定位：三方账号 ↔ 本地用户绑定存储 SPI（唯一键 provider + openid，一用户可绑多平台多账号）。
+- 类型：`Protocol`（`@runtime_checkable`）；辅助结构 `SocialBinding(provider, openid, user_id, bound_at)`
+
+| 方法 | 说明 |
+| ---- | ---- |
+| `async find_by_platform(provider: str, openid: str) -> SocialBinding \| None` | 按平台 + openid 查绑定 |
+| `async find_all_by_user_id(user_id: str) -> list[SocialBinding]` | 查用户全部三方绑定 |
+| `async bind(binding: SocialBinding) -> None` | 绑定（provider+openid 唯一，已存在抛 COMMON_CONFLICT） |
+| `async unbind(provider: str, openid: str) -> bool` | 解绑，返回是否实际删除 |
+
+- 默认实现：`InMemorySocialBindingStore`（`in_memory_social_binding_store.py`，单实例）；多实例需业务扩展 Redis/DB 实现。
+- 并发（2026-08-16 加固）：内存实现 bind 的"检查-写入"由 RLock 原子化；`SocialLoginService.bind` 对并发竞态（检查与落库间另一请求已先行绑定）捕获 COMMON_CONFLICT 后重查，属主为当前用户则幂等返回，多实例下由 DB 唯一约束兜底。
+
+### 11.4 JwtTokenStore —— JWT Token 状态存储接口
+
+- 文件：`src/web_infra/security/jwt_token_store_interface.py`
+- 定位：JWT Token 状态存储 SPI（规范 §6.2 同设备凭证复用、§6.7 凭证撤销）。
+- 类型：`Protocol`（`@runtime_checkable`）
+
+| 方法 | 说明 |
+| ---- | ---- |
+| `async save(user_id, jti, ttl_seconds, client_id, device_id) -> str \| None` | 保存有效凭证；返回被同设备复用替换的旧 jti（无则 None） |
+| `async exists(user_id, jti) -> bool` | 查询凭证是否有效（撤销/过期/复用替换后 False） |
+| `async revoke(user_id, jti) -> bool` | 撤销凭证（登出） |
+| `async current_jti(user_id, client_id, device_id) -> str \| None` | 查询同设备当前有效 jti |
+
+- 默认实现：框架启用 Redis（`app.cache.type=redis`，Application 装配自动注入）时默认 `RedisJwtTokenStore`（分布式，Key 经 CacheKeyBuilder 生成）；未启用 Redis 回落 `InMemoryJwtTokenStore`（单实例）。
+- 注入：`JWTUtil.configure(token_store=..., key_provider=...)` 注入自定义实现（**优先级最高**，覆盖框架默认）；`JWTUtil.set_redis(redis)` 显式指定 Redis 客户端；均未注入时按"Redis 默认 → 内存回落"自动选择。
+- 并发/内存（2026-08-16 加固）：
+  - `JWTUtil` SPI 注入与懒初始化由类级锁保护（双重检查），多线程首次并发调用仅构建一个 store/key_provider，避免状态写入丢失。
+  - `InMemoryJwtTokenStore` 惰性清理过期条目（`exists`/`save` 时同步回收 `_states`/`_device_map`/`_user_jtis`），RLock 保护复合读写，防内存无界增长与跨线程状态丢失。
+  - 同设备当前 jti 查询：异步调用方推荐 `await JWTUtil.get_current_device_jti_async(...)`（无同步桥接的线程创建与事件循环绑定风险，Redis 状态存储场景必须使用）；同步兼容入口 `JWTUtil.get_current_device_jti(...)` 保留，仅适用于内存实现。
+
+### 11.5 JwtKeyProvider —— JWT 签名密钥/算法接口
+
+- 文件：`src/web_infra/security/jwt_key_provider_interface.py`
+- 定位：JWT 签名密钥与算法 SPI（规范 §6.1 单独密钥段防混用、S15-3 密钥轮换），开发者可替换为 RS256/KMS 托管等。
+- 类型：`Protocol`（`@runtime_checkable`）
+
+| 方法 | 说明 |
+| ---- | ---- |
+| `access_secret() -> str` | access token 签名密钥 |
+| `refresh_secret() -> str` | refresh token 单独密钥段（与 access 双向防混用） |
+| `algorithm() -> str` | 签名算法（如 HS256/RS256） |
+
+- 默认实现：`EnvJwtKeyProvider`（`env_jwt_key_provider.py`，环境变量密钥 + HS256）。
+
 ## 12. 存储模块（storage）
 
 ### 12.1 ObjectStorageInterface —— 对象存储统一抽象接口
@@ -620,16 +707,125 @@
 
 - 默认实现：`InMemoryIdempotencyStore`（`in_memory_idempotency_store.py`）；Redis 实现：`RedisIdempotencyStore`（`redis_idempotency_store.py`）。
 
-## 15. 扩展接入指引
+## 15. 支付模块（payment）
 
-### 15.1 接入步骤
+> **可选能力（2026-08-17）**：支付不随 `web_infra` 顶层导出，`import web_infra` 不加载支付模块/不注册支付错误码；
+> 需要支付的系统显式 `from web_infra.payment import ...` 主动引入（如 `from web_infra.payment import PaymentGateway`）。
+
+### 15.1 PaymentGateway —— 支付网关统一抽象接口
+
+- 文件：`src/web_infra/payment/payment_gateway_interface.py`
+- 定位：渠道统一抽象（下单/查单/关单/退款/查退款），业务代码只依赖本接口，金额统一 `Decimal`（元），渠道差异内部屏蔽。
+- 类型：`Protocol`（`@runtime_checkable`）
+
+| 方法 | 说明 |
+| ---- | ---- |
+| `async prepay(request: PaymentPrepayRequest) -> PaymentPrepayResponse` | 下单：按场景返回 prepay_id/调起参数/code_url/h5_url |
+| `async query_order(out_trade_no: str) -> PaymentOrder \| None` | 查单；不存在返回 None |
+| `async close_order(out_trade_no: str) -> None` | 关闭订单 |
+| `async refund(request: PaymentRefundRequest) -> PaymentRefundResponse` | 申请退款（out_refund_no 幂等） |
+| `async query_refund(out_refund_no: str) -> PaymentRefundResponse \| None` | 查退款；不存在返回 None |
+
+- 默认实现：`InMemoryPaymentGateway`（单机/测试）；微信渠道：`WeChatPayProvider`（`web_infra.payment.provider.wechat`）。
+- 注册：`PaymentGatewayRegistry.register(name, gateway)`。
+- 微信平台证书：`platform_cert` 模式下可开启 `cert_auto_download`（配置 `app.payment.wechat.cert_auto_download: true`），
+  应答验签遇未知证书序列号时自动调用 `GET /v3/certificates` 下载平台证书并缓存至 `platform_cert_dir`（默认关闭，首次可用
+  `WeChatPayClient.download_certificates()` 主动预热）。
+- 并发/性能（2026-08-16 加固）：证书落盘采用"临时文件 + `os.replace`"原子写，并发验签不会读到半截 PEM；证书/私钥文件读取对
+  并发清理与密钥轮换容错（缺失返回 None、mtime 变化自动重读）；商户私钥 PEM 与解析后的 RSA 密钥按内容进程内缓存，高频下单/验签避免重复读盘与重复解析。
+- 渠道调用失败兜底（2026-08-16 新增）：`WeChatPayClient` 对网络异常 / 微信 5xx / 429 按指数退避（含抖动）自动重试
+  （默认 `retries=2`，`WechatPayConfig.retries` 可调、`0` 关闭）；4xx 业务错误不重试，重试耗尽统一抛 `E3-PAY-000`（渠道可重试错误码）。
+  支付接口 `out_trade_no` / `out_refund_no` 天然幂等，重试安全；失败后建议调用 `query_order` 查单确认实际状态再决策。
+  下单为资金操作，`request(retryable=False)` 禁止盲目重试（规范 §7.2 红线），失败由业务先查单确认再决策。
+- 渠道骨架层（2026-08-16 新增，规范 §3.1/§3.2）：`PaymentChannelTemplate`（ABC）固化资金流程骨架，
+  `prepay/refund/close_order/handle_callback/validate_callback` 为 final 入口不可覆写，渠道实现方只填充必选抽象
+  `_do_prepay/_do_query_order/_do_close_order/_parse_callback`（漏实现无法实例化）与可选 `_do_refund/_do_query_refund`
+  （默认抛 `E4-PAY-008`）。骨架统一编排：下单幂等（§4.2）→ 渠道调用 → 三态收敛 → 流水落库（§5.2）；
+  关单前查单确认防已支付被关闭（§5.5）；回调金额/attach/状态机强校验（§4.3/§4.5）。
+  注入 `flow_store`（支付流水）与 `order_store`（本地支付订单）后兜底全量生效；未注入降级为纯渠道调用（兼容 SPI 直用）。
+  默认实现 `InMemoryPaymentGateway` 已骨架化（可注入存储，测试/单机即获全套兜底）；`WeChatPayProvider` 为微信骨架实现。
+- 契约测试与回调模拟器（2026-08-16 新增，规范 §3.3/§10.3）：`web_infra.payment.testing` 提供
+  `PaymentChannelContract`（9 个资金场景契约用例，任意骨架实现 run_all() 校验）与 `PaymentCallbackSimulator`
+  （支付/退款/金额不符/attach 不符回调报文构造，可注入签名钩子）。
+
+### 15.2 PaymentCallbackVerifier —— 支付回调验签解密接口
+
+- 文件：`src/web_infra/payment/payment_callback_verifier_interface.py`
+- 定位：解析渠道回调 headers+body 为统一回调结构；验签/解密失败返回 None（回调入口回 401，渠道自动重试）。
+- 类型：`Protocol`（`@runtime_checkable`）
+
+| 方法 | 说明 |
+| ---- | ---- |
+| `async parse(headers: Mapping[str, str], body: str) -> PaymentCallback \| None` | 验签+解密+解析；失败返回 None |
+
+- 默认实现：`InMemoryPaymentCallbackVerifier`（单机/测试）；微信渠道：`WeChatCallbackVerifier`（平台证书/微信支付公钥两种模式，AES-256-GCM 解密）。
+- 平台证书自动下载：构造时注入 `WeChatPayClient` 且开启 `cert_auto_download` 后，回调验签遇未知序列号自动下载平台证书并缓存。
+
+### 15.3 PaymentCallbackHandler —— 支付回调业务处理器接口
+
+- 文件：`src/web_infra/payment/payment_callback_handler_interface.py`
+- 定位：业务实现处理支付成功/退款结果回调；回调幂等由业务保证。
+- 类型：`ABC`（业务必选，无默认实现）
+
+| 方法 | 说明 |
+| ---- | ---- |
+| `async handle(callback: PaymentCallback) -> None` | 处理一条支付/退款回调 |
+
+- 装配：`PaymentCallbackDispatcher.register(handler)`；`dispatch` 顺序调用全部注册处理器，无处理器时静默兜底（日志告警）。
+
+### 15.4 对账机制（§6，2026-08-17 新增）
+
+- 文件：`src/web_infra/payment/reconciliation/`
+- 定位：对账是回调通道之外的第二道资金一致性防线（规范 §6）：渠道账单 vs 本地流水逐笔对齐。
+- 组件：
+  - `BillRecord`：渠道账单统一交易明细（订单号 + 事件类型 + 金额 + 状态，对齐 §2.2）。
+  - `ReconciliationService.reconcile(bill_records, local_flows, ...)`：对齐 → 差异分类（§6.3 五类 + 风险等级）→ 自动处理（§6.4：CHANNEL_ONLY 查单确认后补记、LOCAL_ONLY 查单确认未支付后冲正；金额/状态不一致强制人工 P0 告警，未确认不处理资金）。
+  - `ReconciliationAuditStore`（SPI + InMemory）：差异清单/处理动作只增不改（§6.6）。
+  - `run_reconciliation(...)`：T+1 对账任务函数（唯一标识 `pay:job:reconcile:{channel}:{biz_date}` + 分布式防重，§6.5），由业务注册到 `TaskScheduler`。
+  - `BillFileManager`：账单文件完整性校验（文件头/长度/校验和）+ 按账期组织 + 保留期 ≥ 90 天归档（§6.7）。
+- 生产化依赖：本地流水查询（MySQL 本地事务表）、账单下载/解析（渠道 API）、审计/账单对象存储由业务接入。
+
+### 15.5 冲正（§7.5，2026-08-17 新增）
+
+- 文件：`src/web_infra/payment/payment_reversal.py`
+- 定位：对"不应发生或状态未知"的本地记账做反向调整；只适用支付后阶段，必须基于渠道权威状态。
+- `reversal_flow(flow_store, original_flow, ...)`：新增反向冲正流水（不可删原流水，原流水自动标记 REVERSED）+ 幂等（原流水号 + REVERSAL 唯一）+ 禁止冲正冲正流水 + 冲正事件钩子（下游业务补偿，失败不阻塞冲正流水）。
+
+### 15.6 风控限额（§9，2026-08-17 新增）
+
+- 文件：`src/web_infra/payment/risk/`
+- 定位：资金流出/流入受限额与频次约束（工程可配置约束）。
+- 组件：`PaymentLimitConfig`（渠道 → `LimitRule` 配置化）、`LimitCounterStore`（Decimal 精确累计 + 原子，SPI + InMemory；生产 Redis 跨实例）、`PaymentRiskGuard.check_prepay(...)`（单笔/日/月限额 E4-PAY-005、频次 E4-PAY-006、可疑拆分 E4-PAY-007）。
+
+### 15.7 支付审计（§8.3，2026-08-17 新增）
+
+- 文件：`src/web_infra/payment/payment_audit_store.py`
+- 定位：支付全链路审计（下单/回调/入账/退款/冲正/对账差异），只增不改，成功与失败同样留痕，携带 TraceId/订单号/渠道交易号；渠道原始报文（raw）仅落审计不落业务日志（§8.6）。
+- 接入：`PaymentAuditStoreInterface`（SPI + InMemory）；渠道骨架 final 入口（prepay/refund/close_order/handle_callback）构造时注入 `audit_store` 即自动埋点（未注入默认关闭）。
+
+### 15.8 支付权限点（§8.4，2026-08-17 新增）
+
+- 文件：`src/web_infra/payment/payment_permission.py`
+- 定位：`PaymentPermission` 常量（`AUTH_PERM_` 前缀）：下单/查单/关单/退款/冲正/对账/账单管理分离；退款/冲正/人工补记属高风险操作（独立权限点 + 审批流 + 全量审计），由业务接入框架 RBAC/审批组件按权限点拦截。
+
+## 16. 扩展接入指引
+
+### 16.1 接入步骤
 
 1. 确定目标 SPI 接口（见第 2 节总览表），实现其全部抽象方法。
    - `Protocol` 类型：结构子类型，类无需继承接口，方法签名匹配即可；`ABC` 类型：继承接口并实现 `@abstractmethod`。
 2. 通过注册表显式注册（或配置声明装配）。
 3. 多实例/跨进程场景，默认内存实现需替换为共享存储实现（Redis/MySQL 等）。
 
-### 15.2 自定义模型供应商示例（参照 `OpenAICompatibleProvider`）
+### 16.2 三方平台接入步骤（参照 `DemoSocialPlatform`）
+
+1. 实现 `SocialPlatform`（`build_authorize_url` / `exchange_token` / `fetch_userinfo`，Protocol 结构子类型，无需继承）。
+2. `SocialPlatformRegistry.register(platform)` 显式注册。
+3. 构造 `SocialLoginService(registry, binding_store)`，在业务 Controller 中编排跳转/回调登录/绑定/解绑。
+4. 登录成功由 `SocialLoginService.login` 复用 `JWTUtil` 签发框架自有 JWT，后续鉴权走 `AuthMiddleware`。
+5. 多实例部署时替换绑定存储：实现 `SocialBindingStore` 的 Redis/DB 版并注入。
+
+### 16.3 自定义模型供应商示例（参照 `OpenAICompatibleProvider`）
 
 ```python
 # my_provider.py
@@ -650,7 +846,7 @@ class MyProvider(ModelProviderInterface):
 ModelProviderRegistry.register(MyProvider())
 ```
 
-### 15.3 自定义对象存储实现示例（参照 `MinioStorage`）
+### 16.4 自定义对象存储实现示例（参照 `MinioStorage`）
 
 ```python
 # my_storage.py
@@ -674,7 +870,7 @@ class MyObjectStorage(ObjectStorageInterface):
         ...
 ```
 
-### 15.4 自定义指标分组示例（参照 `metric_group_provider_interface.py`）
+### 16.5 自定义指标分组示例（参照 `metric_group_provider_interface.py`）
 
 ```python
 # my_metrics_group.py
@@ -698,7 +894,7 @@ class OrderMetricsGroup(MetricGroupProviderInterface):
 MetricGroupProviderRegistry.register(OrderMetricsGroup())
 ```
 
-### 15.5 常见替换对照
+### 16.6 常见替换对照
 
 | 场景 | 默认实现 | 替换实现 |
 | ---- | ---- | ---- |
@@ -709,7 +905,85 @@ MetricGroupProviderRegistry.register(OrderMetricsGroup())
 | 本地 MQ -> 分布式 MQ | `InMemoryMessageQueue` | `RocketMqPublisher`（已内置） |
 | 接入新模型供应商 | `OpenAICompatibleProvider` | 自定义 `ModelProviderInterface` 实现 |
 
-## 16. 维护指南
+## 17. 能力注册表（capability）
+
+> **能力依赖模型（2026-08-17）**：支付的前置是鉴权，鉴权的前置是认证，认证的前置是用户系统（否则无意义）。
+> 框架声明能力契约（SPI）与依赖包含规则，启用能力时按包含关系自动启用前置（启用支付默认启用鉴权→认证→用户，以此类推）；
+> 具体业务实现（如用户系统 user-service）交由业务层提供。
+
+### 17.1 能力契约与内置依赖图
+
+- 文件：`src/web_infra/capability/`（`Capability` / `CapabilityRegistry` / `CapabilityError` / `CapabilityResolution` / `CapabilityValidation`）
+- `Capability`（契约）：能力名 / 说明 / 随能力启用的框架模块（modules）/ 前置能力（requires，按包含关系自动启用）/ 业务契约（contract）。
+- 注册：`CapabilityRegistry.register(Capability(...))`（同名覆盖；前置允许后置注册，未知前置在解析/校验时拦截；不能依赖自身）。
+- 内置依赖图（导入 `web_infra.capability` 自动注册）：
+
+| 能力 | 框架模块 | 前置 | 说明 |
+| ---- | ---- | ---- | ---- |
+| `user` | 无（业务实现） | - | 用户系统：契约能力，业务层实现（如脚手架 user-service）；框架侧接入点 RequestContext / SocialBindingStore / OAuth2 |
+| `authn` | `web_infra.security` | `user` | 认证：确认『你是谁』——JWT 签发/校验、Token 存储、三方登录、OAuth2 登录（前置用户系统） |
+| `authz` | `web_infra.security` | `authn` | 鉴权：确认『你能做什么』——权限守卫/RBAC（PermissionGuard，前置认证） |
+| `pay` | `web_infra.payment` | `authz` | 支付：渠道 SPI + 回调验签/分发 + 骨架兜底 + 对账/冲正/风控（前置鉴权，传递依赖认证/用户） |
+| `ai` | `web_infra.ai` | - | AI 模型网关：供应商/模型路由/配额/检索/内容安全 |
+| `mq` | `web_infra.mq` | - | 消息队列：发布/幂等消费/事务发件箱 |
+| `storage` | `web_infra.storage` | - | 对象存储与分片上传 |
+| `registry` | `web_infra.registry` | - | 服务注册发现与负载均衡 |
+| `config` | `web_infra.config` | - | 配置（本地源 + Nacos 配置中心） |
+| `db` | `web_infra.db` | - | 数据访问（ORM 会话/读写分离/多租户过滤） |
+| `cache` | `web_infra.cache` | - | 缓存（内存/Redis） |
+
+### 17.2 依赖解析（resolve）与装配校验（validate）
+
+- `CapabilityRegistry.resolve(name)`：按包含关系展开传递前置，返回 `CapabilityResolution`（拓扑序能力链 chain、需导入框架模块 modules）；
+  未注册能力 / 依赖循环抛 `CapabilityError`。
+- `CapabilityRegistry.validate(enabled)`：装配校验，返回 `CapabilityValidation`（ok / unknown 未知能力 / circular 循环链路 /
+  closure 完整闭包 / chain 拓扑序）。**缺前置不视为失败**——按包含关系自动补足（如启用 pay 闭包自动含 user/authn/authz）。
+
+```python
+from web_infra import CapabilityRegistry
+
+resolution = CapabilityRegistry.resolve("pay")
+assert [c.name for c in resolution.chain] == ["user", "authn", "authz", "pay"]  # 启用支付自动带上前置（认证/鉴权均依赖用户）
+assert resolution.modules == ("web_infra.security", "web_infra.payment")
+
+validation = CapabilityRegistry.validate(["pay"])
+assert validation.ok and validation.closure == frozenset({"user", "authn", "authz", "pay"})
+```
+
+### 17.3 启用能力（enable / app.capabilities.enabled）
+
+- 运行时显式启用：`CapabilityRegistry.enable("pay")` —— 解析（校验）后按拓扑序自动导入前置与目标能力的框架模块（幂等）。
+- 配置驱动装配（推荐）：`application.yml` 声明 `app.capabilities.enabled`，`create_app` 装配时自动校验（未知能力/循环抛
+  `ConfigError`）并按拓扑序启用：
+
+```yaml
+app:
+  capabilities:
+    enabled: [pay]   # 自动启用 鉴权(authz)→认证(authn)→用户系统(user)（业务实现由业务层提供）
+```
+
+> **默认状态**：`app.capabilities.enabled` 默认空（`[]`）——业务可选能力链（user / authn / authz / pay）默认全部关闭，按需启用；
+> 认证/鉴权与支付一样依赖用户系统（JWT/权限守卫等安全工具代码随核心可导入，能力启用需用户前置）。
+> 框架内置模块能力（config / db / cache / mq / storage / registry / ai）的框架代码随核心安装即可用
+> （内存/本地实现开箱即用，外部实现需对应 extras + 配置），在 `enabled` 中声明仅用于显式装配校验与依赖展开。
+
+### 17.4 业务扩展自定义能力
+
+业务层（使用框架的项目开发者）按同一机制登记业务能力并声明依赖（以此类推）：
+
+```python
+from web_infra import Capability, CapabilityRegistry
+
+CapabilityRegistry.register(Capability(
+    name="order",            # 业务能力名
+    description="订单域（业务实现）",
+    requires=("pay",),       # 依赖支付 → 自动带出 auth / user
+    contract="订单业务由业务层实现",
+))
+CapabilityRegistry.enable("order")
+```
+
+## 18. 维护指南
 
 | 场景 | 操作位置 |
 | ---- | ---- |
@@ -717,3 +991,4 @@ MetricGroupProviderRegistry.register(OrderMetricsGroup())
 | 新增默认实现 | 提供默认实现类并在总览表登记；同步补充单元测试 |
 | 修改接口方法 | 同步修改全部实现类与本文档对应方法表 |
 | 涉及数据库存储实现 | 同步更新 `db/init/ddl/001-mq-init-ddl.sql` 及对应 DML |
+| 新增支付渠道 | 在 `src/web_infra/payment/provider/` 继承 `PaymentChannelTemplate`（§3.1 骨架）填充 `_do_*`/`_parse_callback`、声明 `capabilities` 并注册 `PaymentGatewayRegistry`；同步补充契约测试（§15.1/§15.4） |

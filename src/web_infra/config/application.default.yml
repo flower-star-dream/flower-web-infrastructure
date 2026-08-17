@@ -17,6 +17,13 @@ app:
     level: INFO
     format: text
 
+  # 能力装配（可选能力依赖包含规则，2026-08-17）：enabled 声明系统启用的能力，装配时按包含关系校验
+  # （缺前置自动补足；未知能力/依赖循环抛 ConfigError）并自动导入前置能力的框架模块。
+  # 核心依赖链：用户系统(user，契约能力，业务实现) → 认证(authn) → 鉴权(authz) → 支付(pay)，以此类推；
+  # 全能力清单与依赖见 web_infra.capability（CapabilityRegistry）。默认不启用任何可选能力。
+  capabilities:
+    enabled: []
+
   # Web 中间件装配（配置驱动：声明即引入；enabled: false 显式关闭；trace_id 默认引入）
   # 顺序约束：Starlette 后声明者在外层先执行，故 trace_id 必须最后声明（最先执行生成 TraceId），
   # 统一鉴权 auth 次之（随后以 token payload 注入身份，不被外层覆盖），幂等 idempotency 最内层最后执行（此时身份已就绪）。
@@ -111,7 +118,14 @@ app:
   # AI 与大模型（特殊场景：默认不启用，需业务显式开启）
   ai:
     enabled: false
-    # 模型清单（页面化配置的 yml 等价物）：按清单自动注册供应商，默认 OpenAI 兼容协议；
+    # 模型配置来源：
+    # - yml（默认）：app.ai.models 清单在代码/配置中写死供应商与模型，启动即注册；
+    # - db：模型配置入库 ai_model_config 表（SqlAlchemyModelConfigStore），启动生命周期自动注册；
+    #   数据库初始化见 db/init/ddl/002 + db/init/dml/002；api_key 列仅存 env:VAR 引用，
+    #   真实密钥经环境变量/.env 注入（如 LLM_API_KEY=sk-xxx），禁止明文落盘（AI 规范 §3.1/AI-7）
+    store:
+      type: yml
+    # 模型清单（store.type=yml 时生效；store.type=db 时改由数据库提供，此处忽略）：
     # 字段与 ModelConfig 对齐，provider 缺省回落 openai_compatible
     models: []
     model_gateway:
@@ -180,6 +194,27 @@ app:
       cleanup_interval_seconds: 3600
       retain_days: 7
 
+  # 支付（特殊场景：默认不启用，需业务显式开启并配置渠道；敏感项经 ${APP_PAYMENT_*} 注入）
+  payment:
+    type: memory            # 默认渠道：memory（内存测试实现）| wechat
+    wechat:
+      appid: ${APP_PAYMENT_WECHAT_APPID:}
+      mchid: ${APP_PAYMENT_WECHAT_MCHID:}
+      mch_serial_no: ${APP_PAYMENT_WECHAT_MCH_SERIAL_NO:}
+      api_v3_key: ${APP_PAYMENT_WECHAT_API_V3_KEY:}
+      private_key: ${APP_PAYMENT_WECHAT_PRIVATE_KEY:}
+      private_key_path: ${APP_PAYMENT_WECHAT_PRIVATE_KEY_PATH:}
+      notify_url: ${APP_PAYMENT_WECHAT_NOTIFY_URL:}
+      refund_notify_url: ${APP_PAYMENT_WECHAT_REFUND_NOTIFY_URL:}
+      verify_mode: platform_cert
+      platform_cert_dir: ./cert
+      # 平台证书自动下载：platform_cert 模式下验签遇未知序列号自动调用 /v3/certificates 获取并缓存（默认关闭，需显式开启）
+      cert_auto_download: false
+      public_key_id: ${APP_PAYMENT_WECHAT_PUBLIC_KEY_ID:}
+      public_key: ${APP_PAYMENT_WECHAT_PUBLIC_KEY:}
+      connect_timeout: 5
+      read_timeout: 30
+
   # 服务注册发现
   registry:
     type: memory
@@ -187,7 +222,8 @@ app:
     # Nacos 客户端配置（nacos-sdk-python v2：gRPC 协议，server_addresses 支持逗号分隔多地址）
     nacos:
       server_addresses: localhost:8848
-      namespace: ""
+      # 命名空间默认与 NacosProperties 模型默认一致（public；空串在 SDK 中同样表示默认命名空间）
+      namespace: public
       group: DEFAULT_GROUP
       cluster: DEFAULT
       # 认证（默认 Nacos 认证用 username/password；阿里云用 access_key/secret_key；

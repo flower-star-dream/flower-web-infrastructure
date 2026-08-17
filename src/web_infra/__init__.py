@@ -8,6 +8,10 @@ Web 系统通用后端基础设施
               监控、工具、AI 与应用启动器等核心能力，供单体与微服务项目作为基础依赖复用。
               依赖解耦（2026-08-15）：db 相关依赖 sqlalchemy/redis/mongo 的名字惰性导出，
               最小安装（未装 sqlalchemy/redis/mongo）`import web_infra` 不触发导入。
+              支付为可选能力（2026-08-17）：不随顶层导出，需要支付能力的系统显式
+              `from web_infra.payment import ...` 主动引入（部分系统无需支付功能）。
+              能力依赖模型（2026-08-17）：CapabilityRegistry 声明能力契约与依赖包含规则
+              （用户系统 → 鉴权 → 支付，以此类推），启用能力按包含关系自动带上前置。
 """
 from importlib import import_module
 from typing import TYPE_CHECKING
@@ -151,6 +155,13 @@ from web_infra.constants import (
     SysConstant,
     BizConstant,
 )
+from web_infra.capability import (
+    Capability,
+    CapabilityError,
+    CapabilityRegistry,
+    CapabilityResolution,
+    CapabilityValidation,
+)
 from web_infra.cache import KeyBuilder, CacheBackendInterface, CacheConfig, MemoryCacheBackend
 from web_infra.cache.tenant_key_builder import TenantKeyBuilder
 from web_infra.db import (
@@ -218,7 +229,7 @@ from web_infra.registry import (
     InMemoryServiceRegistry,
 )
 from web_infra.loadbalance import LoadBalancerInterface, RandomBalancer, RoundRobinBalancer, WeightedRoundRobinBalancer
-from web_infra.http import FeignClient
+from web_infra.http import FeignClient, FeignClientConfig, build_feign_client, default_service_fallback
 from web_infra.security import (
     JWTUtil,
     TokenVerifyStatus,
@@ -237,8 +248,36 @@ from web_infra.security import (
     OAuth2ClientRegistry,
     InMemoryOAuth2ClientRegistry,
     OAuth2TokenService,
+    JwtTokenStore,
+    InMemoryJwtTokenStore,
+    RedisJwtTokenStore,
+    JwtKeyProvider,
+    EnvJwtKeyProvider,
+    SocialPlatform,
+    SocialAccessToken,
+    SocialUserInfo,
+    SocialBinding,
+    SocialBindingStore,
+    InMemorySocialBindingStore,
+    SocialPlatformRegistry,
+    DemoSocialPlatform,
+    SocialLoginResult,
+    SocialLoginService,
 )
 from web_infra.task import TaskStatus, TaskRecord, TaskRecordStoreInterface, InMemoryTaskRecordStore, TaskExecutor
+from web_infra.state_machine import (
+    BaseState,
+    BaseEvent,
+    BaseStatus,
+    StartStopEvent,
+    BaseStatusRouter,
+    StateRouteParams,
+    StateRouter,
+    StateMachine,
+    StateMachineEngine,
+    StateMachineRegistry,
+    StateMachineErrorCode,
+)
 from web_infra.monitoring import (
     PhaseTimer,
     init_ai_metrics,
@@ -304,6 +343,8 @@ __all__ = [
     "AuthConstant", "CacheKeyBuilder", "InfraConstant", "ParamConstant", "SysConstant", "BizConstant",
     # 缓存
     "KeyBuilder", "TenantKeyBuilder", "CacheBackendInterface", "CacheConfig", "MemoryCacheBackend",
+    # 能力（能力契约与依赖包含规则：用户 → 鉴权 → 支付，按包含关系自动启用前置）
+    "Capability", "CapabilityError", "CapabilityRegistry", "CapabilityResolution", "CapabilityValidation",
     # 数据库（依赖 sqlalchemy/redis/mongo 的实现名不在 __all__，保证最小安装 `from web_infra import *`
     # 不触发惰性导入；需用时显式导入，如 from web_infra import MySQLConfig / Base）
     "DatabaseConfig", "PageQuery", "SqliteSessionFactory", "DatabaseSessionInterface", "DatabaseFactoryInterface",
@@ -324,13 +365,24 @@ __all__ = [
     # 服务注册发现与负载均衡
     "ServiceInstance", "ServiceRegistryInterface", "NacosDiscoveryClient", "NacosRegistration", "InMemoryServiceRegistry",
     "LoadBalancerInterface", "RandomBalancer", "RoundRobinBalancer", "WeightedRoundRobinBalancer", "FeignClient",
+    "FeignClientConfig", "build_feign_client",
+    "default_service_fallback",
     # 安全
     "JWTUtil", "TokenVerifyStatus", "PasswordEncoder", "SecureConfigLoader", "PrivacyGuard",
     "PiiResult", "PiiMatch", "CaptchaStoreInterface", "InMemoryCaptchaStore", "RedisCaptchaStore",
     "CaptchaService", "LoginFailLockService", "PermissionGuard",
     "OAuth2Client", "OAuth2ClientRegistry", "InMemoryOAuth2ClientRegistry", "OAuth2TokenService",
+    "JwtTokenStore", "InMemoryJwtTokenStore", "RedisJwtTokenStore",
+    "JwtKeyProvider", "EnvJwtKeyProvider",
+    "SocialPlatform", "SocialAccessToken", "SocialUserInfo", "SocialBinding",
+    "SocialBindingStore", "InMemorySocialBindingStore", "SocialPlatformRegistry",
+    "DemoSocialPlatform", "SocialLoginResult", "SocialLoginService",
     # 异步任务
     "TaskStatus", "TaskRecord", "TaskRecordStoreInterface", "InMemoryTaskRecordStore", "TaskExecutor",
+    # 通用状态机
+    "BaseState", "BaseEvent", "BaseStatus", "StartStopEvent", "BaseStatusRouter",
+    "StateRouteParams", "StateRouter", "StateMachine", "StateMachineEngine",
+    "StateMachineRegistry", "StateMachineErrorCode",
     # 监控与工具
     "PhaseTimer", "init_ai_metrics", "record_ai_call", "record_ai_ttft", "record_ai_duration",
     "record_ai_tokens", "record_ai_cost",

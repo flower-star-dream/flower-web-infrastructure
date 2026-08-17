@@ -18,6 +18,10 @@ from web_infra.constants import (
     AUTH_SCOPE_WRITE,
     AUTH_TOKEN_ACCESS_EXPIRE_MINUTES,
     INFRA_CALL_MAX_RETRIES,
+    INFRA_CALL_RETRY_DELAY_BASE_SECONDS,
+    INFRA_CALL_RETRY_DELAY_MAX_SECONDS,
+    INFRA_CALL_RETRY_JITTER_MIN,
+    INFRA_CALL_RETRY_JITTER_MAX,
     INFRA_MYSQL_INIT_COMMAND,
     INFRA_TRUE_VALUES,
     KEY_SEGMENT_SEPARATOR,
@@ -62,6 +66,18 @@ def test_no_same_name_different_value_in_init():
     assert constants.INFRA_MYSQL_INIT_COMMAND == InfraConstant.INFRA_MYSQL_INIT_COMMAND
     assert constants.INFRA_TRUE_VALUES == InfraConstant.INFRA_TRUE_VALUES
     assert constants.INFRA_CALL_MAX_RETRIES == InfraConstant.INFRA_CALL_MAX_RETRIES == 2
+    assert (
+        constants.INFRA_CALL_RETRY_DELAY_BASE_SECONDS
+        == InfraConstant.INFRA_CALL_RETRY_DELAY_BASE_SECONDS
+        == 0.5
+    )
+    assert (
+        constants.INFRA_CALL_RETRY_DELAY_MAX_SECONDS
+        == InfraConstant.INFRA_CALL_RETRY_DELAY_MAX_SECONDS
+        == 8.0
+    )
+    assert constants.INFRA_CALL_RETRY_JITTER_MIN == InfraConstant.INFRA_CALL_RETRY_JITTER_MIN == 0.7
+    assert constants.INFRA_CALL_RETRY_JITTER_MAX == InfraConstant.INFRA_CALL_RETRY_JITTER_MAX == 1.0
     assert constants.KEY_SEGMENT_SEPARATOR == InfraConstant.KEY_SEGMENT_SEPARATOR
 
 

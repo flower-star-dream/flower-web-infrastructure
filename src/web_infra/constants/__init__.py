@@ -25,6 +25,7 @@ SYS_PREFIX = "SYS_"          # 系统类：框架配置、系统默认值、环�
 # ---------------------------------------------------------------------------
 from web_infra.constants.auth_constant import AuthConstant
 from web_infra.constants.cache_key import CacheKeyBuilder
+from web_infra.constants.http_status_constant import HttpStatusConstant
 from web_infra.constants.infra_constant import InfraConstant
 from web_infra.constants.param_constant import ParamConstant
 from web_infra.constants.sys_constant import SysConstant
@@ -64,6 +65,10 @@ AUTH_SCOPE_ADMIN = AuthConstant.AUTH_SCOPE_ADMIN
 # 基础设施默认值（规范 §7 远程调用韧性）
 INFRA_CALL_CONNECT_TIMEOUT_SECONDS = InfraConstant.INFRA_CALL_CONNECT_TIMEOUT_SECONDS  # 连接超时（规范 §7.1）
 INFRA_CALL_MAX_RETRIES = InfraConstant.INFRA_CALL_MAX_RETRIES                          # 最大重试次数（规范 §7.2）
+INFRA_CALL_RETRY_DELAY_BASE_SECONDS = InfraConstant.INFRA_CALL_RETRY_DELAY_BASE_SECONDS  # 重试退避初始延迟（秒）
+INFRA_CALL_RETRY_DELAY_MAX_SECONDS = InfraConstant.INFRA_CALL_RETRY_DELAY_MAX_SECONDS    # 重试退避最大延迟（秒）
+INFRA_CALL_RETRY_JITTER_MIN = InfraConstant.INFRA_CALL_RETRY_JITTER_MIN                  # 退避抖动下界
+INFRA_CALL_RETRY_JITTER_MAX = InfraConstant.INFRA_CALL_RETRY_JITTER_MAX                  # 退避抖动上界
 INFRA_LOCK_DEFAULT_TIMEOUT_SECONDS = InfraConstant.INFRA_LOCK_DEFAULT_TIMEOUT_SECONDS  # 锁获取超时（规范 §16.4）
 
 # 数据库会话初始化命令：强制连接会话时区为 UTC（规范 §16.1 全链路 UTC）
@@ -108,6 +113,10 @@ __all__ = [
     "AUTH_SCOPE_ADMIN",
     "INFRA_CALL_CONNECT_TIMEOUT_SECONDS",
     "INFRA_CALL_MAX_RETRIES",
+    "INFRA_CALL_RETRY_DELAY_BASE_SECONDS",
+    "INFRA_CALL_RETRY_DELAY_MAX_SECONDS",
+    "INFRA_CALL_RETRY_JITTER_MIN",
+    "INFRA_CALL_RETRY_JITTER_MAX",
     "INFRA_LOCK_DEFAULT_TIMEOUT_SECONDS",
     "INFRA_MYSQL_INIT_COMMAND",
     "INFRA_TRUE_VALUES",
@@ -117,6 +126,7 @@ __all__ = [
     "INFRA_SSE_MEDIA_TYPE",
     "AuthConstant",
     "CacheKeyBuilder",
+    "HttpStatusConstant",
     "InfraConstant",
     "ParamConstant",
     "SysConstant",

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import contextmanager
-from typing import Any, Iterator
+from typing import Any, Generator
 
 
 class SqliteSession:
@@ -36,7 +36,7 @@ class SqliteSession:
         return [dict(row) for row in cursor.fetchall()]
 
     @contextmanager
-    def transaction(self) -> Iterator["SqliteSession"]:
+    def transaction(self) -> Generator["SqliteSession", None, None]:
         """事务上下文：正常提交，异常回滚"""
         try:
             yield self

@@ -22,6 +22,7 @@ from web_infra.ai.model_config_store_interface import ModelConfigStoreInterface
 from web_infra.ai.model_provider_factory import ModelProviderFactory
 from web_infra.ai.model_provider_interface import ModelProviderInterface
 from web_infra.ai.model_provider_registry import ModelProviderRegistry
+from web_infra.constants import HttpStatusConstant
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +86,10 @@ class ModelAutoRegistrar:
         except Exception as exc:  # 网络/超时等异常统一降级为空列表
             logger.warning("拉取远程模型列表失败（网络异常） url=%s err=%s", url, exc)
             return []
-        if getattr(response, "status_code", 200) >= 400:
+        if (
+            getattr(response, "status_code", HttpStatusConstant.HTTP_OK)
+            >= HttpStatusConstant.HTTP_CLIENT_ERROR_MIN
+        ):
             logger.warning("拉取远程模型列表失败（非 2xx） url=%s status=%s", url, response.status_code)
             return []
         try:

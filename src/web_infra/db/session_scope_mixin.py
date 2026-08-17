@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator
+from typing import Any, AsyncGenerator
 
 from web_infra.db.database_session_interface import DatabaseSessionInterface
 
@@ -24,7 +24,7 @@ class SessionScopeMixin(ABC):
         """创建通用会话（由子类实现）"""
 
     @asynccontextmanager
-    async def session(self) -> AsyncIterator[DatabaseSessionInterface]:
+    async def session(self) -> AsyncGenerator[DatabaseSessionInterface, None]:
         """进入创建会话，退出自动提交（异常回滚）并关闭。
 
         用法（业务无需 try/finally）：

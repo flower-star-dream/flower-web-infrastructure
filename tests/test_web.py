@@ -10,7 +10,6 @@ from fastapi.testclient import TestClient
 
 from web_infra import (
     Result,
-    BizException,
     CommonErrorCode,
     register_global_exception_handlers,
     RequestContext,
@@ -30,11 +29,11 @@ def _build_app() -> FastAPI:
 
     @app.get("/biz")
     def biz():
-        raise BizException(CommonErrorCode.COMMON_NOT_FOUND)
+        raise CommonErrorCode.COMMON_NOT_FOUND.to_exception()
 
     @app.get("/lock")
     def lock():
-        raise BizException(CommonErrorCode.LOCK_FAILED)
+        raise CommonErrorCode.LOCK_FAILED.to_exception()
 
     @app.get("/boom")
     def boom():

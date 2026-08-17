@@ -15,11 +15,12 @@ import asyncio
 import inspect
 import logging
 from contextlib import asynccontextmanager
-from typing import Any, Callable, cast
+from typing import Any, AsyncGenerator, Callable, cast
 
 from fastapi import FastAPI
 
 from web_infra.config import ConfigError, CompositeConfigSource, DictConfigSource, Settings
+from web_infra.capability import CapabilityRegistry
 from web_infra.context import RequestContext
 from web_infra.error import register_global_exception_handlers
 from web_infra.logging import configure_logging
@@ -29,6 +30,7 @@ from web_infra.web.idempotency_middleware import IdempotencyMiddleware
 from web_infra.web.in_memory_idempotency_store import InMemoryIdempotencyStore
 from web_infra.web.rate_limit_middleware import RateLimitMiddleware
 from web_infra.web.security_headers_middleware import SecurityHeadersMiddleware
+from web_infra.security.jwt_util import JWTUtil
 from web_infra.cache import (
     CacheConfig,
     MemoryCacheBackend,
@@ -47,6 +49,7 @@ from web_infra.db.database_manager import DatabaseManager
 from web_infra.db.database_router import TenantDatabaseRouter
 from web_infra.ai.model_gateway import ModelRouter, RouteEntry, ModelGateway
 from web_infra.ai.model_auto_registrar import ModelAutoRegistrar
+from web_infra.ai.sqlalchemy_model_config_store import SqlAlchemyModelConfigStore
 from web_infra.ai.connection_pool import ConnectionPoolConfig, ConnectionPoolManager
 from web_infra.ai.quota import QuotaConfig, QuotaManager
 from web_infra.mq import InMemoryMessageQueue, RocketMqConfig, RocketMqPublisher
@@ -61,6 +64,8 @@ from web_infra.registry import (
     NacosDiscoveryClient,
 )
 from web_infra.config import NacosProperties
+
+logger = logging.getLogger(__name__)
 
 # 框架提供的中间件注册表（name -> (中间件类, 构造参数构建器)）：
 # 业务在 app.web.middlewares 中声明是否引入及参数，如何引入由配置决定
@@ -120,8 +125,9 @@ class Application:
         return Settings(CompositeConfigSource(DictConfigSource(settings), Settings.default_source()))
 
     def build(self) -> FastAPI:
-        """装配应用：日志 -> Web 基础能力 -> 中间件组件 -> 多租户 -> 健康检查/指标端点"""
+        """装配应用：日志 -> 能力装配校验 -> Web 基础能力 -> 中间件组件 -> 多租户 -> 健康检查/指标端点"""
         self._setup_logging()
+        self._setup_capabilities()
         self._setup_web()
         self._setup_components()
         self._setup_tenant()
@@ -167,6 +173,27 @@ class Application:
         level = getattr(logging, str(level_name).upper(), logging.INFO)
         configure_logging(level=level, fmt=fmt)
 
+    def _setup_capabilities(self) -> None:
+        """能力装配校验与启用（app.capabilities.enabled，可选能力依赖包含规则）。
+
+        启用集合按包含关系校验（缺前置自动补足；未知能力/依赖循环抛 ConfigError），
+        校验通过后按拓扑序启用各能力（自动导入前置能力与目标能力的框架模块，幂等）。
+        未配置 enabled 时跳过（默认不启用任何可选能力，见 yml）。
+        """
+        enabled = self.settings.get("app.capabilities.enabled") or []
+        if not enabled:
+            return
+        validation = CapabilityRegistry.validate(enabled)
+        if not validation.ok:
+            details: list[str] = []
+            if validation.unknown:
+                details.append(f"未注册的能力: {', '.join(sorted(validation.unknown))}")
+            if validation.circular:
+                details.append("能力依赖循环: " + "; ".join(" -> ".join(c) for c in validation.circular))
+            raise ConfigError("能力装配校验失败：" + "；".join(details), key="app.capabilities.enabled")
+        for name in enabled:
+            CapabilityRegistry.enable(name)
+
     def _setup_web(self) -> None:
         """装配 Web 基础能力：全局异常处理 + 配置声明的中间件（app.web.middlewares）"""
         register_global_exception_handlers(self.app)
@@ -195,6 +222,8 @@ class Application:
         self.app.state.components = self._components
         for name, component in self._components.items():
             setattr(self.app.state, name, component)
+        # 配置挂载到 app.state.settings（业务/组件装配期读取统一配置，如 app.mq.outbox）
+        self.app.state.settings = self.settings
 
     def _setup_tenant(self) -> None:
         """多租户装配（app.tenant.enabled=true）：将租户条件过滤器挂载到数据库会话（多租户规范 §2）。
@@ -239,6 +268,9 @@ class Application:
                     "socket_keepalive", "health_check_interval", "retry_on_timeout",
                 ],
             )
+            # 启用 Redis 时 JWT Token 状态存储默认走 Redis（复用同一 Redis 实例；
+            # 未启用回落内存，业务可经 JWTUtil.configure 注入自定义实现覆盖）
+            JWTUtil.set_redis_config(config)
             return RedisCacheBackend(config=config)
         return MemoryCacheBackend(CacheConfig(max_size=cast(int, self.settings.get_int("app.cache.max_size"))))
 
@@ -306,17 +338,24 @@ class Application:
     def _build_ai(self) -> Any:
         """AI 组件：app.ai.enabled=true 时装配统一模型网关（AI 规范 §2.2/§17.4）。
 
-        模型自动注册：yml app.ai.models 配置清单 -> 供应商 SPI 注册表，业务代码无需手动注册；
+        模型配置来源（app.ai.store.type）：
+        - yml（默认）：app.ai.models 配置清单 -> 供应商 SPI 注册表（业务代码/配置文件写死供应商）；
+        - db：ai_model_config 表（SqlAlchemyModelConfigStore），启动生命周期内经 register_from_store 自动注册。
         默认 OpenAI 兼容协议（/v1/chat/completions），自定义供应商经 ModelProviderFactory 注册后
         按 provider 字段自动装配。路由由 app.ai.model_gateway.routes 按模型逻辑名声明场景主备。
         默认不启用（yml app.ai.enabled=false），需业务配置显式开启。"""
         if not self.settings.get_bool("app.ai.enabled"):
             return None
-        # 1) 自动注册：yml 配置清单 -> 供应商注册表（同 model_code 覆盖注册）
+        # 1) 自动注册：配置清单/数据库 -> 供应商注册表（同 model_code 覆盖注册）
         registrar = ModelAutoRegistrar()
-        models = self.settings.get("app.ai.models") or []
-        if models:
-            registrar.register_configs(ModelAutoRegistrar.from_dicts(list(models)))
+        store_type = self.settings.get("app.ai.store.type") or "yml"
+        if store_type == "db":
+            # 数据库模型配置来源：store 挂到组件，启动生命周期内经 register_from_store 自动注册（异步 I/O）
+            self._components["ai_model_config_store"] = self._build_ai_model_store()
+        else:
+            models = self.settings.get("app.ai.models") or []
+            if models:
+                registrar.register_configs(ModelAutoRegistrar.from_dicts(list(models)))
         self._components["ai_registrar"] = registrar
         # 2) 场景路由（按模型逻辑名声明主备降级）
         routes = self.settings.get("app.ai.model_gateway.routes") or {}
@@ -351,15 +390,59 @@ class Application:
         )
         return ModelGateway(router, pool_manager=pool_manager, quota_manager=quota_manager)
 
+    def _build_ai_model_store(self) -> Any:
+        """构建数据库模型配置来源（app.ai.store.type=db）：复用已装配数据库组件的 SQLAlchemy 会话工厂。
+
+        多数据源（DatabaseManager）场景取首个已注册数据源的会话工厂（模型配置表与业务库同库部署）。
+
+        :raises ConfigError: 数据库组件非 MySQL 数据源或引擎未初始化（拿不到 session_factory）时快速失败，
+            提示启用 app.db.type=mysql（SqlAlchemyModelConfigStore 依赖原生 AsyncSession）
+        """
+        db = self._components.get("db")
+        session_factory = None
+        if isinstance(db, MySQLDatabase):
+            session_factory = db.session_factory
+        elif isinstance(db, DatabaseManager):
+            names = db.names
+            if names:
+                session_factory = getattr(db.get(names[0]), "session_factory", None)
+        if session_factory is None:
+            raise ConfigError(
+                "app.ai.store.type=db 需要已初始化的 MySQL 数据源（app.db.type=mysql），"
+                "当前拿不到 SQLAlchemy 会话工厂",
+                key="app.ai.store.type",
+            )
+        return SqlAlchemyModelConfigStore(session_factory)
+
     # ------------------------------------------------------------------
     # 内部：生命周期（优雅停机，规范 §19.6）
     # ------------------------------------------------------------------
 
-    async def _lifespan(self, app: FastAPI) -> Any:
-        """应用生命周期：启动前清理上下文，停机时释放可关闭组件"""
+    @asynccontextmanager
+    async def _lifespan(self, app: FastAPI) -> AsyncGenerator[None, None]:
+        """应用生命周期：启动前清理上下文、数据库模型配置来源自动注册；停机时释放可关闭组件"""
         RequestContext.clear()
+        await self._register_ai_models_from_db()
         yield
         await self._shutdown()
+
+    async def _register_ai_models_from_db(self) -> None:
+        """数据库模型配置来源（app.ai.store.type=db）：启动时全量加载并自动同步 SPI 注册表（AI 规范 §17.4）。
+
+        注册失败仅记录 error 日志不阻断启动（数据库暂不可用时应用仍可提供非 AI 能力），
+        模型调用将回落 E4-AI-001（模型/供应商未配置）明确错误。
+        """
+        if (self.settings.get("app.ai.store.type") or "yml") != "db":
+            return
+        registrar = self._components.get("ai_registrar")
+        store = self._components.get("ai_model_config_store")
+        if registrar is None or store is None:
+            return
+        try:
+            registered = await registrar.register_from_store(store)
+            logger.info("ai_model_config_db_register_count=%d", len(registered))
+        except Exception as exc:  # 数据库未就绪/表缺失：记录错误，不阻断应用启动
+            logger.error("ai_model_config_db_register_failed err=%s", exc)
 
     async def _shutdown(self) -> None:
         """优雅停机（规范 §19.2 摘流量→等待窗口→连接排空→优雅退出）。

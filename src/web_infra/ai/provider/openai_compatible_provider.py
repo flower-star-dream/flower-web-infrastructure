@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 import time
 from typing import Any, AsyncIterator
 
@@ -30,7 +31,7 @@ from web_infra.ai.finish_reason_enum import FinishReason
 from web_infra.ai.model_config import ModelConfig
 from web_infra.ai.model_provider_interface import ModelProviderInterface
 from web_infra.ai.usage import Usage
-from web_infra.error import BizException
+from web_infra.constants import HttpStatusConstant
 from web_infra.error.ai_error_code import AiErrorCode
 
 
@@ -53,6 +54,8 @@ class OpenAICompatibleProvider(ModelProviderInterface):
         # 模型网关连接池注入的客户端（流式/非流式分池，AI 规范 §5.1；生命周期由连接池管理）
         self._stream_client: httpx.AsyncClient | None = None
         self._sync_client: httpx.AsyncClient | None = None
+        # 懒创建互斥锁（M2 修复：并发首次调用仅创建一个 httpx 客户端，防重复创建泄漏）
+        self._client_lock = threading.Lock()
 
     def attach_clients(
         self,
@@ -82,7 +85,7 @@ class OpenAICompatibleProvider(ModelProviderInterface):
         try:
             data = await asyncio.wait_for(self._post("/chat/completions", payload), total_timeout)
         except asyncio.TimeoutError as e:
-            raise BizException(AiErrorCode.THIRD_TIMEOUT, message=f"模型调用超时：{self.name}") from e
+            raise AiErrorCode.THIRD_TIMEOUT.to_exception(message=f"模型调用超时：{self.name}") from e
         return self._parse_chat_response(data)
 
     async def stream_chat(self, request: ChatRequest) -> AsyncIterator[ChatStreamChunk]:
@@ -96,9 +99,9 @@ class OpenAICompatibleProvider(ModelProviderInterface):
         try:
             response = await asyncio.wait_for(client.send(raw_request, stream=True), total_timeout)
         except asyncio.TimeoutError as e:
-            raise BizException(AiErrorCode.THIRD_TIMEOUT, message=f"模型流式调用超时：{self.name}") from e
+            raise AiErrorCode.THIRD_TIMEOUT.to_exception(message=f"模型流式调用超时：{self.name}") from e
         except httpx.TimeoutException as e:
-            raise BizException(AiErrorCode.THIRD_TIMEOUT, message=f"模型流式调用超时：{self.name}") from e
+            raise AiErrorCode.THIRD_TIMEOUT.to_exception(message=f"模型流式调用超时：{self.name}") from e
         self._raise_for_status(response)
 
         async def _raw() -> AsyncIterator[ChatStreamChunk]:
@@ -113,7 +116,7 @@ class OpenAICompatibleProvider(ModelProviderInterface):
                     try:
                         data = json.loads(raw)
                     except json.JSONDecodeError as e:
-                        raise BizException(AiErrorCode.AI_GENERATION_FAILED, message="流式响应解析失败") from e
+                        raise AiErrorCode.AI_GENERATION_FAILED.to_exception(message="流式响应解析失败") from e
                     choice = (data.get("choices") or [{}])[0]
                     delta = (choice.get("delta") or {}) or {}
                     yield ChatStreamChunk(
@@ -129,19 +132,19 @@ class OpenAICompatibleProvider(ModelProviderInterface):
         try:
             first = await asyncio.wait_for(iterator.__anext__(), ttft_timeout)
         except asyncio.TimeoutError as e:
-            raise BizException(AiErrorCode.THIRD_TIMEOUT, message=f"模型首 Token 超时（TTFT）：{self.name}") from e
+            raise AiErrorCode.THIRD_TIMEOUT.to_exception(message=f"模型首 Token 超时（TTFT）：{self.name}") from e
         yield first
         deadline = time.monotonic() + total_timeout
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise BizException(AiErrorCode.THIRD_TIMEOUT, message=f"模型全量生成超时：{self.name}")
+                raise AiErrorCode.THIRD_TIMEOUT.to_exception(message=f"模型全量生成超时：{self.name}")
             try:
                 chunk = await asyncio.wait_for(iterator.__anext__(), remaining)
             except StopAsyncIteration:
                 return
             except asyncio.TimeoutError as e:
-                raise BizException(AiErrorCode.THIRD_TIMEOUT, message=f"模型全量生成超时：{self.name}") from e
+                raise AiErrorCode.THIRD_TIMEOUT.to_exception(message=f"模型全量生成超时：{self.name}") from e
             yield chunk
 
     async def embedding(self, request: EmbeddingRequest) -> EmbeddingResponse:
@@ -197,20 +200,20 @@ class OpenAICompatibleProvider(ModelProviderInterface):
         try:
             response = await self._get_client().post(self._endpoint(path), json=payload)
         except httpx.TimeoutException as e:
-            raise BizException(AiErrorCode.THIRD_TIMEOUT, message=f"模型调用超时：{self.name}") from e
+            raise AiErrorCode.THIRD_TIMEOUT.to_exception(message=f"模型调用超时：{self.name}") from e
         self._raise_for_status(response)
         try:
             return response.json()
         except json.JSONDecodeError as e:
-            raise BizException(AiErrorCode.AI_GENERATION_FAILED, message=f"模型响应解析失败：{self.name}") from e
+            raise AiErrorCode.AI_GENERATION_FAILED.to_exception(message=f"模型响应解析失败：{self.name}") from e
 
     def _raise_for_status(self, response: httpx.Response) -> None:
         """HTTP 错误码映射（429 限流、其他第三方不可用）"""
-        if response.status_code == 200:
+        if response.status_code == HttpStatusConstant.HTTP_OK:
             return
-        if response.status_code == 429:
-            raise BizException(AiErrorCode.THIRD_RATE_LIMITED, message=f"模型供应商限流：{self.name}")
-        raise BizException(AiErrorCode.THIRD_UNAVAILABLE, message=f"模型供应商返回 {response.status_code}：{self.name}")
+        if response.status_code == HttpStatusConstant.HTTP_TOO_MANY_REQUESTS:
+            raise AiErrorCode.THIRD_RATE_LIMITED.to_exception(message=f"模型供应商限流：{self.name}")
+        raise AiErrorCode.THIRD_UNAVAILABLE.to_exception(message=f"模型供应商返回 {response.status_code}：{self.name}")
 
     def _endpoint(self, path: str) -> str:
         """拼接端点（api_base 去尾部斜杠）"""
@@ -233,11 +236,18 @@ class OpenAICompatibleProvider(ModelProviderInterface):
         return self._lazy_client()
 
     def _lazy_client(self) -> httpx.AsyncClient:
-        """懒创建 httpx 客户端（超时取自模型配置；仅未注入任何客户端时兜底）"""
-        if self._client is None:
-            self._client = httpx.AsyncClient(timeout=httpx.Timeout(self._config.timeout))
-            self._owns_client = True
-        return self._client
+        """懒创建 httpx 客户端（超时取自模型配置；仅未注入任何客户端时兜底）。
+
+        双重检查锁定（M2 修复）：并发首次调用仅创建一个客户端，防重复创建泄漏；
+        close() 将 _client 置 None 后重新创建亦受锁保护。
+        """
+        if self._client is not None:
+            return self._client
+        with self._client_lock:
+            if self._client is None:
+                self._client = httpx.AsyncClient(timeout=httpx.Timeout(self._config.timeout))
+                self._owns_client = True
+            return self._client
 
     def _resolve_timeouts(self, request: ChatRequest) -> tuple[float, float]:
         """解析 TTFT 首包超时与全量生成超时（AI 规范 §4.1）。

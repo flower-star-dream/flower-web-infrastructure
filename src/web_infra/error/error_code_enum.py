@@ -37,6 +37,10 @@ class CommonErrorCodeEnum(Enum):
     AUTH_REFRESH_REQUIRED = ErrorCode("E2-AUTH-003", "凭证即将过期", 401, "E2")
     AUTH_KICKED = ErrorCode("E2-AUTH-004", "单点登录被踢", 401, "E2")
     PERM_DENIED = ErrorCode("E2-PERM-000", "无权限", 403, "E2")
+    AUTH_SOCIAL_PLATFORM_NOT_CONFIGURED = ErrorCode("E2-AUTH-005", "三方登录平台未注册/未配置", 422, "E2")
+    AUTH_SOCIAL_TOKEN_FAILED = ErrorCode("E2-AUTH-006", "三方授权码无效或换取凭证失败", 422, "E2")
+    AUTH_SOCIAL_NOT_BOUND = ErrorCode("E2-AUTH-007", "三方账号未绑定本地用户", 422, "E2")
+    AUTH_SOCIAL_ALREADY_BOUND = ErrorCode("E2-AUTH-008", "三方账号已被其他用户绑定", 409, "E2")
 
     COMMON_NOT_FOUND = ErrorCode("E4-COMMON-000", "资源不存在", 404, "E4", log_level=logging.WARNING)
     COMMON_CONFLICT = ErrorCode("E4-COMMON-001", "资源冲突", 409, "E4", log_level=logging.WARNING)

@@ -40,6 +40,24 @@ def test_parse_category_unknown_prefix_fallback_e5():
     assert parse_category("") == "E5"
 
 
+def test_error_code_to_exception():
+    """错误码 to_exception() 统一异常抛出约定：返回携带相同错误码的 BizException
+
+    业务代码统一 `raise 错误码.to_exception(message=...)` 抛出业务异常，
+    避免散落 BizException 构造；message 缺省回落错误码默认文案，data 透传。
+    """
+    exc = CommonErrorCode.SYS_UNAVAILABLE.to_exception(message="服务不可用（测试）", data={"svc": "demo"})
+    assert isinstance(exc, BizException)
+    assert exc.code == CommonErrorCode.SYS_UNAVAILABLE.code
+    assert exc.http_status == CommonErrorCode.SYS_UNAVAILABLE.http_status
+    assert exc.message == "服务不可用（测试）"
+    assert exc.data == {"svc": "demo"}
+    # 未传 message 时回落错误码默认文案
+    assert CommonErrorCode.COMMON_NOT_FOUND.to_exception().message == CommonErrorCode.COMMON_NOT_FOUND.message
+    # AI 错误码同样适用（框架内部统一抛出方式）
+    assert AiErrorCode.AI_NOT_CONFIGURED.to_exception().code == AiErrorCode.AI_NOT_CONFIGURED.code
+
+
 def test_derive_http_status():
     """HTTP 状态码按大类推导，子类覆盖（E2-PERM->403，E3-LOCK->423）"""
     assert derive_http_status("E1-PARAM-000") == 400

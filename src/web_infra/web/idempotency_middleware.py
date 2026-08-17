@@ -19,6 +19,7 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.requests import Request
 from starlette.responses import Response
 
+from web_infra.constants import HttpStatusConstant
 from web_infra.context import RequestContext
 from web_infra.error.common_error_code import CommonErrorCode
 from web_infra.web.idempotency_store_interface import IdempotencyResult, IdempotencyStoreInterface
@@ -138,7 +139,13 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
                 media_type=result.content_type,
             )
         return Response(
-            status_code=202,
-            content=json.dumps({"code": "E4-COMMON-001", "message": "幂等请求处理中，请稍后重试"}, ensure_ascii=False),
+            status_code=HttpStatusConstant.HTTP_ACCEPTED,
+            content=json.dumps(
+                {
+                    "code": CommonErrorCode.COMMON_CONFLICT.code,
+                    "message": "幂等请求处理中，请稍后重试",
+                },
+                ensure_ascii=False,
+            ),
             media_type="application/json",
         )

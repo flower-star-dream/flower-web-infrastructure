@@ -73,7 +73,7 @@ class DistributedLock:
         :return: 是否获取成功
         """
         token = secrets.token_urlsafe(16)
-        deadline = asyncio.get_event_loop().time() + wait_timeout
+        deadline = asyncio.get_running_loop().time() + wait_timeout
         while True:
             acquired = await self._redis.set(
                 self._lock_key,
@@ -84,7 +84,7 @@ class DistributedLock:
             if acquired:
                 self._token = token
                 return True
-            if asyncio.get_event_loop().time() >= deadline:
+            if asyncio.get_running_loop().time() >= deadline:
                 return False
             await asyncio.sleep(0.05)
 

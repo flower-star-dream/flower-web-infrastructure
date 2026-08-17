@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
+from typing import AsyncGenerator
 
 from web_infra.db.database_config import DatabaseConfig
 from web_infra.db.sqlite_session import SqliteSession
@@ -36,7 +36,7 @@ class SqliteSessionFactory:
         return SqliteSession(self._conn)
 
     @asynccontextmanager
-    async def session(self) -> AsyncIterator[SqliteSession]:
+    async def session(self) -> AsyncGenerator[SqliteSession, None]:
         """异步上下文管理器：进入创建会话，退出自动提交（异常回滚），业务无需 try/finally"""
         session = self.create_session()
         with session.transaction():

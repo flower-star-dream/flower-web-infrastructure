@@ -27,8 +27,13 @@ _SECRET = "test-secret-for-application-0123456789"
 
 @pytest.fixture(autouse=True)
 def _jwt_secret(monkeypatch):
-    """注入 JWT 测试密钥"""
+    """注入 JWT 测试密钥；测试后清理 JWTUtil 全局注入（cache.type=redis 用例会装配 Redis 配置，避免污染后续用例）"""
+    from web_infra.security import JWTUtil
+
     monkeypatch.setenv("JWT_SECRET_KEY", _SECRET)
+    yield
+    JWTUtil.configure(None, None)
+    JWTUtil.set_redis_config(None)
 
 
 def test_application_default_components():

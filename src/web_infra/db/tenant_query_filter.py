@@ -19,7 +19,7 @@ if TYPE_CHECKING:  # 仅静态检查使用，运行时跳过（延迟导入，�
 from web_infra.context import RequestContext
 from web_infra.db.tenant_aware_mixin import TenantAwareMixin
 from web_infra.db.tenant_guard import NO_TENANT
-from web_infra.error import BizException, CommonErrorCode
+from web_infra.error import CommonErrorCode
 
 
 class TenantQueryFilter:
@@ -70,8 +70,7 @@ class TenantQueryFilter:
         if tid:
             return tid
         if self._strict:
-            raise BizException(
-                CommonErrorCode.PERM_DENIED,
+            raise CommonErrorCode.PERM_DENIED.to_exception(
                 message="无租户上下文，禁止访问租户隔离数据（多租户规范 §2）",
             )
         return NO_TENANT
@@ -153,8 +152,7 @@ class TenantQueryFilter:
                 if current is None or current == "":
                     setattr(obj, self._tenant_column_name, tenant_id)
                 elif self._strict and str(current) != tenant_id:
-                    raise BizException(
-                        CommonErrorCode.PERM_DENIED,
+                    raise CommonErrorCode.PERM_DENIED.to_exception(
                         message=f"跨租户写入禁止: 对象租户 {current} != 当前租户 {tenant_id}（多租户规范 §2）",
                     )
         # 对象级 DELETE（按主键删除，不经过 do_orm_execute）：strict 下校验归属租户，禁止越权删其他租户数据
@@ -162,7 +160,6 @@ class TenantQueryFilter:
             if isinstance(obj, TenantAwareMixin):
                 current = getattr(obj, self._tenant_column_name, None)
                 if self._strict and current is not None and str(current) != tenant_id:
-                    raise BizException(
-                        CommonErrorCode.PERM_DENIED,
+                    raise CommonErrorCode.PERM_DENIED.to_exception(
                         message=f"跨租户删除禁止: 对象租户 {current} != 当前租户 {tenant_id}（多租户规范 §25.3）",
                     )

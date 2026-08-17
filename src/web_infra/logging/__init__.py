@@ -57,7 +57,7 @@ def configure_logging(
     stream_handler.setFormatter(formatter)
     stream_handler.addFilter(ContextFilter())
     stream_handler.addFilter(SensitiveDataFilter())
-    stream_handler._web_infra = True
+    setattr(stream_handler, "_web_infra", True)
 
     root.setLevel(level)
     root.addHandler(stream_handler)

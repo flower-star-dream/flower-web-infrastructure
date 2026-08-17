@@ -220,6 +220,52 @@ async def test_feign_client_without_circuit_breaker_unchanged():
         await client.close()
 
 
+@pytest.mark.asyncio
+async def test_feign_client_concurrent_breaker_single_instance():
+    """FeignClient 熔断器懒创建：多线程并发首次获取同一服务仅一个实例（M1 修复防计数分裂）"""
+    from web_infra.http import FeignClient
+    from web_infra.registry import InMemoryServiceRegistry
+
+    registry = InMemoryServiceRegistry()
+    client = FeignClient(registry, circuit_breaker_config=CircuitBreakerConfig())
+    try:
+        await asyncio.gather(*[asyncio.to_thread(client._get_breaker, "svc-a") for _ in range(8)])
+        assert len(client._breakers) == 1
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_feign_client_default_fallback():
+    """FeignClient 未传 fallback 时采用框架默认兜底：统一 503 服务不可用响应（S7-4）
+
+    业务无需为每个客户端重复实现降级；需自定义降级（如返回缓存数据）时传 fallback 参数覆盖。
+    """
+    from web_infra.error import CommonErrorCode
+    from web_infra.http import FeignClient
+    from web_infra.registry import InMemoryServiceRegistry, ServiceInstance
+
+    registry = InMemoryServiceRegistry()
+    # 指向本机未监听端口（port 9 discard），保证连接失败触发熔断降级
+    await registry.register("svc", ServiceInstance(ip="127.0.0.1", port=9))
+
+    client = FeignClient(
+        registry,
+        retries=1,
+        retry_delay_base=0.0,
+        circuit_breaker_config=CircuitBreakerConfig(minimum_number_of_calls=1),
+    )
+    try:
+        resp = await client.request("svc", "GET", "/x")
+        assert resp is not None
+        assert resp.status_code == CommonErrorCode.SYS_UNAVAILABLE.http_status  # 503
+        body = resp.json()
+        assert body["code"] == CommonErrorCode.SYS_UNAVAILABLE.code  # E5-SYS-002
+        assert "svc" in body["message"]
+    finally:
+        await client.close()
+
+
 def test_circuit_breaker_recovers_after_half_open_success():
     """半开探测成功：熔断器恢复关闭（HALF_OPEN → CLOSED），不再永久停留在半开"""
     import time
