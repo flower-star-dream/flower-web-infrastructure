@@ -907,6 +907,8 @@ dev 分支开发（本地钩子自动打 `X.Y.Z.devN` 测试版本号）→ 推�
 
 注意：**PR 标题必须带 conventional 前缀**，否则按补丁处理；release workflow 只在 `base=main` + `head=dev` 且合并成功时触发（release 分支自身的 PR 不会触发，避免循环）。
 
+> **前置配置（首次接入必做）**：release workflow 使用仓库 Secret `RELEASE_PAT`（经典 PAT，勾选 `repo` scope，覆盖 contents + pull_requests 写权限），**不能使用默认 `GITHUB_TOKEN`**——GitHub 规定用 `GITHUB_TOKEN` 创建 PR / 推送不会触发新的 workflow run（发版 PR 将无法触发 CI、`wait_for_checks` 必超时），且 `pull_request` 事件下用其创建 PR 常被 403 拒绝（`Resource not accessible by integration`）。配置步骤：GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic) → Generate new token（勾选 `repo`）→ 存入仓库 Secrets（Settings → Secrets and variables → Actions，名称 `RELEASE_PAT`）。
+
 **备选：本地合并（不走 PR，由本地钩子发版）**
 
 ```bash

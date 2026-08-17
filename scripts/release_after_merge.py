@@ -10,8 +10,15 @@
               仅更新版本号，不打 tag（正式镜像发布仍由手动 v* tag 触发）。
               由 .github/workflows/release.yml 在 pull_request closed+merged 时调用。
 
+Token 说明：
+    - 默认读取 RELEASE_TOKEN（推荐，release workflow 注入的 PAT），缺失时回退 GITHUB_TOKEN；
+    - 本流程【必须】使用具备 repo scope（contents + pull_requests 写权限）的 PAT，
+      不能只用默认 GITHUB_TOKEN——GitHub 规定用 GITHUB_TOKEN 创建 PR / 推送不会触发新的
+      workflow run，发版 PR 将无法触发 CI（wait_for_checks 必然超时），且 pull_request 事件
+      下用 GITHUB_TOKEN 创建 PR 常被 403 拒绝（Resource not accessible by integration）。
+
 用法：
-    python scripts/release_after_merge.py --pr-title "<PR 标题>"    # 需 GITHUB_TOKEN 环境变量
+    python scripts/release_after_merge.py --pr-title "<PR 标题>"    # 需 RELEASE_TOKEN 或 GITHUB_TOKEN 环境变量
     python scripts/release_after_merge.py --pr-title "feat: xxx" --skip-git   # 仅计算与更新文件
 """
 
@@ -48,6 +55,19 @@ _API_HEADERS = {
     "Accept": "application/vnd.github+json",
     "X-GitHub-Api-Version": "2022-11-28",
 }
+
+
+def _raise_for_status(response: httpx.Response) -> None:
+    """非 2xx 响应抛出带响应体正文的异常（GitHub API 报错多为 403/422，正文含具体原因）。
+
+    :param response: httpx 响应
+    :raises httpx.HTTPStatusError: 异常信息含状态码与响应体前 500 字符
+    """
+    if response.is_success:
+        return
+    detail = response.text[:500].strip() or response.reason_phrase
+    message = f"GitHub API {response.request.method} {response.url.path} -> {response.status_code}: {detail}"
+    raise httpx.HTTPStatusError(message, request=response.request, response=response)
 
 
 def release_version(current: str, commit_type: CommitType) -> str | None:
@@ -149,9 +169,18 @@ class GitHubApi:
         :param base: 目标分支
         :param body: PR 描述
         :return: PR 编号
+        :raises httpx.HTTPStatusError: API 报错（403 时附带 GITHUB_TOKEN 无法创建发版 PR 的提示）
         """
         response = self._client.post("/pulls", json={"title": title, "head": head, "base": base, "body": body})
-        response.raise_for_status()
+        if response.status_code == 403:
+            raise httpx.HTTPStatusError(
+                "创建发版 PR 被拒绝（403）：请确认 RELEASE_TOKEN 为具备 contents + pull_requests 写权限的 PAT。"
+                "GitHub 规定 pull_request 事件下用默认 GITHUB_TOKEN 创建 PR 常被 403（Resource not accessible"
+                " by integration），且其创建的 PR 无法触发 CI。",
+                request=response.request,
+                response=response,
+            )
+        _raise_for_status(response)
         return int(response.json()["number"])
 
     def list_check_runs(self, sha: str) -> list[dict]:
@@ -159,9 +188,10 @@ class GitHubApi:
 
         :param sha: 提交 SHA
         :return: check_runs 列表
+        :raises httpx.HTTPStatusError: API 报错（含响应体）
         """
         response = self._client.get(f"/commits/{sha}/check-runs")
-        response.raise_for_status()
+        _raise_for_status(response)
         return list(response.json().get("check_runs", []))
 
     def merge_pull(self, number: int, method: str = "squash") -> None:
@@ -170,20 +200,22 @@ class GitHubApi:
         :param number: PR 编号
         :param method: 合并方式（merge / squash / rebase）
         :raises RuntimeError: PR 不可合并（405）时
+        :raises httpx.HTTPStatusError: 其他 API 报错（含响应体）
         """
         response = self._client.put(f"/pulls/{number}/merge", json={"merge_method": method})
         if response.status_code == 405:
             raise RuntimeError(f"PR #{number} 不可合并: {response.text}")
-        response.raise_for_status()
+        _raise_for_status(response)
 
     def delete_branch(self, branch: str) -> None:
         """删除分支（合并后清理临时分支；分支不存在时忽略）。
 
         :param branch: 分支名
+        :raises httpx.HTTPStatusError: 其他 API 报错（含响应体）
         """
         response = self._client.delete(f"/git/refs/heads/{branch}")
         if response.status_code not in (204, 422):
-            response.raise_for_status()
+            _raise_for_status(response)
 
 
 def wait_for_checks(api: GitHubApi, sha: str, timeout_seconds: int, interval_seconds: int) -> None:
@@ -245,9 +277,13 @@ def main() -> int:
         print("[release] --skip-git：未执行 git / GitHub API 操作")
         return 0
 
-    token = os.environ.get("GITHUB_TOKEN")
+    token = os.environ.get("RELEASE_TOKEN") or os.environ.get("GITHUB_TOKEN")
     if not token:
-        print("[release] 错误：缺少 GITHUB_TOKEN 环境变量（release.yml 需注入 secrets.GITHUB_TOKEN）", file=sys.stderr)
+        print(
+            "[release] 错误：缺少 RELEASE_TOKEN 环境变量（release.yml 需注入 secrets.RELEASE_PAT；"
+            "本流程必须用 PAT，默认 GITHUB_TOKEN 创建的 PR 无法触发 CI）",
+            file=sys.stderr,
+        )
         return 1
     repo_env = os.environ.get("GITHUB_REPOSITORY")
     if repo_env:
