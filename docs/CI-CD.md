@@ -138,6 +138,7 @@ docker rm -f web-infra-smoke
 - **GHCR 推送失败（403 / denied）**：确认 `build-image` Job 的 `permissions.packages: write` 已声明；首次推送时需在 GitHub Settings → Packages 中授权该镜像包（Package visibility 至少设为 private，并为本组织成员配置读权限）。
 - **keyless 签名失败（OIDC token / 5xx）**：确认 `build-image` Job 的 `permissions.id-token: write` 已声明；签名需要访问 `token.actions.githubusercontent.com` 与 Rekor 日志服务，自托管 runner / 受限网络需放行这两个域名。
 - **自动发版失败（创建 PR 403 Forbidden）**：release workflow 创建发版 PR 被 403 拒绝（`Resource not accessible by integration`）。根因：流程使用了默认 `GITHUB_TOKEN`——`pull_request` 事件下用其创建 PR 常被 403，且其创建的 PR 不会触发 CI（`wait_for_checks` 必超时）。修复：在仓库 Secrets 配置 `RELEASE_PAT`（经典 PAT，勾选 `repo` scope），workflow 已改为 checkout 与脚本均使用该 PAT。
+- **自动发版失败（推送 release 分支 non-fast-forward）**：`git push origin release/vX.Y.Z` 被拒（`[rejected] ... (non-fast-forward)`）。原因：上次运行失败遗留同名远端分支（如推送成功但创建 PR 失败），本次基于更新后的 main 重建同名分支，历史不一致被拒。脚本已自动处理：推送前用 `git ls-remote` 探测同名分支，存在则先 `git push --delete` 清理再推送，可重复执行；无需人工干预。
 
 ## 8. 仓库配置（Settings / Secrets）
 
