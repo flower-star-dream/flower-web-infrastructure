@@ -2,19 +2,20 @@
 # flower-web-infrastructure CI/CD（GitHub Actions）
 # @Author: 花海
 # @Date: 2026/08/16 10:00
-# @Description: 推送 main / 版本 tag / PR 时执行：静态类型检查（pyright，容忍既有基线）、
+# @Description: 推送 main / dev / 版本 tag / PR 时执行：静态类型检查（pyright，容忍既有基线）、
 #               单元测试（pytest 硬性门禁）、Docker 基础镜像构建、镜像签名
 #               （整改 S20-4：cosign keyless（OIDC）签名，基于 GitHub Actions OIDC 身份，
 #               无需配置任何密钥；部署侧必须配套 cosign verify 校验后再拉取镜像）。
-#               镜像推送（GHCR）：push main 推测试标签 <分支名>-<时间戳>-<构建号> 并更新 latest
-#               （脚手架等下游 CI 拉取 latest 作为基础镜像）；版本 tag v* 推 SemVer + latest；
-#               PR 只构建/扫描/冒烟，不推送（详见 docs/CI-CD.md）。
+#               dev 分支推送即执行完整验证（test + 镜像构建/漏洞扫描/冒烟，不推送镜像），
+#               保证 CI 通过后再提 PR；镜像推送（GHCR）：push main 推测试标签
+#               <分支名>-<时间戳>-<构建号> 并更新 latest（脚手架等下游 CI 拉取 latest 作为基础镜像）；
+#               版本 tag v* 推 SemVer + latest；PR 只构建/扫描/冒烟，不推送（详见 docs/CI-CD.md）。
 # =====================================================================
 name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]  # dev 分支推送即验证：CI 通过后再提 PR（仅验证不推送镜像）
     tags: ["v*"]          # 版本 tag 无条件触发：发布正式版镜像，不受 paths-ignore 影响
     paths-ignore:         # 仅文档/非代码变更不触发（不参与单元测试与镜像构建）
       - "*.md"

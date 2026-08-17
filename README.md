@@ -826,14 +826,15 @@ CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "
 
 ## 11. CI/CD
 
-GitHub Actions 工作流位于 `.github/workflows/ci.yml`，推送 `main` / 版本 tag `v*` / 提交 PR 时自动执行：
+GitHub Actions 工作流位于 `.github/workflows/ci.yml`，推送 `main` / `dev` / 版本 tag `v*` / 提交 PR 时自动执行：
 
 - **test**：静态类型检查（pyright，容忍既有基线）+ 单元测试（pytest，硬性门禁）；
-- **build-image**：Docker 基础镜像构建 + Trivy 漏洞扫描 + cosign keyless 签名（OIDC，无需密钥）+ `/health/live` 存活冒烟验证 + GHCR 推送（push `main` 推测试标签与 `latest`，版本 tag 推 SemVer + `latest`，PR 不推送）。
+- **build-image**：Docker 基础镜像构建 + Trivy 漏洞扫描 + cosign keyless 签名（OIDC，无需密钥）+ `/health/live` 存活冒烟验证 + GHCR 推送（push `main` 推测试标签与 `latest`，版本 tag 推 SemVer + `latest`，dev push 与 PR 不推送）。
 
 **触发规则**：
 
-- **非代码变更不触发**：仅修改文档与非代码文件（`*.md`、`docs/**`、`LICENSE`、`.gitignore`、`.env.example`、`db/**`、`data/**`）时，push `main` 与 PR 均不运行流水线（`paths-ignore`）；
+- **dev 分支推送即验证**：推送 `dev` 运行全量验证（test + 镜像构建/漏洞扫描/冒烟，不推送镜像），保证 **CI 通过后再提 PR**；
+- **非代码变更不触发**：仅修改文档与非代码文件（`*.md`、`docs/**`、`LICENSE`、`.gitignore`、`.env.example`、`db/**`、`data/**`）时，push `main` / `dev` 与 PR 均不运行流水线（`paths-ignore`）；
 - **版本 tag 无条件触发**：`v*` 版本 tag 不受 `paths-ignore` 影响，保证正式版镜像必发布；
 - **镜像签名**：cosign keyless（OIDC）签名，先推送 GHCR 再签名（cosign 只能签名仓库中的镜像，本地 `:ci` 标签会被解析到 Docker Hub 导致 401），部署侧必须配套 `cosign verify` 校验后再拉取镜像。
 
@@ -862,7 +863,7 @@ GitHub Actions 工作流位于 `.github/workflows/ci.yml`，推送 `main` / 版�
 框架通过 `prepare-commit-msg` 钩子在每次 `git commit` 时**自动递增版本号**并**全框架统一同步**（自动纳入本次提交，无需手动维护）：
 
 - 权威来源：`pyproject.toml` 的 `version` 字段（版本递增的基准）；
-- 同步位置：`src/web_infra/__init__.py`（`__version__`）、README 当前版本展示（徽章 / 项目信息表 / §13）、docs 中的版本示例（CI-CD.md 镜像标签、使用说明.md 安装命令）；
+- 同步位置：`src/web_infra/__init__.py`（`__version__`）、README 当前版本展示（徽章 / 项目信息表 / §13）、README 演示示例（规则示例表 / 开发分支示例 / 合入指南，以基础版本为基数整体重算）、docs 中的版本示例（CI-CD.md 镜像标签、使用说明.md 安装命令）；
 - 不随版本同步：`db/versions/` 与 `alembic/` 的 `V0.2.0-*` 数据库迁移链历史（改则破坏迁移对应关系）、`requirements.lock`（pip freeze 生成物，重新生成即可）、业务版本号（模型版本 / Prompt 模板版本 / 任务乐观锁）。
 
 版本递增规则：
@@ -890,6 +891,36 @@ python scripts/install_hooks.py --uninstall # 卸载（自动恢复备份）
 ```
 
 > 注意：提交前缀映射依赖 `prepare-commit-msg` 钩子，使用 `git commit --no-verify` 时不会触发自动版本更新。
+
+#### 13.1.1 dev → main 合入时如何正确生成正式版本
+
+版本号由**本地钩子**（`.git/hooks/`，仅在本地 `git commit` 时运行）与 **release workflow**（PR 合入后自动执行，见 [release.yml](./.github/workflows/release.yml)）协同维护。dev→main 合入推荐走 PR：
+
+**首选：dev→main 走 PR 合入（自动发版，无需手动操作）**
+
+dev 分支开发（本地钩子自动打 `X.Y.Z.devN` 测试版本号）→ 推送远程 → 创建 dev→main PR（网页或 `gh pr create` 均可）→ 合并 PR（网页 Merge / `gh pr merge` 均可）→ [release workflow](./.github/workflows/release.yml) 自动完成发版：
+
+- 剥离 `.devN` 并按 **PR 标题前缀**递增：`feat`→小版本、`fix` 等→补丁、`!` / `BREAKING CHANGE`→大版本、`docs`/`chore`→仅剥离正式化不递增；
+- 同步更新 README / docs 版本引用并提交推送 main；
+- 仅更新版本号，不打 tag。
+
+注意：**PR 标题必须带 conventional 前缀**，否则按补丁处理；release workflow 只在 `base=main` + `head=dev` 且合并成功时触发。
+
+**备选：本地合并（不走 PR，由本地钩子发版）**
+
+```bash
+git checkout main
+git pull origin main
+git merge --squash dev          # 将 dev 全部改动合并到暂存区（不产生 merge commit）
+git commit -m "feat: <本次合入的功能描述>"   # 本地钩子：剥离 .devN 后按前缀递增
+git push origin main
+```
+
+- 合入前 dev 版本为 `0.1.0.dev5`，合入后 main 上 `feat` 提交 → 剥离 `.devN` 得 `0.1.0` → 小版本 +1 → **`0.2.0`**（正式版），README 徽章 / 当前版本 / docs 示例随提交自动同步；
+- 如需保留分支历史可改用 `git merge dev`：merge 提交钩子自动跳过（不更新版本），需在 main 上再提交一次（如 `fix: 合入后的收尾修改`）生成正式版本；
+- 若 main 与 dev 都改过 `pyproject.toml` 产生冲突，手动保留版本号较高的一方即可（如保留 dev 的 `0.1.0.dev5`）。
+
+> 合入 main 生成正式版本号后，如需发布正式版镜像，手动打 tag 推送即可（`git tag v0.2.0 && git push origin v0.2.0`，CI 的 `v*` tag 会触发正式版镜像构建与签名）。
 
 ## 14. 许可证
 

@@ -161,42 +161,108 @@ class TestVersionFileIO:
         assert init_file.read_text(encoding="utf-8") == '__version__ = "0.3.0"\n'
 
     def test_write_version_syncs_docs_only_current_version(self, tmp_path: Path) -> None:
-        """文档同步：只更新当前版本展示位，不误伤规则示例表与数据库迁移版本。"""
+        """文档同步：更新当前版本展示位与演示示例基数，不误伤数据库迁移版本。"""
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text(
-            '[project]\nname = "flower-web-infrastructure"\nversion = "0.2.0"\n', encoding="utf-8"
+            '[project]\nname = "flower-web-infrastructure"\nversion = "0.1.0"\n', encoding="utf-8"
         )
         init_dir = tmp_path / "src" / "web_infra"
         init_dir.mkdir(parents=True)
-        (init_dir / "__init__.py").write_text('__version__ = "0.2.0"\n', encoding="utf-8")
+        (init_dir / "__init__.py").write_text('__version__ = "0.1.0"\n', encoding="utf-8")
 
         readme = tmp_path / "README.md"
         readme.write_text(
-            "[![version](https://img.shields.io/badge/version-v0.2.0-blue)](url)\n"
-            "| 当前版本 | v0.2.0 |\n"
-            "| `feat` | `0.2.0` → `0.3.0` |\n"
-            "| `fix` | `0.2.0` → `0.2.1` |\n"
-            "- 当前版本：**v0.2.0**（与 `pyproject.toml` 保持同步）。\n"
+            "[![version](https://img.shields.io/badge/version-v0.1.0-blue)](url)\n"
+            "| 当前版本 | v0.1.0 |\n"
+            "| `feat` | `0.1.0` → `0.2.0` |\n"
+            "| `fix` | `0.1.0` → `0.1.1` |\n"
+            "| BREAKING | `0.1.0` → `1.0.0` |\n"
+            "- 当前版本：**v0.1.0**（与 `pyproject.toml` 保持同步）。\n"
             "增量脚本：`V0.2.0-mq-outbox-next-retry-ddl.sql`\n",
             encoding="utf-8",
         )
         docs_dir = tmp_path / "docs"
         docs_dir.mkdir()
-        (docs_dir / "CI-CD.md").write_text("如 tag `v0.2.0` → 推送 `0.2.0`（与 pyproject.toml 保持一致）\n", encoding="utf-8")
-        (docs_dir / "使用说明.md").write_text('pip install "git+https://github.com/<org>/flower-web-infrastructure.git@v0.2.0"\n', encoding="utf-8")
+        (docs_dir / "CI-CD.md").write_text("如 tag `v0.1.0` → 推送 `0.1.0`（与 pyproject.toml 保持一致）\n", encoding="utf-8")
+        (docs_dir / "使用说明.md").write_text('pip install "git+https://github.com/<org>/flower-web-infrastructure.git@v0.1.0"\n', encoding="utf-8")
 
-        write_version(tmp_path, "0.2.0", "0.3.0")
+        write_version(tmp_path, "0.1.0", "0.2.0")
 
         expected_readme = (
-            "[![version](https://img.shields.io/badge/version-v0.3.0-blue)](url)\n"
-            "| 当前版本 | v0.3.0 |\n"
-            # 规则示例表保留旧示例（演示性质，不随版本同步）
+            "[![version](https://img.shields.io/badge/version-v0.2.0-blue)](url)\n"
+            "| 当前版本 | v0.2.0 |\n"
+            # 演示示例以新基础版本为基数整体重算（feat→minor、fix→patch、breaking→major）
             "| `feat` | `0.2.0` → `0.3.0` |\n"
             "| `fix` | `0.2.0` → `0.2.1` |\n"
-            "- 当前版本：**v0.3.0**（与 `pyproject.toml` 保持同步）。\n"
+            "| BREAKING | `0.2.0` → `1.0.0` |\n"
+            "- 当前版本：**v0.2.0**（与 `pyproject.toml` 保持同步）。\n"
             # 数据库迁移版本不误伤
             "增量脚本：`V0.2.0-mq-outbox-next-retry-ddl.sql`\n"
         )
         assert readme.read_text(encoding="utf-8") == expected_readme
-        assert (docs_dir / "CI-CD.md").read_text(encoding="utf-8") == "如 tag `v0.3.0` → 推送 `0.3.0`（与 pyproject.toml 保持一致）\n"
-        assert (docs_dir / "使用说明.md").read_text(encoding="utf-8") == 'pip install "git+https://github.com/<org>/flower-web-infrastructure.git@v0.3.0"\n'
+        assert (docs_dir / "CI-CD.md").read_text(encoding="utf-8") == "如 tag `v0.2.0` → 推送 `0.2.0`（与 pyproject.toml 保持一致）\n"
+        assert (docs_dir / "使用说明.md").read_text(encoding="utf-8") == 'pip install "git+https://github.com/<org>/flower-web-infrastructure.git@v0.2.0"\n'
+
+
+class TestSyncReadmeExamples:
+    """README 演示示例（规则示例表 / 开发分支示例 / 合入指南）随基础版本同步。"""
+
+    def _sync(self, text: str, old: str, new: str) -> str:
+        from version_bump import _sync_readme_examples
+
+        return _sync_readme_examples(text, old, new)
+
+    def test_example_table_rows(self) -> None:
+        text = (
+            "| `feat` | 小版本 +1 | `0.1.0` → `0.2.0` |\n"
+            "| `fix` | 补丁 +1 | `0.1.0` → `0.1.1` |\n"
+            "| 含 `BREAKING CHANGE:` | 大版本 +1 | `0.1.0` → `1.0.0` |\n"
+            "| 其他无前缀提交 | 按补丁 +1 | `0.1.0` → `0.1.1` |\n"
+        )
+        expected = (
+            "| `feat` | 小版本 +1 | `0.2.0` → `0.3.0` |\n"
+            "| `fix` | 补丁 +1 | `0.2.0` → `0.2.1` |\n"
+            "| 含 `BREAKING CHANGE:` | 大版本 +1 | `0.2.0` → `1.0.0` |\n"
+            "| 其他无前缀提交 | 按补丁 +1 | `0.2.0` → `0.2.1` |\n"
+        )
+        assert self._sync(text, "0.1.0", "0.2.0") == expected
+
+    def test_dev_branch_example(self) -> None:
+        text = (
+            "- **开发分支**：打测试版本号（PEP 440），如 `0.1.0` → `0.1.0.dev0` → `0.1.0.dev1`；"
+            "（如 `0.1.0.dev5` + fix → `0.1.1`）。\n"
+        )
+        expected = (
+            "- **开发分支**：打测试版本号（PEP 440），如 `0.2.0` → `0.2.0.dev0` → `0.2.0.dev1`；"
+            "（如 `0.2.0.dev5` + fix → `0.2.1`）。\n"
+        )
+        assert self._sync(text, "0.1.0", "0.2.0") == expected
+
+    def test_merge_guide_examples(self) -> None:
+        text = (
+            "- 合入前 dev 版本为 `0.1.0.dev5`，合入后 main 上 `feat` 提交 → 剥离 `.devN` 得 `0.1.0` "
+            "→ 小版本 +1 → **`0.2.0`**（正式版）。\n"
+            "> 手动打 tag 推送即可（`git tag v0.2.0 && git push origin v0.2.0`）。\n"
+        )
+        expected = (
+            "- 合入前 dev 版本为 `0.2.0.dev5`，合入后 main 上 `feat` 提交 → 剥离 `.devN` 得 `0.2.0` "
+            "→ 小版本 +1 → **`0.3.0`**（正式版）。\n"
+            "> 手动打 tag 推送即可（`git tag v0.3.0 && git push origin v0.3.0`）。\n"
+        )
+        assert self._sync(text, "0.1.0", "0.2.0") == expected
+
+    def test_db_migration_reference_not_touched(self) -> None:
+        text = (
+            "迁移链：`0001_message_outbox`（基线）→ `0002_add_next_retry_at`（等价 `V0.2.0-mq-outbox-next-retry-ddl.sql` 语义）。\n"
+            "| `fix` | `0.1.0` → `0.1.1` |\n"
+        )
+        expected = (
+            "迁移链：`0001_message_outbox`（基线）→ `0002_add_next_retry_at`（等价 `V0.2.0-mq-outbox-next-retry-ddl.sql` 语义）。\n"
+            "| `fix` | `0.2.0` → `0.2.1` |\n"
+        )
+        assert self._sync(text, "0.1.0", "0.2.0") == expected
+
+    def test_dev_base_unchanged_no_sync(self) -> None:
+        # dev 分支基础版本不变（0.1.0.dev0 → 0.1.0.dev1），示例不更新
+        text = "| `feat` | `0.1.0` → `0.2.0` |\n"
+        assert self._sync(text, "0.1.0.dev0", "0.1.0.dev1") == text
