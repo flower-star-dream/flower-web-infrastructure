@@ -1,5 +1,6 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+# setuptools>=77：PEP 639 license 新写法（SPDX 表达式 + license-files）的完整支持版本
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -9,8 +10,19 @@ description = "Web 系统通用后端基础设施（单体 / 微服务通用基�
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "花海" }]
-license = { text = "MIT" }
+# PEP 639：SPDX 表达式 + license-files（显式声明许可证文本随包发布）
+license = "MIT"
+license-files = ["LICENSE"]
 keywords = ["web", "backend", "infrastructure", "fastapi", "error-code", "trace-id"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
+    "Framework :: FastAPI",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+]
 # === 核心依赖（最小安装 = 默认 dependencies，保证 import web_infra / create_app 可用）===
 # 核心依赖 = 最小安装：Web / 配置 / 日志 / 错误码 / 认证 / 缓存（内存）/ 监控 / 密码加密。
 # MySQL / Redis / Mongo 为可选 extras（代码延迟导入，不安装不影响核心功能与包导入），
