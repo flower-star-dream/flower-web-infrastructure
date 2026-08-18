@@ -91,7 +91,7 @@ docker rm -f web-infra-smoke
 | ---- | ---- | ---- |
 | push `main` | `main-<时间戳>-<构建号>` | 测试版，如 `main-20260816103000-42` |
 | push `main` | `latest` | **跟随最新 main 构建**：脚手架等下游 CI 拉取 `:latest` 作为业务镜像基础（见脚手架 CI/CD 文档） |
-| 版本 tag `v*` | `<SemVer>` | 正式版，如 tag `v0.1.0-dev8` → 推送 `0.1.0-dev8`（与 `pyproject.toml` 版本号保持一致） |
+| 版本 tag `v*` | `<SemVer>` | 正式版，如 tag `v1.0.0` → 推送 `1.0.0`（与 `pyproject.toml` 版本号保持一致） |
 | 版本 tag `v*` | `latest` | 正式版发布时覆盖为最新正式版 |
 | PR | 不推送 | 只构建/扫描/冒烟，避免测试镜像污染仓库 |
 

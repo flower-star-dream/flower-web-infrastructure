@@ -1,6 +1,6 @@
 # flower web 通用框架（flower-web-infrastructure）
 
-[![version](https://img.shields.io/badge/version-v0.1.0-dev8-blue)](https://github.com/flower-star-dream/flower-web-infrastructure)
+[![version](https://img.shields.io/badge/version-v1.0.0-blue)](https://github.com/flower-star-dream/flower-web-infrastructure)
 [![python](https://img.shields.io/badge/python-3.10%2B-blue)](https://github.com/flower-star-dream/flower-web-infrastructure)
 [![license](https://img.shields.io/badge/license-MIT-green)](https://github.com/flower-star-dream/flower-web-infrastructure)
 [![CI](https://img.shields.io/github/actions/workflow/status/flower-star-dream/flower-web-infrastructure/ci.yml?label=CI&logo=github)](https://github.com/flower-star-dream/flower-web-infrastructure/actions)
@@ -9,7 +9,7 @@
 
 | 项目     | 值                                              |
 | -------- | ----------------------------------------------- |
-| 当前版本 | v0.1.0-dev8                                          |
+| 当前版本 | v1.0.0                                          |
 | Python   | >= 3.10                                         |
 | License  | MIT                                             |
 | 构建     | [GitHub Actions](./.github/workflows/ci.yml)    |
@@ -388,7 +388,7 @@ async with db.orm_session() as session:
 
 ```python
 from web_infra import (
-    Message, InMemoryOutboxStore, MysqlOutboxStore, OutboxPublisher,
+    Message, OutboxRecord, InMemoryOutboxStore, MysqlOutboxStore, OutboxPublisher,
     IdempotentConsumer, InMemoryMessageIdempotencyStore, RetryableConsumer,
     DlqConsumer, requeue_dlq_to_outbox, register_outbox_tasks, MqConfig, TaskScheduler,
 )
@@ -418,6 +418,7 @@ await dlq_consumer.start()
 
 > **分区与延迟消息（规范 §9.2/§9.5）**：`Message(partition_key=业务主键)` 时发布端按稳定哈希选分区（分区内串行消费，`RocketMqPublisher` 默认 `HashMessageQueueSelector`）；`send_delay` 在 RocketMQ 实现中映射官方固定 delay level（1s~2h 共 18 档，禁止 sleep）。
 
+```python
 # 消费端幂等（bizId 核心去重，业务失败自动回滚允许重试）
 consumer = IdempotentConsumer(InMemoryMessageIdempotencyStore())
 async def handler(message: Message) -> None:
@@ -435,8 +436,9 @@ await retryable.consume(message, guarded)
 ### 7.6 定时任务
 
 ```python
-from web_infra import TaskScheduler
+from web_infra import TaskScheduler, DistributedLock
 
+redis = ...  # 已就绪的 Redis 客户端（可选；不传 lock_factory 则单实例直接调度）
 scheduler = TaskScheduler(lock_factory=lambda name: DistributedLock(redis, f"sched:{name}"))
 
 async def sync_report() -> None:
@@ -453,7 +455,7 @@ scheduler.start()   # 应用启动时调用
 
 ```python
 from fastapi import Depends
-from web_infra import AuthConstant, PermissionGuard, DataPermissionGuard, JWTUtil
+from web_infra import AuthConstant, PermissionGuard, DataPermissionGuard, JWTUtil, RequestContext
 
 # 配置启用 auth 中间件后，接口声明权限点（权限走常量，校验失败返回 E2-PERM-000）
 @app.post("/v1/orders", dependencies=[Depends(PermissionGuard.require(AuthConstant.AUTH_PERM_ORDER_WRITE))])
@@ -538,7 +540,7 @@ async def startup():
 ### 7.9 多租户
 
 ```python
-from web_infra import TenantGuard, TenantAwareMixin, TenantQueryFilter, RequestContext
+from web_infra import TenantGuard, TenantAwareMixin, TenantQueryFilter, RequestContext, Base
 
 # 模型继承 TenantAwareMixin 后，挂载 TenantQueryFilter 自动注入 tenant_id 条件
 class Order(TenantAwareMixin, Base):
@@ -566,7 +568,7 @@ object_key = await upload.complete(task.upload_id, expected_md5=md5)  # 合并�
 
 ### 7.11 状态机
 
-框架级通用状态机组件（`web_infra/state_machine/`）。引擎只做「流转合法性校验 + 事件分发」，不触碰持久层（持久化由路由处理器完成）。
+框架级通用状态机组件（`web_infra/capabilities/state_machine/`）。引擎只做「流转合法性校验 + 事件分发」，不触碰持久层（持久化由路由处理器完成）。
 
 **声明状态与事件**：状态/事件为**任意 hashable 值**（不限枚举）；`BaseState`/`BaseEvent` 是推荐便捷基类
 （成员 value 即业务码，`description` 为中文名，`of(code)` 反查）：
@@ -746,34 +748,40 @@ alembic downgrade -1
 alembic upgrade head --sql
 ```
 
-```
+```text
 src/web_infra/
-├── application.py      # 应用启动器（配置驱动装配 + /health /metrics）
-├── result/             # 统一响应结构
-├── error/              # 错误码 + 异常 + 全局异常处理
-├── constants/          # 常量分类（Auth/Infra/Param/Sys/Biz + CacheKey + MQ）
-├── config/             # YAML 配置读取（ConfigSource / Settings / Nacos 配置中心 / ConfigCipher 加密值）
-├── capability/         # 能力注册表（能力契约 SPI + 依赖包含规则 + 装配校验：用户系统→认证→鉴权→支付）
-├── context/            # 请求上下文（contextvars）
-├── logging/            # 日志（统一格式 / TraceId / 脱敏）
-├── resilience/         # 韧性设计（重试 / 熔断 / 限流 / 分布式锁）
-├── cache/              # 缓存抽象 + 内存/Redis 实现 + KeyBuilder（租户维度）
-├── db/                 # 数据库接口 + MySQL/MongoDB/Redis/SQLite + 多租户拦截
-├── mq/                 # 消息队列抽象 + 幂等消费 + Outbox 本地事务表
-├── storage/            # 对象存储抽象 + 分片上传（本地/MinIO）
-├── payment/            # 支付 SPI（渠道抽象/回调验签/骨架兜底/对账/冲正/风控；可选能力，依赖 鉴权→认证→用户）
-├── schedule/           # 定时任务调度（asyncio + 可选分布式锁）
-├── registry/           # 服务注册发现 SPI（内存/Nacos）
-├── loadbalance/        # 负载均衡 SPI（随机/轮询/平滑加权）
-├── http/               # Feign 服务间调用客户端
-├── security/           # JWT（kid 轮换 / refresh token）/ 密码 / 验证码 / 登录锁定 / RBAC / 数据权限 / OAuth2
-├── task/               # 异步任务框架（状态机 / 心跳 / 死任务扫描）
-├── monitoring/         # Prometheus 指标（连接池/运行时/线程池/缓存/存储/MQ/注册中心，懒注册按配置动态采集）+ AI 指标 + 阶段耗时 + HTML 可视化 + 自定义分组 SPI + SLO/错误预算 + 池使用率双条件预警
-├── utils/              # 雪花 ID / 日期 / 文件锁 / Token 计数 / PDF 渲染
-├── ai/                 # Provider SPI + 模型网关（配额/权限策略/流错误分片）+ Prompt + 检索 + 缓存 + 配额
-│   ├── connection_pool/ # 连接池管理（流式/非流式分池）
-│   └── concurrency/     # 单供应商并发控制（执行槽 + 有界排队）
-└── web/                # FastAPI 集成（鉴权 / 幂等 / CORS / SSE / 健康检查）
+├── core/                    # 内核：应用编排 + 扩展点
+│   ├── application.py       # Application / create_app（配置驱动装配 + /health /metrics + 生命周期）
+│   ├── capability/          # 能力注册表（能力契约 SPI + 依赖包含规则 + 装配校验：用户系统→认证→鉴权→支付）
+│   └── extension/           # 统一扩展注册器（ExtensionPoint：build/startup/shutdown + 拓扑序编排）
+├── infra/                   # 技术底座（被所有能力共用）
+│   ├── config/              # 配置（ConfigSource / Settings / 加密值 enc: / application.default.yml）
+│   ├── result/              # 统一响应结构（Result / PageResult）
+│   ├── error/               # 错误码 + 异常 + 全局异常处理
+│   ├── constants/           # 常量分类（Auth/Infra/Param/Sys/Biz + CacheKey + MQ）
+│   ├── context/             # 请求上下文（contextvars：trace_id/用户/租户）
+│   ├── logging/             # 日志（统一格式 / TraceId / 脱敏 / LogSink SPI）
+│   ├── resilience/          # 韧性设计（重试 / 熔断 / 限流 / 分布式锁）
+│   ├── monitoring/          # Prometheus 指标 + HTML 可视化 + 组件指标 SPI + SLO + 池预警
+│   ├── web/                 # FastAPI 集成（中间件：鉴权/幂等/限流/安全头 / CORS / SSE / 健康检查 / 诊断守卫）
+│   └── utils/               # 雪花 ID / 日期 / 文件锁 / Token 计数 / PDF 渲染 / IP 工具
+└── capabilities/            # 能力层（相互独立、按需裁剪；顶层按已安装 extras 动态导出）
+    ├── ai/                  # Provider SPI + 模型网关（场景路由/主备降级/配额/计费/审核/缓存）+ Prompt + RAG + 连接池 + 并发控制
+    ├── cache/               # 缓存抽象 + 内存/Redis 实现 + KeyBuilder（租户维度）
+    ├── capacity/            # 并发访问能力评估（静态估算/运行时采样/集群探测 + /capacity 端点 + CLI）
+    ├── config/              # Nacos 配置中心接入（远程配置覆盖本地）
+    ├── db/                  # 数据库（MySQL/SQLite/Mongo/Redis + 多租户拦截 + 读写分离 + 分页）
+    ├── http/                # Feign 服务间调用客户端（重试/熔断/统一 503 兜底/链路头注入）
+    ├── loadbalance/         # 负载均衡 SPI（随机/轮询/平滑加权）
+    ├── mq/                  # 消息队列抽象 + 幂等消费 + Outbox 本地事务表
+    ├── payment/             # 支付 SPI（渠道抽象/回调验签/骨架兜底/对账/冲正/风控）+ 微信 APIv3（可选能力）
+    ├── registry/            # 服务注册发现 SPI（内存/Nacos）
+    ├── schedule/            # 定时任务调度（asyncio + 可选分布式锁 + 连续失败暂停）
+    ├── search/              # 全文检索 SPI（内存 BM25 / Elasticsearch）
+    ├── security/            # JWT / 密码 / 验证码 / 登录锁定 / RBAC / 数据权限 / OAuth2 / 社交登录
+    ├── state_machine/       # 通用状态机引擎（合法流转表 + 事件分发）
+    ├── storage/             # 对象存储抽象 + 分片上传（本地/MinIO）
+    └── task/                # 异步任务框架（状态机 / 心跳 / 死任务扫描 / 乐观锁）
 ```
 
 ## 9. 测试
@@ -842,9 +850,14 @@ GitHub Actions 工作流位于 `.github/workflows/ci.yml`，推送 `main` / `dev
 
 ## 12. 相关文档
 
+> **文档中心**：[docs/README.md](./docs/README.md) —— 按读者分层导航（业务决策 / 应用开发者 / 运维测试 / 架构钻研），全能力文档地图。
+
 | 文档                                      | 说明                                                                                                       |
 | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| [文档中心](./docs/README.md)              | **入口**：按角色选阅读路径，全能力文档地图与速查索引                                                        |
 | [使用说明](./docs/使用说明.md)              | 业务项目接入指南：最小/全量/按需安装、快速开始、配置说明、能力与依赖对照表                                  |
+| [快速开始](./docs/02-开发者指南/01-快速开始.md) | 10 分钟跑通第一个服务（最小工程 + 健康检查 + 统一响应）                                                  |
+| [配置参考](./docs/02-开发者指南/03-配置参考.md) | 全量配置项字典（含默认值与环境变量映射）                                                                 |
 | [CI/CD 文档](./docs/CI-CD.md)              | CI 流水线触发时机、门禁策略、镜像推送开启方式、本地复现                                                    |
 | [SPI 扩展点文档](./docs/SPI-Extensions.md) | 框架预留的全部 SPI 扩展点：接口清单、方法契约、默认实现与扩展接入方式（自定义供应商/存储/缓存/消息队列等） |
 | [常量与错误码](./docs/常量与错误码.md) | **框架常量与错误码的单一权威清单**：全部常量（含 HTTP 状态码 `HttpStatusConstant`）与错误码总览，业务新增/引用前先查阅本文档，防止冲突或重复定义 |
@@ -855,35 +868,41 @@ GitHub Actions 工作流位于 `.github/workflows/ci.yml`，推送 `main` / `dev
   - `MAJOR`：不兼容的破坏性变更；
   - `MINOR`：向后兼容的新能力；
   - `PATCH`：向后兼容的缺陷修复。
-- 当前版本：**v0.1.0-dev8**（与 `pyproject.toml` 保持同步）。
+- 当前版本：**v1.0.0**（与 `pyproject.toml` 保持同步）。
 - 错误码 `E<大类>-<子类/域>-<3位编号>`、成功码 `S0000` 一经发布不可变更语义。
 - 破坏性变更记录：
   - **v1.0.0（三层结构整改）**：子包路径迁移至 `core / infra / capabilities` 三层——`web_infra.{ai,db,mq,payment,security,...}` → `web_infra.capabilities.{ai,db,mq,payment,security,...}`（如 `web_infra.payment` → `web_infra.capabilities.payment`）；`web_infra` 顶层导出保持不变（`from web_infra import Result, create_app` 等不受影响）。升级指引：将子包导入路径统一改为 `web_infra.capabilities.*`（脚手架已适配，业务代码需同步调整）。
 
-### 13.1 自动版本管理
+### 13.1 版本管理（release-only）
 
-框架通过 `prepare-commit-msg` 钩子在每次 `git commit` 时**自动递增版本号**并**全框架统一同步**（自动纳入本次提交，无需手动维护）：
+版本递增**不由本地提交触发**（2026-08-18 整改：git 限制——pre-commit 钩子拿不到提交消息无法按类型递增，prepare-commit-msg/commit-msg 中修改 index 不进本次提交）。框架采用 **release-only** 机制：
+
+- **正式版本号**：dev→main 合入时由 [release workflow](./.github/workflows/release.yml) 自动生成（依据 PR 标题前缀递增，见下表），并全框架统一同步版本文件；
+- **本地钩子**（`pre-commit`）：只做两件事——① 校验版本文件一致性（`pyproject.toml` / `__init__.py` / README 三处版本一致，不一致**阻止提交**防止漂移）；② 暂存版本文件变更（保证手动/发布流程更新的版本文件随提交入库，不再残留暂存区）。由 `scripts/version_check.py` 实现；
+- **dev 分支预发布号**：本地提交不再自动递增；dev 分支版本号保持与上次发布/手动同步的状态一致，正式发版时由 release workflow 依据 PR 标题从 `main` 当前版本递增。
+
+权威来源与同步位置（release workflow 使用 `scripts/version_bump.py` 的 `write_version` 执行）：
 
 - 权威来源：`pyproject.toml` 的 `version` 字段（版本递增的基准）；
 - 同步位置：`src/web_infra/__init__.py`（`__version__`）、README 当前版本展示（徽章 / 项目信息表 / §13）、README 演示示例（规则示例表 / 开发分支示例 / 合入指南，以基础版本为基数整体重算）、docs 中的版本示例（CI-CD.md 镜像标签、使用说明.md 安装命令）；
 - 不随版本同步：`db/versions/` 与 `alembic/` 的 `V0.2.0-*` 数据库迁移链历史（改则破坏迁移对应关系）、`requirements.lock`（pip freeze 生成物，重新生成即可）、业务版本号（模型版本 / Prompt 模板版本 / 任务乐观锁）。
 
-版本递增规则：
+版本递增规则（由 release workflow 依据 **PR 标题**判定）：
 
 | 提交前缀（conventional commits）          | 版本变化        | 示例                          |
 | ----------------------------------------- | --------------- | ----------------------------- |
-| `feat` / `feat(scope)`                    | 小版本 +1       | `0.1.0` → `0.2.0`             |
-| `fix` / `refactor` / `perf` / `test` / `build` / `ci` / `style` | 补丁 +1 | `0.1.0` → `0.1.1` |
-| 含 `BREAKING CHANGE:`（footer）或 `!:`（如 `feat!: xxx`） | 大版本 +1 | `0.1.0` → `1.0.0` |
+| `feat` / `feat(scope)`                    | 小版本 +1       | `1.0.0` → `1.1.0`             |
+| `fix` / `refactor` / `perf` / `test` / `build` / `ci` / `style` | 补丁 +1 | `1.0.0` → `1.0.1` |
+| 含 `BREAKING CHANGE:`（footer）或 `!:`（如 `feat!: xxx`） | 大版本 +1 | `1.0.0` → `2.0.0` |
 | `docs` / `chore`（纯文档/杂物）           | 不变            | —                             |
 | `Merge ...` / revert / squash（无前缀，无法解析） | 跳过，不变 | —                             |
-| 其他无前缀提交                            | 按补丁 +1（建议使用规范前缀） | `0.1.0` → `0.1.1` |
+| 其他无前缀提交                            | 按补丁 +1（建议使用规范前缀） | `1.0.0` → `1.0.1` |
 
 分支规则：
 
-- **开发分支（`dev` / `dev/*` / `dev-*` / `*-dev`）**：打预发布版本号（SemVer 规范，`-devN` 同时兼容 PEP 440），基础版本不动、仅递增 dev 序号，如 `0.1.0` → `0.1.0-dev0` → `0.1.0-dev1`；合入 `main` 后正式提交剥离 `-devN` 并按上表递增生成正式版本（如 `0.1.0-dev5` + fix → `0.1.1`）。
-- **正式分支（`main` 等）**：直接按上表递增正式版本号。
-- 版本打 tag（`v*`，触发 CI 正式版镜像发布）：dev→main 走 PR 合入时由 release workflow **自动完成**；直接提交 main / 本地合入场景仍需手动执行（本地钩子只更新版本号不打 tag）。
+- **开发分支（`dev` / `dev/*` / `dev-*` / `*-dev`）**：release-only 下本地提交不再自动递增版本号，dev 分支版本保持当前状态（如 `1.0.0-dev8` 或与上次发布一致）；如需手动维护 dev 预发布号，可执行 `python -c "import sys; sys.path.insert(0, 'scripts'); from version_bump import *"` 参考计算逻辑，或直接改版本文件（pre-commit 会校验三处一致）。
+- **正式分支（`main` 等）**：正式版本号由 dev→main 合入时的 release workflow 依据 PR 标题自动递增。
+- 版本打 tag（`v*`，触发 CI 正式版镜像发布）：dev→main 走 PR 合入时由 release workflow **自动完成**；直接提交 main / 本地合入场景需手动执行（`git tag vX.Y.Z && git push origin vX.Y.Z`）。
 
 安装钩子（`.git/hooks` 不入库，每个 clone 后执行一次）：
 
@@ -892,15 +911,15 @@ python scripts/install_hooks.py             # 安装（已有他人钩子先备�
 python scripts/install_hooks.py --uninstall # 卸载（自动恢复备份）
 ```
 
-> 注意：提交前缀映射依赖 `prepare-commit-msg` 钩子，使用 `git commit --no-verify` 时不会触发自动版本更新。
+> 注意：`pre-commit` 钩子负责版本一致性校验与暂存，使用 `git commit --no-verify` 时会跳过校验与暂存（版本文件变更不会被自动暂存入库）。
 
 #### 13.1.1 dev → main 合入时如何正确生成正式版本
 
-版本号由**本地钩子**（`.git/hooks/`，仅在本地 `git commit` 时运行）与 **release workflow**（PR 合入后自动执行，见 [release.yml](./.github/workflows/release.yml)）协同维护。dev→main 合入推荐走 PR：
+正式版本号由 **release workflow**（PR 合入后自动执行，见 [release.yml](./.github/workflows/release.yml)）依据 PR 标题生成；本地 `pre-commit` 钩子只负责版本一致性校验与暂存。dev→main 合入推荐走 PR：
 
 **首选：dev→main 走 PR 合入（自动发版，无需手动操作）**
 
-dev 分支开发（本地钩子自动打 `X.Y.Z-devN` 预发布版本号）→ 推送远程 → 创建 dev→main PR（网页或 `gh pr create` 均可）→ 合并 PR（网页 Merge / `gh pr merge` 均可）→ [release workflow](./.github/workflows/release.yml) 自动完成发版：
+dev 分支开发（本地钩子校验版本一致性并暂存版本文件，不自动递增版本号）→ 推送远程 → 创建 dev→main PR（网页或 `gh pr create` 均可，标题带 conventional 前缀）→ 合并 PR（网页 Merge / `gh pr merge` 均可）→ [release workflow](./.github/workflows/release.yml) 自动完成发版：
 
 - 剥离 `-devN` 并按 **PR 标题前缀**递增：`feat`→小版本、`fix` 等→补丁、`!` / `BREAKING CHANGE`→大版本、`docs`/`chore`→仅剥离正式化不递增；
 - 同步更新 README / docs 版本引用；
@@ -911,21 +930,25 @@ dev 分支开发（本地钩子自动打 `X.Y.Z-devN` 预发布版本号）→ �
 
 > **前置配置（首次接入必做）**：release workflow 使用仓库 Secret `RELEASE_PAT`（经典 PAT，勾选 `repo` scope，覆盖 contents + pull_requests 写权限），**不能使用默认 `GITHUB_TOKEN`**——GitHub 规定用 `GITHUB_TOKEN` 创建 PR / 推送不会触发新的 workflow run（发版 PR 将无法触发 CI、`wait_for_checks` 必超时），且 `pull_request` 事件下用其创建 PR 常被 403 拒绝（`Resource not accessible by integration`）。配置步骤：GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic) → Generate new token（勾选 `repo`）→ 存入仓库 Secrets（Settings → Secrets and variables → Actions，名称 `RELEASE_PAT`）。
 
-**备选：本地合并（不走 PR，由本地钩子发版）**
+**备选：本地合并（不走 PR，需手动递增版本）**
+
+release-only 下本地合入 main 不再由钩子自动递增版本号，合入后需**手动同步版本文件**：
 
 ```bash
 git checkout main
 git pull origin main
 git merge --squash dev          # 将 dev 全部改动合并到暂存区（不产生 merge commit）
-git commit -m "feat: <本次合入的功能描述>"   # 本地钩子：剥离 -devN 后按前缀递增
+# 手动递增正式版本号并同步版本文件（--bump 类型：feat/fix/breaking/docs）
+python -c "import sys; sys.path.insert(0, 'scripts'); from version_bump import *; ..."   # 或直接编辑 pyproject.toml 后执行同步
+git add -A && git commit -m "feat: <本次合入的功能描述>"
 git push origin main
+git tag vX.Y.Z && git push origin vX.Y.Z   # 手动打正式版 tag，触发 CI 正式版镜像发布
 ```
 
-- 合入前 dev 版本为 `0.1.0-dev5`，合入后 main 上 `feat` 提交 → 剥离 `-devN` 得 `0.1.0` → 小版本 +1 → **`0.2.0`**（正式版），README 徽章 / 当前版本 / docs 示例随提交自动同步；
-- 如需保留分支历史可改用 `git merge dev`：merge 提交钩子自动跳过（不更新版本），需在 main 上再提交一次（如 `fix: 合入后的收尾修改`）生成正式版本；
-- 若 main 与 dev 都改过 `pyproject.toml` 产生冲突，手动保留版本号较高的一方即可（如保留 dev 的 `0.1.0-dev5`）。
+- 手动递增时以 `main` 当前版本为基准：`feat`→小版本 +1、`fix` 等→补丁 +1、`!` / `BREAKING CHANGE`→大版本 +1；改 `pyproject.toml` 的 `version` 后，用 `scripts/version_bump.py` 的 `write_version` 同步 `__init__.py` / README / docs 版本引用（pre-commit 会校验三处一致）；
+- 若 main 与 dev 都改过 `pyproject.toml` 产生冲突，手动保留版本号较高的一方即可。
 
-> 合入 main 生成正式版本号后，正式版镜像由 release workflow **自动打 tag 发布**（dev→main 走 PR 合入时，发版 PR 合并后自动推 `vX.Y.Z` tag）；本地合并场景（备选方案）需手动打 tag 推送（`git tag v0.2.0 && git push origin v0.2.0`，CI 的 `v*` tag 会触发正式版镜像构建与签名）。
+> 合入 main 生成正式版本号后，正式版镜像由 release workflow **自动打 tag 发布**（dev→main 走 PR 合入时，发版 PR 合并后自动推 `vX.Y.Z` tag）；本地合并场景（备选方案）需手动打 tag 推送（`git tag vX.Y.Z && git push origin vX.Y.Z`，CI 的 `v*` tag 会触发正式版镜像构建与签名）。
 
 ## 14. 许可证
 
