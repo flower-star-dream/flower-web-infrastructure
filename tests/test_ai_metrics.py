@@ -5,7 +5,7 @@ AI 指标单元测试
 @Date: 2026/08/14 16:00
 @Description: 验证 AI 调用/时延/Token/成本指标埋点与标签低基数（AI 规范 §15）。
 """
-from web_infra.monitoring import (
+from web_infra.infra.monitoring import (
     init_ai_metrics,
     record_ai_call,
     record_ai_cost,
@@ -13,7 +13,7 @@ from web_infra.monitoring import (
     record_ai_tokens,
     record_ai_ttft,
 )
-from web_infra.monitoring.ai_metrics import (
+from web_infra.infra.monitoring.ai_metrics import (
     AI_COST_TOTAL,
     AI_LLM_CALLS_TOTAL,
     AI_LLM_DURATION_SECONDS,

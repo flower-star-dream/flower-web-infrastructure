@@ -18,11 +18,11 @@ from typing import Any, AsyncGenerator
 
 import pytest
 
-from web_infra.application import create_app
-from web_infra.config import ConfigError
-from web_infra.db import DatabaseFactoryInterface, DatabaseRegistry, SqliteSessionFactory
-from web_infra.db.database_manager import DatabaseManager
-from web_infra.db.mysql_database import MySQLDatabase
+from web_infra.core.application import create_app
+from web_infra.infra.config import ConfigError
+from web_infra.capabilities.db import DatabaseFactoryInterface, DatabaseRegistry, SqliteSessionFactory
+from web_infra.capabilities.db.database_manager import DatabaseManager
+from web_infra.capabilities.db.mysql_database import MySQLDatabase
 
 
 class _FakePgDatabase:

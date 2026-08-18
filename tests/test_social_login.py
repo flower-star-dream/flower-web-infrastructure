@@ -10,9 +10,9 @@ import pytest
 
 from datetime import datetime, timezone
 
-from web_infra.error import BizException, CommonErrorCode, CommonErrorCodeEnum
-from web_infra.security import JWTUtil, TokenVerifyStatus
-from web_infra.security.social import (
+from web_infra.infra.error import BizException, CommonErrorCode, CommonErrorCodeEnum
+from web_infra.capabilities.security import JWTUtil, TokenVerifyStatus
+from web_infra.capabilities.security.social import (
     DemoSocialPlatform,
     InMemorySocialBindingStore,
     SocialBinding,

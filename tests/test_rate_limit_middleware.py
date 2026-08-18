@@ -10,8 +10,8 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
-from web_infra.context import RequestContext
-from web_infra.web import RateLimitMiddleware
+from web_infra.infra.context import RequestContext
+from web_infra.infra.web import RateLimitMiddleware
 
 
 def _build_app(qps: float = 100.0, burst: float = 50.0, key_by: str = "path") -> FastAPI:

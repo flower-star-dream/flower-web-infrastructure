@@ -9,9 +9,9 @@ MySQL 数据库配置单元测试
 import pytest
 from sqlalchemy import text
 
-from web_infra.db import MySQLConfig, MySQLConnectionSettings
-from web_infra.db.mysql_config import _sql_preview
-from web_infra.monitoring.metrics import (
+from web_infra.capabilities.db import MySQLConfig, MySQLConnectionSettings
+from web_infra.capabilities.db.mysql_config import _sql_preview
+from web_infra.infra.monitoring.metrics import (
     SLOW_SQL_TOTAL,
     get_slow_sql_samples,
     init_metrics,
@@ -129,7 +129,7 @@ def test_sql_preview_masks_literals():
 @pytest.mark.asyncio
 async def test_slow_sql_event_calls_record_slow_sql(monkeypatch):
     """慢 SQL 事件触发 record_slow_sql（P2 warning 分支），日志保留"""
-    import web_infra.db.mysql_config as mc
+    import web_infra.capabilities.db.mysql_config as mc
     from sqlalchemy.ext.asyncio import create_async_engine as real_create_async_engine
 
     recorded = []

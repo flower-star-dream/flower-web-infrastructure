@@ -14,9 +14,9 @@ import pytest
 from sqlalchemy import Index, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-from web_infra.context import RequestContext
-from web_infra.db import DatabaseManager, TenantAwareMixin, TenantDatabaseRouter
-from web_infra.error import PermException
+from web_infra.infra.context import RequestContext
+from web_infra.capabilities.db import DatabaseManager, TenantAwareMixin, TenantDatabaseRouter
+from web_infra.infra.error import PermException
 
 
 class _FakeDatabase:

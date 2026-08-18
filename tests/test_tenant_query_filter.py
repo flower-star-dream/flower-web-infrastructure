@@ -10,9 +10,9 @@ import pytest
 from sqlalchemy import String, create_engine, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
-from web_infra.context import RequestContext
-from web_infra.db import TenantAwareMixin, TenantQueryFilter
-from web_infra.error import BizException
+from web_infra.infra.context import RequestContext
+from web_infra.capabilities.db import TenantAwareMixin, TenantQueryFilter
+from web_infra.infra.error import BizException
 
 
 class Base(DeclarativeBase):

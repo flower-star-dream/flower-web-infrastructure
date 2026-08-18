@@ -11,7 +11,7 @@ import math
 
 import pytest
 
-from web_infra.ai.retrieval.hash_embedding_provider import HashEmbeddingProvider
+from web_infra.capabilities.ai.retrieval.hash_embedding_provider import HashEmbeddingProvider
 
 
 def test_embed_is_deterministic():

@@ -7,7 +7,7 @@
 """
 import pytest
 
-from web_infra.db import PageQuery, SqliteSessionFactory
+from web_infra.capabilities.db import PageQuery, SqliteSessionFactory
 
 
 def test_page_query_offset():

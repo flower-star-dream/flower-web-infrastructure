@@ -12,10 +12,10 @@
 | ---- | ---- | ---- |
 | `push` | `main` | 合并到主干后运行全量流水线，并推送测试标签镜像（含 `latest`） |
 | `push` | `dev` | 开发分支推送即运行全量验证（test + 镜像构建/漏洞扫描/冒烟），**不推送**镜像；保证 CI 通过后再提 PR |
-| `push` | `v*` 版本 tag | 打版本标签时运行全量流水线，并推送正式版镜像（SemVer + `latest`）。**无条件触发**（不受 `paths-ignore` 影响，保证正式版必发布） |
+| `push` | `v*` 版本 tag | 打版本标签时运行全量流水线，并推送正式版镜像（SemVer + `latest`）。受 `paths-ignore` 过滤：tag 指向的提交仅含文档/非代码变更（`*.md`、`docs/**` 等）时跳过；正式发版提交必然修改 `pyproject.toml`，不受影响 |
 | `pull_request` | 任意 | PR 提交/更新时运行，作为合入门禁；只构建/扫描/冒烟，**不推送**镜像 |
 
-> **非代码变更不触发**（`push` main / dev 与 PR 均生效）：仅修改文档与非代码文件（`*.md`、`docs/**`、`LICENSE`、`.gitignore`、`.env.example`、`db/**`、`data/**`）时不运行流水线；这些变更不参与单元测试与镜像构建。版本 tag 发布除外。
+> **非代码变更不触发**（`push` main / dev、`push` tag 与 PR 均生效）：仅修改文档与非代码文件（`*.md`、`docs/**`、`LICENSE`、`.gitignore`、`.env.example`、`db/**`、`data/**`）时不运行流水线；这些变更不参与单元测试与镜像构建。正式发版 tag 指向的提交必然修改 `pyproject.toml`，故实际不会跳过。
 
 ## 2. 流水线结构
 
@@ -91,7 +91,7 @@ docker rm -f web-infra-smoke
 | ---- | ---- | ---- |
 | push `main` | `main-<时间戳>-<构建号>` | 测试版，如 `main-20260816103000-42` |
 | push `main` | `latest` | **跟随最新 main 构建**：脚手架等下游 CI 拉取 `:latest` 作为业务镜像基础（见脚手架 CI/CD 文档） |
-| 版本 tag `v*` | `<SemVer>` | 正式版，如 tag `v0.1.1` → 推送 `0.1.1`（与 `pyproject.toml` 版本号保持一致） |
+| 版本 tag `v*` | `<SemVer>` | 正式版，如 tag `v0.1.0-dev8` → 推送 `0.1.0-dev8`（与 `pyproject.toml` 版本号保持一致） |
 | 版本 tag `v*` | `latest` | 正式版发布时覆盖为最新正式版 |
 | PR | 不推送 | 只构建/扫描/冒烟，避免测试镜像污染仓库 |
 
@@ -125,7 +125,7 @@ docker rm -f web-infra-smoke
 | 新增依赖 | 修改 `pyproject.toml` 的 `dependencies` / `optional-dependencies` |
 | 新增检查（如代码覆盖率） | 在 `test` Job 追加步骤，并明确门禁级别 |
 | 修改镜像内容 | 编辑 `Dockerfile`，注意 `HEALTHCHECK` 依赖 `/health/live` 存活端点（整改 S19-1）；就绪探测 `/health/ready` 由编排层配置 |
-| 版本发布 | 遵循 SemVer，同步更新 `pyproject.toml` 与 `README.md` 版本号，然后打 `v<版本>` tag 触发正式版镜像推送（SemVer + `latest`） |
+| 版本发布 | dev→main 走 PR 合入：release workflow 自动发版并打 `v<版本>` tag（触发正式版镜像推送 SemVer + `latest`）；直接提交 main / 本地合入场景手动打 `v<版本>` tag（需与 `pyproject.toml` 版本号一致） |
 | 变更推送策略（如目标仓库） | `build-image` Job 的登录与推送步骤，同步更新本文档 [4. 镜像推送](#4-镜像推送已启用) |
 | 配置/变更 Secret 或包权限 | 见 [8. 仓库配置（Settings / Secrets）](#8-仓库配置settings--secrets) |
 

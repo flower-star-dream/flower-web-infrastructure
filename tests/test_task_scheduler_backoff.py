@@ -8,7 +8,7 @@
 """
 import pytest
 
-from web_infra.schedule import TaskScheduler
+from web_infra.capabilities.schedule import TaskScheduler
 
 
 @pytest.mark.asyncio

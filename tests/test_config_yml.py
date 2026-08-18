@@ -10,8 +10,8 @@ YAML 配置与配置驱动中间件单元测试
 import pytest
 
 from web_infra import Application, create_app
-from web_infra.config import ConfigError, Settings, YamlConfigSource
-from web_infra.web import AuthMiddleware, IdempotencyMiddleware, InMemoryIdempotencyStore, RedisIdempotencyStore, TraceIdMiddleware
+from web_infra.infra.config import ConfigError, Settings, YamlConfigSource
+from web_infra.infra.web import AuthMiddleware, IdempotencyMiddleware, InMemoryIdempotencyStore, RedisIdempotencyStore, TraceIdMiddleware
 
 
 def test_default_yml_loaded_by_settings():

@@ -9,8 +9,8 @@
 """
 import pytest
 
-from web_infra.context import RequestContext
-from web_infra.db import DatabaseManager, TenantDatabaseRouter
+from web_infra.infra.context import RequestContext
+from web_infra.capabilities.db import DatabaseManager, TenantDatabaseRouter
 
 
 class _FakeDatabase:

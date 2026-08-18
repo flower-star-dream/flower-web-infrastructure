@@ -13,7 +13,7 @@ import httpx
 import pytest
 from typing import Any
 
-from web_infra.ai import (
+from web_infra.capabilities.ai import (
     ChatMessage,
     ChatRequest,
     ChatRole,
@@ -25,9 +25,9 @@ from web_infra.ai import (
     ModelProviderRegistry,
     OpenAICompatibleProvider,
 )
-from web_infra.application import create_app
-from web_infra.ai.dict_model_config_store import DictModelConfigStore
-from web_infra.error import BizException
+from web_infra.core.application import create_app
+from web_infra.capabilities.ai.dict_model_config_store import DictModelConfigStore
+from web_infra.infra.error import BizException
 
 API_BASE = "http://mock.test/v1"
 

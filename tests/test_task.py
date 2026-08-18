@@ -10,7 +10,7 @@ import time
 
 import pytest
 
-from web_infra.task import (
+from web_infra.capabilities.task import (
     TaskExecutor,
     TaskRecord,
     TaskStatus,

@@ -9,8 +9,8 @@ import asyncio
 
 import pytest
 
-from web_infra.ai import ConcurrencyGuard
-from web_infra.error import BizException
+from web_infra.capabilities.ai import ConcurrencyGuard
+from web_infra.infra.error import BizException
 
 
 @pytest.mark.asyncio

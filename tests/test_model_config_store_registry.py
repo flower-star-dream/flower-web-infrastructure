@@ -13,9 +13,9 @@ from __future__ import annotations
 
 import pytest
 
-from web_infra.ai import DictModelConfigStore, ModelConfig, ModelConfigStoreRegistry
-from web_infra.application import create_app
-from web_infra.config import ConfigError
+from web_infra.capabilities.ai import DictModelConfigStore, ModelConfig, ModelConfigStoreRegistry
+from web_infra.core.application import create_app
+from web_infra.infra.config import ConfigError
 
 
 class _FakeStore(DictModelConfigStore):

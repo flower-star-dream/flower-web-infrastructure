@@ -13,11 +13,11 @@ import jwt
 import pytest
 from fastapi import Depends, FastAPI
 
-from web_infra.constants import AuthConstant
-from web_infra.context import RequestContext
-from web_infra.security import JWTUtil, PermissionGuard
-from web_infra.security.secure_config_loader import SecureConfigLoader
-from web_infra.web import AuthMiddleware
+from web_infra.infra.constants import AuthConstant
+from web_infra.infra.context import RequestContext
+from web_infra.capabilities.security import JWTUtil, PermissionGuard
+from web_infra.capabilities.security.secure_config_loader import SecureConfigLoader
+from web_infra.infra.web import AuthMiddleware
 
 _SECRET = "test-secret-for-auth-middleware-0123456789"
 
@@ -30,7 +30,7 @@ def _jwt_secret(monkeypatch):
 
 def _build_app(with_permission: bool = False) -> FastAPI:
     """构造带鉴权中间件的测试应用（可选权限点路由；注册全局异常处理与生产一致）"""
-    from web_infra.error import register_global_exception_handlers
+    from web_infra.infra.error import register_global_exception_handlers
 
     app = FastAPI()
     register_global_exception_handlers(app)
@@ -69,6 +69,15 @@ async def test_whitelist_path_anonymous_allowed():
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         assert (await client.get("/health")).status_code == 404  # 白名单放行进入路由（未注册则 404 而非 401）
+
+
+@pytest.mark.asyncio
+async def test_capacity_path_anonymous_allowed():
+    """白名单含 /capacity：匿名放行（未注册路由返回 404 而非 401）"""
+    app = _build_app()
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        assert (await client.get("/capacity")).status_code == 404
 
 
 @pytest.mark.asyncio

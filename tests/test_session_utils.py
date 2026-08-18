@@ -7,7 +7,7 @@
 """
 import pytest
 
-from web_infra.db import connection_released, release_session_connection
+from web_infra.capabilities.db import connection_released, release_session_connection
 
 
 class _FakeSession:

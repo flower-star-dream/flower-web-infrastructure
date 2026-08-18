@@ -19,11 +19,11 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.x509.oid import NameOID
 
-from web_infra.payment.payment_constant import PaymentConstant
-from web_infra.payment.payment_config import WechatPayConfig
-from web_infra.payment.provider.wechat.wechat_callback_verifier import WeChatCallbackVerifier
-from web_infra.payment.provider.wechat.wechat_pay_client import WeChatPayClient
-from web_infra.payment.provider.wechat.wechat_signer import WeChatSigner
+from web_infra.capabilities.payment.payment_constant import PaymentConstant
+from web_infra.capabilities.payment.payment_config import WechatPayConfig
+from web_infra.capabilities.payment.provider.wechat.wechat_callback_verifier import WeChatCallbackVerifier
+from web_infra.capabilities.payment.provider.wechat.wechat_pay_client import WeChatPayClient
+from web_infra.capabilities.payment.provider.wechat.wechat_signer import WeChatSigner
 
 API_V3_KEY = "test-apiv3-key-0123456789abcdef0"  # 32 字节（AES-256-GCM 要求）
 

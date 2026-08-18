@@ -7,7 +7,7 @@ AI 模型供应商 SPI 单元测试
 """
 import pytest
 
-from web_infra.ai import (
+from web_infra.capabilities.ai import (
     ModelProviderInterface,
     ModelProviderRegistry,
     ChatRole,
@@ -16,8 +16,8 @@ from web_infra.ai import (
     ChatResponse,
     FinishReason,
 )
-from web_infra.error import BizException
-from web_infra.error.ai_error_code import AiErrorCode
+from web_infra.infra.error import BizException
+from web_infra.infra.error.ai_error_code import AiErrorCode
 
 
 class _FakeProvider(ModelProviderInterface):

@@ -13,12 +13,12 @@ from __future__ import annotations
 
 import pytest
 
-from web_infra.application import create_app
-from web_infra.cache import CacheBackendRegistry, CacheConfig, MemoryCacheBackend
-from web_infra.config import ConfigError
-from web_infra.mq import InMemoryMessageQueue, MessageQueueRegistry
-from web_infra.registry import InMemoryServiceRegistry, ServiceDiscoveryRegistry
-from web_infra.storage import LocalObjectStorage, ObjectStorageRegistry, StorageConfig
+from web_infra.core.application import create_app
+from web_infra.capabilities.cache import CacheBackendRegistry, CacheConfig, MemoryCacheBackend
+from web_infra.infra.config import ConfigError
+from web_infra.capabilities.mq import InMemoryMessageQueue, MessageQueueRegistry
+from web_infra.capabilities.registry import InMemoryServiceRegistry, ServiceDiscoveryRegistry
+from web_infra.capabilities.storage import LocalObjectStorage, ObjectStorageRegistry, StorageConfig
 
 
 @pytest.fixture

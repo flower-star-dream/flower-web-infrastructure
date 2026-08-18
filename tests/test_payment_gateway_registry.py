@@ -7,9 +7,9 @@
 """
 import pytest
 
-from web_infra.payment.in_memory_payment_gateway import InMemoryPaymentGateway
-from web_infra.payment.payment_error_code import PaymentErrorCode
-from web_infra.payment.payment_gateway_registry import PaymentGatewayRegistry
+from web_infra.capabilities.payment.in_memory_payment_gateway import InMemoryPaymentGateway
+from web_infra.capabilities.payment.payment_error_code import PaymentErrorCode
+from web_infra.capabilities.payment.payment_gateway_registry import PaymentGatewayRegistry
 
 
 @pytest.mark.asyncio

@@ -6,9 +6,10 @@
               按 conventional commits 前缀推断提交类型（feat→小版本+1、fix 等→补丁+1、
               docs/chore→不变、含 BREAKING CHANGE 或 !→大版本+1），同步更新
               pyproject.toml 与 src/web_infra/__init__.py 两处版本号并 git add 纳入本次提交。
-              dev 分支打测试版本号（PEP 440 .devN，基础版本不动仅递增 dev 序号）；
-              合入 main 后正式提交剥离 .devN 再按类型递增生成正式版。
-              merge / revert / squash 提交跳过（无法解析前缀，避免误改版本）。
+              版本号遵循语义化版本规范（SemVer，https://semver.org/lang/zh-CN/）：X.Y.Z 正式版，
+              预发布用连字符 -devN（同时兼容 PEP 440，pip 安装时归一化处理）。dev 分支打
+              预发布版本号（-devN，基础版本不动仅递增 dev 序号）；合入 main 后正式提交剥离
+              -devN 再按类型递增生成正式版。merge / revert / squash 提交跳过（无法解析前缀，避免误改版本）。
 """
 
 from __future__ import annotations
@@ -20,9 +21,12 @@ import sys
 from enum import Enum
 from pathlib import Path
 
-# 版本号：X.Y.Z 或 X.Y.Z.devN（PEP 440 开发版本号）
+# 版本号：X.Y.Z 或 X.Y.Z-devN（SemVer 规范；预发布版本用连字符 - 连接，MAJOR/MINOR/PATCH
+# 为非负整数且禁止前导零，如 01.2.3 / 1.02.3 / 1.2.03 均非法；-devN 兼容 PEP 440，
+# pip 安装时归一化为 X.Y.Z.devN）
 _VERSION_RE = re.compile(
-    r"^(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)(?:\.dev(?P<dev>\d+))?$"
+    r"^(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\.(?P<patch>0|[1-9]\d*)"
+    r"(?:-dev(?P<dev>\d+))?$"
 )
 
 # pyproject.toml 中 version = "..."（仅 [project] 段首处）
@@ -107,7 +111,7 @@ def parse_commit_type(subject: str, body: str = "", source: str = "") -> CommitT
 
 
 def is_dev_branch(branch: str) -> bool:
-    """判断分支是否为开发分支（打测试版本号 .devN）。
+    """判断分支是否为开发分支（打预发布版本号 -devN）。
 
     :param branch: 分支名（git branch --show-current）
     :return: True 表示开发分支
@@ -122,7 +126,7 @@ def is_dev_branch(branch: str) -> bool:
 def bump_version(current: str, commit_type: CommitType, branch: str) -> str | None:
     """根据提交类型与分支计算新版本号。
 
-    :param current: 当前版本（X.Y.Z 或 X.Y.Z.devN）
+    :param current: 当前版本（X.Y.Z 或 X.Y.Z-devN）
     :param commit_type: 提交类型
     :param branch: 当前分支名
     :return: 新版本号；None 表示无需更新
@@ -133,16 +137,16 @@ def bump_version(current: str, commit_type: CommitType, branch: str) -> str | No
 
     m = _VERSION_RE.match(current)
     if m is None:
-        raise ValueError(f"无法解析版本号: {current!r}（期望 X.Y.Z 或 X.Y.Z.devN）")
+        raise ValueError(f"无法解析版本号: {current!r}（期望 X.Y.Z 或 X.Y.Z-devN，SemVer 规范）")
     major, minor, patch = int(m.group("major")), int(m.group("minor")), int(m.group("patch"))
     dev = int(m.group("dev")) if m.group("dev") is not None else None
 
-    # 开发分支：基础版本不动，仅递增/追加测试版本号 .devN
+    # 开发分支：基础版本不动，仅递增/追加预发布版本号 -devN
     if is_dev_branch(branch):
         base = f"{major}.{minor}.{patch}"
-        return f"{base}.dev{0 if dev is None else dev + 1}"
+        return f"{base}-dev{0 if dev is None else dev + 1}"
 
-    # 正式分支：剥离 .devN（若有）后按提交类型递增基础版本
+    # 正式分支：剥离 -devN（若有）后按提交类型递增基础版本
     if commit_type is CommitType.BREAKING:
         return f"{major + 1}.0.0"
     if commit_type is CommitType.FEAT:
@@ -165,9 +169,9 @@ def read_current_version(repo_root: Path) -> str:
 
 
 def _base_version(version: str) -> str:
-    """提取版本号的基础部分（剥离 .devN 测试后缀）。
+    """提取版本号的基础部分（剥离 -devN 预发布后缀）。
 
-    :param version: 完整版本号（X.Y.Z 或 X.Y.Z.devN）
+    :param version: 完整版本号（X.Y.Z 或 X.Y.Z-devN）
     :return: 基础版本 X.Y.Z
     """
     m = _VERSION_RE.match(version)
@@ -196,9 +200,9 @@ def _sync_readme_examples(text: str, old_version: str, new_version: str) -> str:
 
     演示示例以当前基础版本 X.Y.Z 为基数（如 `0.1.0` → `0.2.0` 的 feat 演示），
     随版本变化整体重算基数与目标（小版本目标 = 基数 minor+1、补丁目标 = 基数 patch+1、
-    大版本目标 = 基数 major+1）。dev 分支基础版本不变时（如 0.1.0.dev0）示例不动。
+    大版本目标 = 基数 major+1）。dev 分支基础版本不变时（如 0.1.0-dev0）示例不动。
 
-    仅处理含示例特征的行（→ / .dev / PEP 440 / tag v），跳过含 "V0." 的数据库迁移引用行，
+    仅处理含示例特征的行（→ / -dev / tag v），跳过含 "V0." 的数据库迁移引用行，
     且要求行内出现当前基数（old_base）或其派生目标，避免误伤非示例内容。
 
     :param text: README 全文
@@ -221,7 +225,7 @@ def _sync_readme_examples(text: str, old_version: str, new_version: str) -> str:
     def _replace(m: re.Match[str]) -> str:
         return mapping[m.group(0)]
 
-    trigger_tokens = ("→", ".dev", "PEP 440", "tag v")
+    trigger_tokens = ("→", "-dev", "tag v")
     lines = text.splitlines(keepends=True)
     for i, line in enumerate(lines):
         if "V0." in line:

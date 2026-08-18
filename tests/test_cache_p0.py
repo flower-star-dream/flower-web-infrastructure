@@ -10,9 +10,9 @@ import asyncio
 
 import pytest
 
-from web_infra.cache import CacheConfig, MemoryCacheBackend
-from web_infra.cache.cache_backend_interface import EMPTY_TTL_LIMIT_SECONDS
-from web_infra.db.redis_cache_backend import RedisCacheBackend
+from web_infra.capabilities.cache import CacheConfig, MemoryCacheBackend
+from web_infra.capabilities.cache.cache_backend_interface import EMPTY_TTL_LIMIT_SECONDS
+from web_infra.capabilities.db.redis_cache_backend import RedisCacheBackend
 
 
 # ---------------------------------------------------------------------------

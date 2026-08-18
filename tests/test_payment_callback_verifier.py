@@ -7,8 +7,8 @@
 """
 import pytest
 
-from web_infra.payment.in_memory_payment_callback_verifier import InMemoryPaymentCallbackVerifier
-from web_infra.payment.payment_callback import PaymentCallback
+from web_infra.capabilities.payment.in_memory_payment_callback_verifier import InMemoryPaymentCallbackVerifier
+from web_infra.capabilities.payment.payment_callback import PaymentCallback
 
 
 @pytest.mark.asyncio

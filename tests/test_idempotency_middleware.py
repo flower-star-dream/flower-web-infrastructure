@@ -11,7 +11,7 @@ import time
 import httpx
 import pytest
 
-from web_infra.web import IdempotencyMiddleware, InMemoryIdempotencyStore
+from web_infra.infra.web import IdempotencyMiddleware, InMemoryIdempotencyStore
 
 
 def _build_app(store: InMemoryIdempotencyStore):

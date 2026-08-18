@@ -1,14 +1,23 @@
 """
-日志统一格式单元测试
+日志统一格式与输出通道单元测试
 
 @Author: 花海
 @Date: 2026/08/14 10:00
-@Description: 验证统一日志入口、文本/JSON 格式配置与敏感信息脱敏（规范 §17 / §17.3）。
+@Description: 验证统一日志入口、文本/JSON 格式配置、敏感信息脱敏（规范 §17 / §17.3），
+              以及输出通道配置（both/console/file）与自定义日志通道 SPI（LogSinkInterface / LogSinkRegistry）。
 """
 import logging
 
-from web_infra.logging import JsonFormatter, SensitiveDataFilter, configure_logging, get_logger
-from web_infra.logging.masking import mask
+import pytest
+
+from web_infra.infra.logging import (
+    JsonFormatter,
+    LogSinkRegistry,
+    SensitiveDataFilter,
+    configure_logging,
+    get_logger,
+)
+from web_infra.infra.logging.masking import mask
 
 
 def test_get_logger_prefix():
@@ -66,4 +75,93 @@ def test_mask_phone_and_card():
     """手机号/身份证/银行卡脱敏"""
     assert mask("13812341234") == "138****1234"
     assert "110101199001011234" not in mask("身份证 110101199001011234")
+
+
+# ---------------------------------------------------------------------------
+# 输出通道配置（both/console/file）与自定义日志通道 SPI
+# ---------------------------------------------------------------------------
+
+
+def test_configure_logging_output_console_only():
+    """output=console：仅控制台 handler，不挂文件"""
+    configure_logging(level=logging.INFO, fmt="text", output="console")
+    handlers = [h for h in logging.getLogger().handlers if getattr(h, "_web_infra", False)]
+    assert len(handlers) == 1
+    assert isinstance(handlers[0], logging.StreamHandler)
+    assert not isinstance(handlers[0], logging.handlers.TimedRotatingFileHandler)
+
+
+def test_configure_logging_output_file_only(tmp_path):
+    """output=file：仅文件 handler（目录自动创建），不挂控制台"""
+    log_file = tmp_path / "logs" / "app.log"
+    configure_logging(level=logging.INFO, fmt="text", output="file", log_file=str(log_file))
+    handlers = [h for h in logging.getLogger().handlers if getattr(h, "_web_infra", False)]
+    assert len(handlers) == 1
+    assert isinstance(handlers[0], logging.handlers.TimedRotatingFileHandler)
+    logging.getLogger("web_infra.test.file_only").info("file only hello")
+    assert log_file.exists()
+    assert "file only hello" in log_file.read_text(encoding="utf-8")
+
+
+def test_configure_logging_output_both(tmp_path):
+    """output=both：控制台 + 文件同时输出"""
+    log_file = tmp_path / "app.log"
+    configure_logging(level=logging.INFO, fmt="text", output="both", log_file=str(log_file))
+    handlers = [h for h in logging.getLogger().handlers if getattr(h, "_web_infra", False)]
+    assert len(handlers) == 2
+    assert any(isinstance(h, logging.StreamHandler) for h in handlers)
+    assert any(isinstance(h, logging.handlers.TimedRotatingFileHandler) for h in handlers)
+
+
+def test_configure_logging_output_file_without_log_file_raises():
+    """output=file 但未提供 log_file：ValueError 快速失败"""
+    with pytest.raises(ValueError):
+        configure_logging(level=logging.INFO, fmt="text", output="file")
+
+
+def test_configure_logging_output_invalid_raises():
+    """非法 output：ValueError 快速失败"""
+    with pytest.raises(ValueError):
+        configure_logging(level=logging.INFO, fmt="text", output="kafka")
+
+
+class _RecordingHandler(logging.Handler):
+    """测试用自定义日志通道 Handler：收集日志记录（不落盘不触网）"""
+
+    def __init__(self, **options):
+        super().__init__()
+        self.records: list[logging.LogRecord] = []
+        for key, value in options.items():
+            setattr(self, key, value)
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(record)
+
+
+class _RecordingLogSink:
+    """测试用自定义日志通道（LogSinkInterface SPI 实现）"""
+
+    def create_handler(self, options=None):
+        return _RecordingHandler(**(options or {}))
+
+
+def test_configure_logging_custom_sink_spi():
+    """自定义日志通道（SPI）：注册后经 sinks 启用，统一挂载格式器/过滤器，通道配置透传"""
+    LogSinkRegistry.register("recording", lambda options: _RecordingLogSink())
+    try:
+        configure_logging(level=logging.INFO, fmt="text", output="console", sinks={"recording": {"tag": "x"}})
+        handlers = [h for h in logging.getLogger().handlers if getattr(h, "_web_infra", False)]
+        recording = [h for h in handlers if isinstance(h, _RecordingHandler)]
+        assert len(recording) == 1
+        assert recording[0].tag == "x"  # app.logging.sinks.<name> 通道配置透传
+        logging.getLogger("web_infra.test.sink").info("sink hello")
+        assert any("sink hello" in r.getMessage() for r in recording[0].records)
+    finally:
+        LogSinkRegistry._factories.pop("recording", None)
+
+
+def test_configure_logging_unknown_sink_raises():
+    """sinks 中声明未注册通道：ValueError 快速失败"""
+    with pytest.raises(ValueError):
+        configure_logging(level=logging.INFO, fmt="text", sinks={"no-such-sink": {}})
 

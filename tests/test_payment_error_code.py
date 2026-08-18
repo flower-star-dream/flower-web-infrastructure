@@ -7,9 +7,9 @@
 """
 import pytest
 
-from web_infra.error.error_code_registry import ErrorCodeRegistry
-from web_infra.error.biz_exception import BizException
-from web_infra.payment.payment_error_code import PaymentErrorCode, PaymentErrorCodeEnum
+from web_infra.infra.error.error_code_registry import ErrorCodeRegistry
+from web_infra.infra.error.biz_exception import BizException
+from web_infra.capabilities.payment.payment_error_code import PaymentErrorCode, PaymentErrorCodeEnum
 
 
 def test_enum_members():

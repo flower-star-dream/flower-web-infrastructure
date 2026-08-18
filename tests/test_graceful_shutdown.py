@@ -9,7 +9,7 @@
 """
 import pytest
 
-from web_infra.application import Application
+from web_infra.core.application import Application
 
 
 class _CloseRecorder:
@@ -35,7 +35,7 @@ async def test_shutdown_completes_immediately_with_default_wait():
 @pytest.mark.asyncio
 async def test_shutdown_waits_zero_does_not_sleep(monkeypatch):
     """显式 wait=0：不调用 sleep（测试兼容，生产建议配置 >0）"""
-    import web_infra.application as app_module
+    import web_infra.core.application as app_module
 
     slept = []
 
@@ -55,7 +55,7 @@ async def test_shutdown_waits_zero_does_not_sleep(monkeypatch):
 @pytest.mark.asyncio
 async def test_shutdown_waits_window_before_close(monkeypatch):
     """配置 wait>0：先执行等待窗口（sleep 窗口时长），再关闭组件（规范 §19.2 顺序）"""
-    import web_infra.application as app_module
+    import web_infra.core.application as app_module
 
     slept = []
 
@@ -75,7 +75,7 @@ async def test_shutdown_waits_window_before_close(monkeypatch):
 @pytest.mark.asyncio
 async def test_shutdown_calls_stop_when_component_has_no_close(monkeypatch):
     """组件仅提供 stop 时同样被关闭（原有关闭语义不变）"""
-    import web_infra.application as app_module
+    import web_infra.core.application as app_module
 
     async def _fake_sleep(seconds: float) -> None:
         return None

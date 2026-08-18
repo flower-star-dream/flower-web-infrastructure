@@ -23,6 +23,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from release_after_merge import (  # noqa: E402
     GitHubApi,
     _clean_stale_release_branch,
+    detect_breaking_in_pr,
+    ensure_and_push_tag,
     evaluate_check_runs,
     parse_repo_remote,
     release_version,
@@ -35,17 +37,17 @@ class TestReleaseVersion:
     """正式版本计算规则（main 合入发版）。"""
 
     def test_dev_feat_bumps_minor(self) -> None:
-        assert release_version("0.1.0.dev5", CommitType.FEAT) == "0.2.0"
+        assert release_version("0.1.0-dev5", CommitType.FEAT) == "0.2.0"
 
     def test_dev_patch_bumps_patch(self) -> None:
-        assert release_version("0.1.0.dev5", CommitType.PATCH) == "0.1.1"
+        assert release_version("0.1.0-dev5", CommitType.PATCH) == "0.1.1"
 
     def test_dev_breaking_bumps_major(self) -> None:
-        assert release_version("0.1.0.dev5", CommitType.BREAKING) == "1.0.0"
+        assert release_version("0.1.0-dev5", CommitType.BREAKING) == "1.0.0"
 
     def test_dev_docs_strip_only(self) -> None:
-        # docs/chore 合入：仅剥离 .devN 正式化，不递增
-        assert release_version("0.1.0.dev5", CommitType.NO_CHANGE) == "0.1.0"
+        # docs/chore 合入：仅剥离 -devN 正式化，不递增
+        assert release_version("0.1.0-dev5", CommitType.NO_CHANGE) == "0.1.0"
 
     def test_no_dev_feat_bumps_minor(self) -> None:
         assert release_version("0.1.0", CommitType.FEAT) == "0.2.0"
@@ -57,11 +59,11 @@ class TestReleaseVersion:
         assert release_version("2.9.9", CommitType.BREAKING) == "3.0.0"
 
     def test_no_dev_docs_returns_none(self) -> None:
-        # 无 .devN 时 docs/chore 不更新版本
+        # 无 -devN 时 docs/chore 不更新版本
         assert release_version("0.1.0", CommitType.NO_CHANGE) is None
 
     def test_skip_returns_none(self) -> None:
-        assert release_version("0.1.0.dev3", CommitType.SKIP) is None
+        assert release_version("0.1.0-dev3", CommitType.SKIP) is None
 
     def test_minor_carry(self) -> None:
         assert release_version("0.9.9", CommitType.FEAT) == "0.10.0"
@@ -70,29 +72,60 @@ class TestReleaseVersion:
         with pytest.raises(ValueError):
             release_version("abc", CommitType.FEAT)
 
+    def test_leading_zero_rejected(self) -> None:
+        # SemVer 规范：MAJOR/MINOR/PATCH 为非负整数且禁止前导零
+        for bad in ("01.2.3", "1.02.3", "1.2.03"):
+            with pytest.raises(ValueError):
+                release_version(bad, CommitType.FEAT)
+
 
 class TestReleaseFromPrTitle:
     """PR 标题 → 正式版本集成。"""
 
     def test_feat_pr_title(self) -> None:
         commit_type = parse_commit_type("feat: 新增订单能力")
-        assert release_version("0.1.0.dev5", commit_type) == "0.2.0"
+        assert release_version("0.1.0-dev5", commit_type) == "0.2.0"
 
     def test_fix_pr_title(self) -> None:
         commit_type = parse_commit_type("fix: 修复并发问题")
-        assert release_version("0.1.0.dev5", commit_type) == "0.1.1"
+        assert release_version("0.1.0-dev5", commit_type) == "0.1.1"
 
     def test_breaking_pr_title(self) -> None:
         commit_type = parse_commit_type("feat!: 破坏性重构")
-        assert release_version("0.1.0.dev5", commit_type) == "1.0.0"
+        assert release_version("0.1.0-dev5", commit_type) == "1.0.0"
 
     def test_docs_pr_title(self) -> None:
         commit_type = parse_commit_type("docs: 更新说明文档")
-        assert release_version("0.1.0.dev5", commit_type) == "0.1.0"
+        assert release_version("0.1.0-dev5", commit_type) == "0.1.0"
 
     def test_no_prefix_falls_back_to_patch(self) -> None:
         commit_type = parse_commit_type("修复若干问题")
-        assert release_version("0.1.0.dev5", commit_type) == "0.1.1"
+        assert release_version("0.1.0-dev5", commit_type) == "0.1.1"
+
+
+class TestDetectBreakingInPr:
+    """PR 提交历史 breaking 检测（标题漏标 ! 时的版本语义兜底）。"""
+
+    def test_feat_bang_detected(self) -> None:
+        messages = ["feat: 新增缓存", "feat!: 重构三层结构\n\nBREAKING CHANGE: 子包路径迁移", "fix: 修复 bug"]
+        assert detect_breaking_in_pr(messages) is True
+
+    def test_breaking_change_footer_detected(self) -> None:
+        # 前缀不带 !，但正文含 BREAKING CHANGE: footer
+        messages = ["feat: 重构\n\nBREAKING CHANGE: 接口不兼容"]
+        assert detect_breaking_in_pr(messages) is True
+
+    def test_no_breaking_not_detected(self) -> None:
+        messages = ["feat: 新增缓存", "fix: 修复 bug", "docs: 更新文档"]
+        assert detect_breaking_in_pr(messages) is False
+
+    def test_empty_messages(self) -> None:
+        assert detect_breaking_in_pr([]) is False
+
+    def test_squash_single_message(self) -> None:
+        # squash 合并后单条提交信息
+        assert detect_breaking_in_pr(["feat: 合并多个功能"]) is False
+        assert detect_breaking_in_pr(["feat!: 合并破坏性重构"]) is True
 
 
 class TestParseRepoRemote:
@@ -150,6 +183,16 @@ class TestGitHubApi:
     def _transport() -> MockTransport:
         def handler(request: Request) -> Response:
             path = request.url.path
+            if path.endswith("/pulls") and request.method == "GET":
+                # find_pull：head=dev 返回已合并 PR，其他 head 返回空列表
+                if request.url.params.get("head") == "dev":
+                    return Response(200, json=[{"number": 7, "state": "merged"}])
+                return Response(200, json=[])
+            if path.endswith("/pulls/7/commits") and request.method == "GET":
+                return Response(200, json=[
+                    {"commit": {"message": "feat!: 重构三层结构"}},
+                    {"commit": {"message": "fix: 修复问题"}},
+                ])
             if path.endswith("/pulls") and request.method == "POST":
                 head = json.loads(request.content)["head"]
                 if head == "release/v0.4.0":
@@ -194,6 +237,16 @@ class TestGitHubApi:
     def test_list_check_runs(self) -> None:
         runs = self._api().list_check_runs("abc123")
         assert runs == [{"name": "CI", "status": "completed", "conclusion": "success"}]
+
+    def test_find_pull(self) -> None:
+        assert self._api().find_pull(base="main", head="dev") == 7
+
+    def test_find_pull_not_found(self) -> None:
+        assert self._api().find_pull(base="main", head="feature/x") is None
+
+    def test_list_pull_commits(self) -> None:
+        commits = self._api().list_pull_commits(7)
+        assert commits == ["feat!: 重构三层结构", "fix: 修复问题"]
 
     def test_merge_pull(self) -> None:
         self._api().merge_pull(42, method="squash")
@@ -242,6 +295,39 @@ class TestCleanStaleReleaseBranch:
         calls = self._monkeypatch_git(monkeypatch, {})
         _clean_stale_release_branch(Path("."), "release/v0.2.0")
         assert calls == [["ls-remote", "--heads", "origin", "release/v0.2.0"]]
+
+
+class TestEnsureAndPushTag:
+    """正式版本 tag 推送（触发 ci.yml 正式版镜像发布）。"""
+
+    @staticmethod
+    def _monkeypatch_git(monkeypatch: pytest.MonkeyPatch, results: dict[tuple[str, ...], str]) -> list[list[str]]:
+        """替换 git 执行器：按命令元组返回预设 stdout，并记录调用。"""
+
+        calls: list[list[str]] = []
+
+        def fake_git(args: list[str], repo_root: Path) -> str:
+            calls.append(args)
+            return results.get(tuple(args), "")
+
+        monkeypatch.setattr("release_after_merge.git", fake_git)
+        return calls
+
+    def test_tag_not_exists_push(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # 远端无同名 tag：探测后打 tag 并推送
+        calls = self._monkeypatch_git(monkeypatch, {})
+        ensure_and_push_tag(Path("."), "0.2.0")
+        assert ["ls-remote", "--tags", "origin", "v0.2.0"] in calls
+        assert ["tag", "v0.2.0"] in calls
+        assert ["push", "origin", "v0.2.0"] in calls
+
+    def test_tag_exists_skip(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # 远端已存在同名 tag（上次推送成功但后续步骤失败）：仅探测，不重复打 tag/推送
+        calls = self._monkeypatch_git(monkeypatch, {
+            ("ls-remote", "--tags", "origin", "v0.1.1"): "abc123\trefs/tags/v0.1.1\n",
+        })
+        ensure_and_push_tag(Path("."), "0.1.1")
+        assert calls == [["ls-remote", "--tags", "origin", "v0.1.1"]]
 
 
 class TestWaitForChecks:

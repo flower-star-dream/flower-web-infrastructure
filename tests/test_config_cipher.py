@@ -9,8 +9,8 @@
 """
 import pytest
 
-from web_infra.config.config_cipher import ConfigCipher, ENV_ENCRYPT_KEY, ENCRYPTED_PREFIX
-from web_infra.security.secure_config_loader import SecureConfigLoader
+from web_infra.infra.config.config_cipher import ConfigCipher, ENV_ENCRYPT_KEY, ENCRYPTED_PREFIX
+from web_infra.capabilities.security.secure_config_loader import SecureConfigLoader
 
 
 def _fresh_key() -> str:

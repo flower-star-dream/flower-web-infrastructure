@@ -22,15 +22,15 @@ import re
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from web_infra.error import (
+from web_infra.infra.error import (
     ErrorCodeRegistry,
     converge_error_code,
     derive_http_status,
     parse_category,
 )
-from web_infra.error.handler import register_global_exception_handlers
-from web_infra.result import PageResult, Result
-from web_infra.web import register_health_endpoints
+from web_infra.infra.error.handler import register_global_exception_handlers
+from web_infra.infra.result import PageResult, Result
+from web_infra.infra.web import register_health_endpoints
 
 # 错误码格式契约（规范 §4.1/§4.2）：E<大类>-<子类>-<3位编号> 或成功码 S0000
 ERROR_CODE_PATTERN = re.compile(r"^(E[1-5]-(?:[A-Z]+)-[0-9]{3}|S0000)$")

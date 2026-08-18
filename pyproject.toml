@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "flower-web-infrastructure"
-version = "0.1.1"
+version = "0.1.0-dev8"
 description = "Web 系统通用后端基础设施（单体 / 微服务通用基础依赖）"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -45,9 +45,12 @@ storage = ["minio>=7.2"]                               # MinIO 对象存储（�
 yaml = ["pyyaml>=6.0"]                                 # YAML 配置（已在核心，兼容旧写法）
 rag = ["faiss-cpu>=1.8", "sentence-transformers>=3.0"] # RAG 向量检索（AI 规范 §11）
 pdf = ["playwright>=1.40"]                             # PDF 渲染导出（规范 §22）
+# Elasticsearch 搜索引擎（搜索引擎接入计划 v0.2.0）：elasticsearch-dsl ORM（自动携带 elasticsearch-py），
+# 全文检索（SearchEngineInterface）与向量检索（ElasticsearchVectorStore，dense_vector + kNN）；延迟导入
+es = ["elasticsearch-dsl>=8.0"]
 # 能力依赖链（可选能力，按需主动引入）：用户系统(user，业务实现) → 认证(authn) → 鉴权(authz) → 支付(pay)；
 # 依赖均为核心依赖（httpx/cryptography 等），extras 仅作能力声明与后续 SDK 挂载点；
-# 依赖包含规则由 web_infra.capability 能力注册表维护（启用 pay 自动带上前置 authz/authn/user），
+# 依赖包含规则由 web_infra.core.capability 能力注册表维护（启用 pay 自动带上前置 authz/authn/user），
 # 业务实现（如用户系统 user-service）由业务层提供
 user = []
 authn = []
@@ -81,7 +84,7 @@ min-microservice = [
     "rocketmq-client-python>=2.0",
     "minio>=7.2",
 ]
-# 全量安装：核心 + 全部可选能力（user/authn/authz/pay + nacos/rocketmq/storage/migrate/rag/pdf/mysql/redis/mongo）
+# 全量安装：核心 + 全部可选能力（user/authn/authz/pay + nacos/rocketmq/storage/migrate/rag/pdf/es/mysql/redis/mongo）
 all = [
     "nacos-sdk-python>=2.0",
     "rocketmq-client-python>=2.0",
@@ -90,13 +93,14 @@ all = [
     "faiss-cpu>=1.8",
     "sentence-transformers>=3.0",
     "playwright>=1.40",
+    "elasticsearch-dsl>=8.0",
     "sqlalchemy>=2.0.51",
     "aiomysql>=0.3.2",
     "aiosqlite>=0.19.0",
     "redis>=5.0.0",
     "pymongo>=4.11.0",
     "beanie>=2.0.0",
-    # user/authn/authz/pay 为空 extra：能力声明，无额外依赖（能力依赖链由 web_infra.capability 维护）
+    # user/authn/authz/pay 为空 extra：能力声明，无额外依赖（能力依赖链由 web_infra.core.capability 维护）
     "user",
     "authn",
     "authz",
@@ -107,7 +111,7 @@ all = [
 where = ["src"]
 
 [tool.setuptools.package-data]
-web_infra = ["config/application.default.yml"]
+web_infra = ["infra/config/application.default.yml"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

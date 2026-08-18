@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import pytest
 
-from web_infra.http import FeignClientConfig, build_feign_client
-from web_infra.registry import InMemoryServiceRegistry
+from web_infra.capabilities.http import FeignClientConfig, build_feign_client
+from web_infra.capabilities.registry import InMemoryServiceRegistry
 
 
 def _settings(overrides: dict) -> dict:
@@ -56,7 +56,7 @@ async def test_build_feign_client_from_settings():
 @pytest.mark.asyncio
 async def test_build_feign_client_defaults_fallback_to_infra_constant():
     """无 app.feign 配置段时回落 FeignClientConfig 默认值（引用 InfraConstant，非散落裸值）"""
-    from web_infra.constants.infra_constant import InfraConstant
+    from web_infra.infra.constants.infra_constant import InfraConstant
 
     registry = InMemoryServiceRegistry()
     client = build_feign_client(registry, settings={})
@@ -73,7 +73,7 @@ async def test_build_feign_client_defaults_fallback_to_infra_constant():
 
 def test_feign_client_config_defaults_reference_infra_constant():
     """FeignClientConfig 默认值引用 InfraConstant（无魔法值）"""
-    from web_infra.constants.infra_constant import InfraConstant
+    from web_infra.infra.constants.infra_constant import InfraConstant
 
     config = FeignClientConfig()
     assert config.timeout == InfraConstant.INFRA_HTTP_TIMEOUT_SECONDS

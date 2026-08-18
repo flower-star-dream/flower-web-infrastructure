@@ -13,7 +13,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from web_infra.db.mysql_database import DB_LONG_TRANSACTION_TOTAL, MySQLDatabase
+from web_infra.capabilities.db.mysql_database import DB_LONG_TRANSACTION_TOTAL, MySQLDatabase
 
 
 def _metric_value(datasource: str = "default") -> int:
@@ -45,7 +45,7 @@ async def test_long_transaction_warns_above_threshold(tmp_path, caplog):
     """事务耗时超过阈值：记录 warning 审计日志（含 datasource）并递增指标"""
     db = _build_db(tmp_path, threshold=0.0)  # 阈值 0 恒触发，验证审计链路
     before = _metric_value("order-db")
-    with caplog.at_level(logging.WARNING, logger="web_infra.db.mysql"):
+    with caplog.at_level(logging.WARNING, logger="web_infra.capabilities.db.mysql"):
         async with db.orm_session() as session:
             await session.execute(text("SELECT 1"))
     assert any("mysql_long_transaction" in r.message for r in caplog.records)
@@ -58,7 +58,7 @@ async def test_long_transaction_not_warned_below_threshold(tmp_path, caplog):
     """事务耗时未超过阈值：不告警、不递增指标"""
     db = _build_db(tmp_path, threshold=3600.0)  # 阈值足够大，正常事务不触发
     before = _metric_value("order-db")
-    with caplog.at_level(logging.WARNING, logger="web_infra.db.mysql"):
+    with caplog.at_level(logging.WARNING, logger="web_infra.capabilities.db.mysql"):
         async with db.orm_session() as session:
             await session.execute(text("SELECT 1"))
     assert not any("mysql_long_transaction" in r.message for r in caplog.records)

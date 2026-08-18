@@ -9,7 +9,7 @@ from decimal import Decimal
 
 import pytest
 
-from web_infra.utils import MathUtil
+from web_infra.infra.utils import MathUtil
 
 
 # ---------------------------------------------------------------------------

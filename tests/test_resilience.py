@@ -9,7 +9,7 @@ import asyncio
 
 import pytest
 
-from web_infra.resilience import (
+from web_infra.infra.resilience import (
     RetryConfig,
     retry,
     CircuitBreaker,
@@ -133,7 +133,7 @@ def test_circuit_breaker_fallback_on_open():
     for _ in range(5):
         assert cb.execute(fail) == "fallback"
     # 样本达标已熔断开启
-    from web_infra.resilience import CircuitBreakerState
+    from web_infra.infra.resilience import CircuitBreakerState
 
     assert cb.state == CircuitBreakerState.OPEN
     # OPEN 状态直接降级
@@ -175,9 +175,9 @@ async def test_circuit_breaker_async_fallback():
 @pytest.mark.asyncio
 async def test_feign_client_circuit_breaker_fallback():
     """FeignClient 集成熔断：目标服务持续失败触发熔断开启，期间与开启后均走 fallback 返回 None"""
-    from web_infra.http import FeignClient
-    from web_infra.registry import InMemoryServiceRegistry, ServiceInstance
-    from web_infra.resilience import CircuitBreakerState
+    from web_infra.capabilities.http import FeignClient
+    from web_infra.capabilities.registry import InMemoryServiceRegistry, ServiceInstance
+    from web_infra.infra.resilience import CircuitBreakerState
 
     registry = InMemoryServiceRegistry()
     # 指向本机未监听端口（port 9 discard），保证连接失败
@@ -205,9 +205,9 @@ async def test_feign_client_circuit_breaker_fallback():
 @pytest.mark.asyncio
 async def test_feign_client_without_circuit_breaker_unchanged():
     """未配置熔断时 FeignClient 行为不变：失败仍抛 BizException"""
-    from web_infra.error import BizException
-    from web_infra.http import FeignClient
-    from web_infra.registry import InMemoryServiceRegistry, ServiceInstance
+    from web_infra.infra.error import BizException
+    from web_infra.capabilities.http import FeignClient
+    from web_infra.capabilities.registry import InMemoryServiceRegistry, ServiceInstance
 
     registry = InMemoryServiceRegistry()
     await registry.register("svc", ServiceInstance(ip="127.0.0.1", port=9))
@@ -223,8 +223,8 @@ async def test_feign_client_without_circuit_breaker_unchanged():
 @pytest.mark.asyncio
 async def test_feign_client_concurrent_breaker_single_instance():
     """FeignClient 熔断器懒创建：多线程并发首次获取同一服务仅一个实例（M1 修复防计数分裂）"""
-    from web_infra.http import FeignClient
-    from web_infra.registry import InMemoryServiceRegistry
+    from web_infra.capabilities.http import FeignClient
+    from web_infra.capabilities.registry import InMemoryServiceRegistry
 
     registry = InMemoryServiceRegistry()
     client = FeignClient(registry, circuit_breaker_config=CircuitBreakerConfig())
@@ -241,9 +241,9 @@ async def test_feign_client_default_fallback():
 
     业务无需为每个客户端重复实现降级；需自定义降级（如返回缓存数据）时传 fallback 参数覆盖。
     """
-    from web_infra.error import CommonErrorCode
-    from web_infra.http import FeignClient
-    from web_infra.registry import InMemoryServiceRegistry, ServiceInstance
+    from web_infra.infra.error import CommonErrorCode
+    from web_infra.capabilities.http import FeignClient
+    from web_infra.capabilities.registry import InMemoryServiceRegistry, ServiceInstance
 
     registry = InMemoryServiceRegistry()
     # 指向本机未监听端口（port 9 discard），保证连接失败触发熔断降级
@@ -270,7 +270,7 @@ def test_circuit_breaker_recovers_after_half_open_success():
     """半开探测成功：熔断器恢复关闭（HALF_OPEN → CLOSED），不再永久停留在半开"""
     import time
 
-    from web_infra.resilience import CircuitBreakerState
+    from web_infra.infra.resilience import CircuitBreakerState
 
     cb = CircuitBreaker(
         "test",
@@ -308,7 +308,7 @@ async def test_circuit_breaker_half_open_license_recovered_on_cancel():
     import asyncio
     import time
 
-    from web_infra.resilience import CircuitBreakerState
+    from web_infra.infra.resilience import CircuitBreakerState
 
     cb = CircuitBreaker(
         "test",

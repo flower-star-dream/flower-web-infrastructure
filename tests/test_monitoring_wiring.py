@@ -16,16 +16,16 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from web_infra.constants.sys_constant import SysConstant
-from web_infra.context import RequestContext
-from web_infra.monitoring import metrics
-from web_infra.monitoring.metrics import (
+from web_infra.infra.constants.sys_constant import SysConstant
+from web_infra.infra.context import RequestContext
+from web_infra.infra.monitoring import metrics
+from web_infra.infra.monitoring.metrics import (
     MYSQL_POOL_ACQUIRE_SECONDS,
     MYSQL_POOL_WAITING_CONNECTIONS,
     SLOW_SQL_TOTAL,
 )
-from web_infra.monitoring.phase_timer import PhaseTimer
-from web_infra.monitoring.pool_metrics import (
+from web_infra.infra.monitoring.phase_timer import PhaseTimer
+from web_infra.infra.monitoring.pool_metrics import (
     MONGO_POOL_ACQUIRE_SECONDS,
     MONGO_POOL_WAITING_CONNECTIONS,
     REDIS_POOL_ACQUIRE_SECONDS,
@@ -35,9 +35,9 @@ from web_infra.monitoring.pool_metrics import (
     record_mysql_pool_metrics,
     record_redis_pool_acquire,
 )
-from web_infra.monitoring.slow_request_store import SlowRequestStore
-from web_infra.security import JWTUtil
-from web_infra.web import AuthMiddleware, LoggingMiddleware, TraceIdMiddleware
+from web_infra.infra.monitoring.slow_request_store import SlowRequestStore
+from web_infra.capabilities.security import JWTUtil
+from web_infra.infra.web import AuthMiddleware, LoggingMiddleware, TraceIdMiddleware
 
 _SECRET = "test-secret-for-monitoring-wiring-0123456789"
 
@@ -104,24 +104,24 @@ def test_phase_timer_mark_without_context_is_silent():
     PhaseTimer.mark("auth")  # 不抛错
 
 
-def test_request_out_log_contains_auth_phase(caplog):
-    """鉴权通过后 request_out 日志包含鉴权阶段耗时（phase_auth_ms）"""
+def test_access_log_contains_uvicorn_format_and_phase(caplog):
+    """鉴权通过后访问日志为 uvicorn 标准格式且含分阶段耗时（phase_auth_ms）"""
     client = TestClient(_build_app())
     with caplog.at_level(logging.INFO):
         resp = client.get("/secure", headers={"Authorization": f"Bearer {_token()}"})
     assert resp.status_code == 200
     messages = [r.getMessage() for r in caplog.records]
-    assert any("request_out" in m and "phase_auth_ms=" in m for m in messages)
+    assert any('"GET /secure HTTP/1.1"' in m and "phase_auth_ms=" in m and "trace_id=" in m for m in messages)
 
 
-def test_request_out_log_contains_phase_on_auth_failure(caplog):
-    """鉴权失败（401）路径同样输出 phase 字段（失败路径埋点）"""
+def test_access_log_contains_phase_on_auth_failure(caplog):
+    """鉴权失败（401）路径同样输出访问日志且含分阶段耗时（失败路径埋点）"""
     client = TestClient(_build_app())
     with caplog.at_level(logging.INFO):
         resp = client.get("/secure")
     assert resp.status_code == 401
     messages = [r.getMessage() for r in caplog.records]
-    assert any("request_out" in m and "phase_auth_ms=" in m for m in messages)
+    assert any('"GET /secure HTTP/1.1"' in m and "phase_auth_ms=" in m for m in messages)
 
 
 # ---------------------------------------------------------------------------
@@ -216,9 +216,9 @@ def test_record_slow_sql_updates_counter_and_cache():
 
 def test_metrics_html_slow_sql_help_mentions_severity(monkeypatch):
     """metrics_html 说明区补充慢 SQL 分级计数说明（空缓存文案）"""
-    from web_infra.monitoring.metrics_html import _render_slow_sql_detail
+    from web_infra.infra.monitoring.metrics_html import _render_slow_sql_detail
 
-    monkeypatch.setattr("web_infra.monitoring.metrics._SLOW_SQL_CACHE", [])
+    monkeypatch.setattr("web_infra.infra.monitoring.metrics._SLOW_SQL_CACHE", [])
     html = _render_slow_sql_detail()
     assert "slow_sql_total" in html
     assert "severity" in html

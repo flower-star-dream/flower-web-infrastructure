@@ -20,7 +20,7 @@ import pytest_asyncio
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from web_infra.mq import (
+from web_infra.capabilities.mq import (
     DlqConsumer,
     InMemoryMessageQueue,
     InMemoryOutboxStore,
@@ -36,7 +36,7 @@ from web_infra.mq import (
     requeue_dlq_to_outbox,
     register_outbox_tasks,
 )
-from web_infra.schedule import TaskScheduler
+from web_infra.capabilities.schedule import TaskScheduler
 
 
 # ------------------------------------------------------------------

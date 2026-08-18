@@ -16,9 +16,9 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.x509.oid import NameOID
 
-from web_infra.payment.payment_config import WechatPayConfig
-from web_infra.payment.provider.wechat.wechat_certificate_store import WeChatCertificateStore
-from web_infra.payment.provider.wechat.wechat_signer import WeChatSigner
+from web_infra.capabilities.payment.payment_config import WechatPayConfig
+from web_infra.capabilities.payment.provider.wechat.wechat_certificate_store import WeChatCertificateStore
+from web_infra.capabilities.payment.provider.wechat.wechat_signer import WeChatSigner
 
 API_V3_KEY = "test-apiv3-key-0123456789abcdef0"  # 32 字节
 

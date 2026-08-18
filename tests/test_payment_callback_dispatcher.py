@@ -9,9 +9,9 @@ from decimal import Decimal
 
 import pytest
 
-from web_infra.payment.payment_callback import PaymentCallback
-from web_infra.payment.payment_callback_dispatcher import PaymentCallbackDispatcher
-from web_infra.payment.payment_callback_handler_interface import PaymentCallbackHandler
+from web_infra.capabilities.payment.payment_callback import PaymentCallback
+from web_infra.capabilities.payment.payment_callback_dispatcher import PaymentCallbackDispatcher
+from web_infra.capabilities.payment.payment_callback_handler_interface import PaymentCallbackHandler
 
 
 class _SpyHandler(PaymentCallbackHandler):

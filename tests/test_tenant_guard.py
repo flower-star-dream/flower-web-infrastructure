@@ -7,9 +7,9 @@
 """
 import pytest
 
-from web_infra.context import RequestContext
-from web_infra.db import TenantGuard
-from web_infra.error import BizException
+from web_infra.infra.context import RequestContext
+from web_infra.capabilities.db import TenantGuard
+from web_infra.infra.error import BizException
 
 
 def test_require_tenant_with_context():

@@ -5,7 +5,7 @@
 @Date: 2026/08/14 15:00
 @Description: 验证输入阻断/放行、输出阻断/警告分级与自定义规则扩展（AI 规范 §7.2）。
 """
-from web_infra.ai import GuardAction, RuleBasedContentGuard, ContentGuardInterface
+from web_infra.capabilities.ai import GuardAction, RuleBasedContentGuard, ContentGuardInterface
 
 
 def test_input_blocked_on_danger():

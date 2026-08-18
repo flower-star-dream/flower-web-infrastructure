@@ -9,7 +9,7 @@
 """
 import pytest
 
-from web_infra.ai import (
+from web_infra.capabilities.ai import (
     AICache,
     ChatMessage,
     ChatRequest,
@@ -22,8 +22,8 @@ from web_infra.ai import (
     ModelProviderRegistry,
     Usage,
 )
-from web_infra.ai.model_gateway import ModelRouter, RouteEntry
-from web_infra.monitoring.ai_metrics import AI_LLM_CALLS_TOTAL
+from web_infra.capabilities.ai.model_gateway import ModelRouter, RouteEntry
+from web_infra.infra.monitoring.ai_metrics import AI_LLM_CALLS_TOTAL
 
 
 class _FakeProvider(ModelProviderInterface):

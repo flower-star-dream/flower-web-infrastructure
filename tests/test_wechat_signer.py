@@ -10,7 +10,7 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from web_infra.payment.provider.wechat.wechat_signer import WeChatSigner
+from web_infra.capabilities.payment.provider.wechat.wechat_signer import WeChatSigner
 
 
 @pytest.fixture

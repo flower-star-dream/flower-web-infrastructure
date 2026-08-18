@@ -11,8 +11,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from web_infra.config.nacos_properties import NacosProperties
-from web_infra.registry import InMemoryServiceRegistry, NacosRegistration, ServiceInstance
+from web_infra.capabilities.config.nacos_properties import NacosProperties
+from web_infra.capabilities.registry import InMemoryServiceRegistry, NacosRegistration, ServiceInstance
 
 
 @pytest.fixture(autouse=True)

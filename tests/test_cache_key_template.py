@@ -10,10 +10,10 @@ import json
 
 import pytest
 
-from web_infra.constants.cache_key import CacheKeyBuilder
-from web_infra.mq.redis_message_idempotency_store import RedisMessageIdempotencyStore
-from web_infra.web.redis_idempotency_store import RedisIdempotencyStore
-from web_infra.web.idempotency_store_interface import IdempotencyResult
+from web_infra.infra.constants.cache_key import CacheKeyBuilder
+from web_infra.capabilities.mq.redis_message_idempotency_store import RedisMessageIdempotencyStore
+from web_infra.infra.web.redis_idempotency_store import RedisIdempotencyStore
+from web_infra.infra.web.idempotency_store_interface import IdempotencyResult
 
 
 class _FakeRedis:

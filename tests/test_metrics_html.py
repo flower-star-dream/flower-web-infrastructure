@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from prometheus_client import Counter
 
-from web_infra.monitoring import (
+from web_infra.infra.monitoring import (
     CacheMetrics,
     MqMetrics,
     RegistryMetrics,
@@ -18,20 +18,20 @@ from web_infra.monitoring import (
     ai_metrics,
     metrics,
 )
-from web_infra.monitoring.metric_group_provider_interface import MetricGroupProviderInterface
-from web_infra.monitoring.metric_group_provider_registry import MetricGroupProviderRegistry
-from web_infra.monitoring.metrics_html import (
+from web_infra.infra.monitoring.metric_group_provider_interface import MetricGroupProviderInterface
+from web_infra.infra.monitoring.metric_group_provider_registry import MetricGroupProviderRegistry
+from web_infra.infra.monitoring.metrics_html import (
     _group_has_data,
     histogram_quantile,
     render_metrics_html,
     should_render_html,
 )
-from web_infra.monitoring.pool_metrics import (
+from web_infra.infra.monitoring.pool_metrics import (
     record_mongo_pool_metrics,
     record_mysql_pool_metrics,
     record_redis_pool_metrics,
 )
-from web_infra.monitoring.runtime_metrics import ThreadPoolMetrics, record_runtime_metrics
+from web_infra.infra.monitoring.runtime_metrics import ThreadPoolMetrics, record_runtime_metrics
 
 
 class _FakePool:

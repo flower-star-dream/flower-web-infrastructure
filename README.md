@@ -1,6 +1,6 @@
 # flower web 通用框架（flower-web-infrastructure）
 
-[![version](https://img.shields.io/badge/version-v0.1.1-blue)](https://github.com/flower-star-dream/flower-web-infrastructure)
+[![version](https://img.shields.io/badge/version-v0.1.0-dev8-blue)](https://github.com/flower-star-dream/flower-web-infrastructure)
 [![python](https://img.shields.io/badge/python-3.10%2B-blue)](https://github.com/flower-star-dream/flower-web-infrastructure)
 [![license](https://img.shields.io/badge/license-MIT-green)](https://github.com/flower-star-dream/flower-web-infrastructure)
 [![CI](https://img.shields.io/github/actions/workflow/status/flower-star-dream/flower-web-infrastructure/ci.yml?label=CI&logo=github)](https://github.com/flower-star-dream/flower-web-infrastructure/actions)
@@ -9,7 +9,7 @@
 
 | 项目     | 值                                              |
 | -------- | ----------------------------------------------- |
-| 当前版本 | v0.1.1                                          |
+| 当前版本 | v0.1.0-dev8                                          |
 | Python   | >= 3.10                                         |
 | License  | MIT                                             |
 | 构建     | [GitHub Actions](./.github/workflows/ci.yml)    |
@@ -353,7 +353,7 @@ async with db.session() as session:
 **分页（规范 §12.3 / S10-1：禁止深分页，推荐游标分页）**
 
 ```python
-from web_infra.db.page_query import PageQuery, CursorPageQuery
+from web_infra.capabilities.db.page_query import PageQuery, CursorPageQuery
 
 # 普通分页：page_no × page_size 超过 10000 时框架直接抛 ValueError 拒绝（S10-1 禁止 LIMIT offset 深分页）
 query = PageQuery(page_no=1, page_size=20)
@@ -366,7 +366,7 @@ cursor_query = CursorPageQuery(cursor="20260815000001", page_size=20)
 **读写分离（规范 S10-2：读流量路由从库，写走主库）**
 
 ```python
-from web_infra.db import MySQLConfig, MySQLDatabase
+from web_infra.capabilities.db import MySQLConfig, MySQLDatabase
 
 config = MySQLConfig(
     url="mysql+aiomysql://user:pwd@主库:3306/app",
@@ -659,16 +659,16 @@ StateMachineRegistry.register_engine_factory(OrderStatus, OrderEvent, OrderEO, T
 
 ### 7.12 支付
 
-支付模块（`web_infra/payment`）按《Web 系统通用架构规范 · 支付扩展 v1.0》实现渠道接入与资金兜底。
+支付模块（`web_infra/capabilities/payment`）按《Web 系统通用架构规范 · 支付扩展 v1.0》实现渠道接入与资金兜底。
 
 > **可选能力**：支付不随 `web_infra` 顶层导出（`import web_infra` 不加载支付模块、不注册支付错误码），需显式
-> `from web_infra.payment import ...` 或经 `app.capabilities.enabled: [pay]` 主动引入；依赖链
+> `from web_infra.capabilities.payment import ...` 或经 `app.capabilities.enabled: [pay]` 主动引入；依赖链
 > 支付 → 鉴权 → 认证 → 用户系统（业务实现），启用按包含关系自动带上前置，见 [docs/使用说明.md 4.2](./docs/使用说明.md#42-能力依赖与装配)。
 
 **装配渠道（内存演示，注入骨架存储即获全套兜底）**：
 
 ```python
-from web_infra.payment import (
+from web_infra.capabilities.payment import (
     InMemoryPaymentFlowStore, InMemoryPaymentOrderStore,
     InMemoryPaymentGateway, PaymentGatewayRegistry,
 )
@@ -683,7 +683,7 @@ PaymentGatewayRegistry.register("memory", gateway)  # 生产替换为 WeChatPayP
 **下单 / 回调校验（骨架自动完成：下单幂等 / 金额 / attach / 状态机 / 流水落库）**：
 
 ```python
-from web_infra.payment import PaymentPrepayRequest, PaymentScene
+from web_infra.capabilities.payment import PaymentPrepayRequest, PaymentScene
 from decimal import Decimal
 
 resp = await gateway.prepay(PaymentPrepayRequest(
@@ -696,7 +696,7 @@ resp = await gateway.prepay(PaymentPrepayRequest(
 **对账 / 冲正 / 风控 / 审计（框架 SPI + 内存默认实现）**：
 
 ```python
-from web_infra.payment import (
+from web_infra.capabilities.payment import (
     ReconciliationService, InMemoryReconciliationAuditStore,
     PaymentRiskGuard, InMemoryLimitCounterStore, LimitRule,
 )
@@ -855,8 +855,10 @@ GitHub Actions 工作流位于 `.github/workflows/ci.yml`，推送 `main` / `dev
   - `MAJOR`：不兼容的破坏性变更；
   - `MINOR`：向后兼容的新能力；
   - `PATCH`：向后兼容的缺陷修复。
-- 当前版本：**v0.1.1**（与 `pyproject.toml` 保持同步）。
+- 当前版本：**v0.1.0-dev8**（与 `pyproject.toml` 保持同步）。
 - 错误码 `E<大类>-<子类/域>-<3位编号>`、成功码 `S0000` 一经发布不可变更语义。
+- 破坏性变更记录：
+  - **v1.0.0（三层结构整改）**：子包路径迁移至 `core / infra / capabilities` 三层——`web_infra.{ai,db,mq,payment,security,...}` → `web_infra.capabilities.{ai,db,mq,payment,security,...}`（如 `web_infra.payment` → `web_infra.capabilities.payment`）；`web_infra` 顶层导出保持不变（`from web_infra import Result, create_app` 等不受影响）。升级指引：将子包导入路径统一改为 `web_infra.capabilities.*`（脚手架已适配，业务代码需同步调整）。
 
 ### 13.1 自动版本管理
 
@@ -870,18 +872,18 @@ GitHub Actions 工作流位于 `.github/workflows/ci.yml`，推送 `main` / `dev
 
 | 提交前缀（conventional commits）          | 版本变化        | 示例                          |
 | ----------------------------------------- | --------------- | ----------------------------- |
-| `feat` / `feat(scope)`                    | 小版本 +1       | `0.1.1` → `0.2.0`             |
-| `fix` / `refactor` / `perf` / `test` / `build` / `ci` / `style` | 补丁 +1 | `0.1.1` → `0.1.2` |
-| 含 `BREAKING CHANGE:`（footer）或 `!:`（如 `feat!: xxx`） | 大版本 +1 | `0.1.1` → `1.0.0` |
+| `feat` / `feat(scope)`                    | 小版本 +1       | `0.1.0` → `0.2.0`             |
+| `fix` / `refactor` / `perf` / `test` / `build` / `ci` / `style` | 补丁 +1 | `0.1.0` → `0.1.1` |
+| 含 `BREAKING CHANGE:`（footer）或 `!:`（如 `feat!: xxx`） | 大版本 +1 | `0.1.0` → `1.0.0` |
 | `docs` / `chore`（纯文档/杂物）           | 不变            | —                             |
 | `Merge ...` / revert / squash（无前缀，无法解析） | 跳过，不变 | —                             |
-| 其他无前缀提交                            | 按补丁 +1（建议使用规范前缀） | `0.1.1` → `0.1.2` |
+| 其他无前缀提交                            | 按补丁 +1（建议使用规范前缀） | `0.1.0` → `0.1.1` |
 
 分支规则：
 
-- **开发分支（`dev` / `dev/*` / `dev-*` / `*-dev`）**：打测试版本号（PEP 440），基础版本不动、仅递增 dev 序号，如 `0.1.1` → `0.1.1.dev0` → `0.1.1.dev1`；合入 `main` 后正式提交剥离 `.devN` 并按上表递增生成正式版本（如 `0.1.1.dev5` + fix → `0.1.2`）。
+- **开发分支（`dev` / `dev/*` / `dev-*` / `*-dev`）**：打预发布版本号（SemVer 规范，`-devN` 同时兼容 PEP 440），基础版本不动、仅递增 dev 序号，如 `0.1.0` → `0.1.0-dev0` → `0.1.0-dev1`；合入 `main` 后正式提交剥离 `-devN` 并按上表递增生成正式版本（如 `0.1.0-dev5` + fix → `0.1.1`）。
 - **正式分支（`main` 等）**：直接按上表递增正式版本号。
-- 版本打 tag（`v*`，触发 CI 正式版镜像发布）仍需手动执行，钩子只更新版本号不打 tag。
+- 版本打 tag（`v*`，触发 CI 正式版镜像发布）：dev→main 走 PR 合入时由 release workflow **自动完成**；直接提交 main / 本地合入场景仍需手动执行（本地钩子只更新版本号不打 tag）。
 
 安装钩子（`.git/hooks` 不入库，每个 clone 后执行一次）：
 
@@ -898,12 +900,12 @@ python scripts/install_hooks.py --uninstall # 卸载（自动恢复备份）
 
 **首选：dev→main 走 PR 合入（自动发版，无需手动操作）**
 
-dev 分支开发（本地钩子自动打 `X.Y.Z.devN` 测试版本号）→ 推送远程 → 创建 dev→main PR（网页或 `gh pr create` 均可）→ 合并 PR（网页 Merge / `gh pr merge` 均可）→ [release workflow](./.github/workflows/release.yml) 自动完成发版：
+dev 分支开发（本地钩子自动打 `X.Y.Z-devN` 预发布版本号）→ 推送远程 → 创建 dev→main PR（网页或 `gh pr create` 均可）→ 合并 PR（网页 Merge / `gh pr merge` 均可）→ [release workflow](./.github/workflows/release.yml) 自动完成发版：
 
-- 剥离 `.devN` 并按 **PR 标题前缀**递增：`feat`→小版本、`fix` 等→补丁、`!` / `BREAKING CHANGE`→大版本、`docs`/`chore`→仅剥离正式化不递增；
+- 剥离 `-devN` 并按 **PR 标题前缀**递增：`feat`→小版本、`fix` 等→补丁、`!` / `BREAKING CHANGE`→大版本、`docs`/`chore`→仅剥离正式化不递增；
 - 同步更新 README / docs 版本引用；
 - 经 **release/vX.Y.Z 临时分支创建 PR 自动合入 main**（PR 触发 CI，检查通过后自动合并），全程符合 main 分支保护；
-- 仅更新版本号，不打 tag。
+- 合并发版 PR 后自动打 `vX.Y.Z` tag 并推送，触发 CI 正式版镜像发布（SemVer + `latest`）。
 
 注意：**PR 标题必须带 conventional 前缀**，否则按补丁处理；release workflow 只在 `base=main` + `head=dev` 且合并成功时触发（release 分支自身的 PR 不会触发，避免循环）。
 
@@ -915,15 +917,15 @@ dev 分支开发（本地钩子自动打 `X.Y.Z.devN` 测试版本号）→ 推�
 git checkout main
 git pull origin main
 git merge --squash dev          # 将 dev 全部改动合并到暂存区（不产生 merge commit）
-git commit -m "feat: <本次合入的功能描述>"   # 本地钩子：剥离 .devN 后按前缀递增
+git commit -m "feat: <本次合入的功能描述>"   # 本地钩子：剥离 -devN 后按前缀递增
 git push origin main
 ```
 
-- 合入前 dev 版本为 `0.1.1.dev5`，合入后 main 上 `feat` 提交 → 剥离 `.devN` 得 `0.1.1` → 小版本 +1 → **`0.2.0`**（正式版），README 徽章 / 当前版本 / docs 示例随提交自动同步；
+- 合入前 dev 版本为 `0.1.0-dev5`，合入后 main 上 `feat` 提交 → 剥离 `-devN` 得 `0.1.0` → 小版本 +1 → **`0.2.0`**（正式版），README 徽章 / 当前版本 / docs 示例随提交自动同步；
 - 如需保留分支历史可改用 `git merge dev`：merge 提交钩子自动跳过（不更新版本），需在 main 上再提交一次（如 `fix: 合入后的收尾修改`）生成正式版本；
-- 若 main 与 dev 都改过 `pyproject.toml` 产生冲突，手动保留版本号较高的一方即可（如保留 dev 的 `0.1.1.dev5`）。
+- 若 main 与 dev 都改过 `pyproject.toml` 产生冲突，手动保留版本号较高的一方即可（如保留 dev 的 `0.1.0-dev5`）。
 
-> 合入 main 生成正式版本号后，如需发布正式版镜像，手动打 tag 推送即可（`git tag v0.2.0 && git push origin v0.2.0`，CI 的 `v*` tag 会触发正式版镜像构建与签名）。
+> 合入 main 生成正式版本号后，正式版镜像由 release workflow **自动打 tag 发布**（dev→main 走 PR 合入时，发版 PR 合并后自动推 `vX.Y.Z` tag）；本地合并场景（备选方案）需手动打 tag 推送（`git tag v0.2.0 && git push origin v0.2.0`，CI 的 `v*` tag 会触发正式版镜像构建与签名）。
 
 ## 14. 许可证
 

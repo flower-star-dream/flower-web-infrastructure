@@ -5,11 +5,14 @@
 @Date: 2026/08/14 10:00
 @Description: 验证 Application 配置驱动自动装配（Spring Boot 风格）与统一鉴权上下文注入顺序（规范 §6.4）。
 """
+import logging
+
 import httpx
 import pytest
 
 from web_infra import (
     Application,
+    ConfigError,
     create_app,
     MemoryCacheBackend,
     RedisCacheBackend,
@@ -28,7 +31,7 @@ _SECRET = "test-secret-for-application-0123456789"
 @pytest.fixture(autouse=True)
 def _jwt_secret(monkeypatch):
     """注入 JWT 测试密钥；测试后清理 JWTUtil 全局注入（cache.type=redis 用例会装配 Redis 配置，避免污染后续用例）"""
-    from web_infra.security import JWTUtil
+    from web_infra.capabilities.security import JWTUtil
 
     monkeypatch.setenv("JWT_SECRET_KEY", _SECRET)
     yield
@@ -74,8 +77,8 @@ def test_application_component_accessor():
 @pytest.mark.asyncio
 async def test_auth_payload_identity_not_overwritten():
     """统一鉴权启用后：业务获取的 user_id 来自 token payload，请求头 X-User-Id 不得覆盖（规范 §6.4）"""
-    from web_infra.context import RequestContext
-    from web_infra.security import JWTUtil
+    from web_infra.infra.context import RequestContext
+    from web_infra.capabilities.security import JWTUtil
 
     app = create_app(
         {
@@ -114,7 +117,7 @@ async def test_auth_payload_identity_not_overwritten():
 @pytest.mark.asyncio
 async def test_no_auth_request_header_passthrough():
     """未启用统一鉴权时：请求头 X-User-Id 透传到业务（规范 §6.5 服务调用链）"""
-    from web_infra.context import RequestContext
+    from web_infra.infra.context import RequestContext
 
     app = create_app({"app.name": "test-app"})
 
@@ -131,7 +134,7 @@ async def test_no_auth_request_header_passthrough():
 
 def test_application_tenant_enabled_installs_filter():
     """多租户启用后：数据库工厂自动装配租户过滤器（多租户规范 §2）"""
-    from web_infra.db import TenantQueryFilter
+    from web_infra.capabilities.db import TenantQueryFilter
 
     app = create_app({"app": {"tenant": {"enabled": True, "strict": True}}})
     db = app.state.components["db"]
@@ -143,9 +146,9 @@ def test_application_tenant_enabled_installs_filter():
 @pytest.mark.asyncio
 async def test_tenant_strict_rejects_session_without_context():
     """多租户 strict：无租户上下文创建会话抛 E2-PERM-000（多租户规范 §2 无上下文拒绝执行）"""
-    from web_infra.context import RequestContext
-    from web_infra.db import TenantQueryFilter
-    from web_infra.error import BizException
+    from web_infra.infra.context import RequestContext
+    from web_infra.capabilities.db import TenantQueryFilter
+    from web_infra.infra.error import BizException
 
     db = MySQLDatabase(MySQLConfig(settings=MySQLConnectionSettings(host="localhost")))
     db.install_tenant_filter(TenantQueryFilter(strict=True))
@@ -158,7 +161,7 @@ async def test_tenant_strict_rejects_session_without_context():
 @pytest.mark.asyncio
 async def test_tenant_header_injected_into_context():
     """请求头 X-Tenant-Id 注入租户上下文（多租户扩展 §1.2）"""
-    from web_infra.context import RequestContext
+    from web_infra.infra.context import RequestContext
 
     app = create_app({"app.name": "test-app"})
 
@@ -171,3 +174,47 @@ async def test_tenant_header_injected_into_context():
         resp = await client.get("/whoami", headers={"X-Tenant-Id": "t-1001"})
         assert resp.status_code == 200
         assert resp.json()["tenant_id"] == "t-1001"
+
+
+# ---------------------------------------------------------------------------
+# 日志输出通道配置（app.logging.output / file / sinks）
+# ---------------------------------------------------------------------------
+
+
+def _web_infra_handlers():
+    """根日志器上由框架挂载（打 _web_infra 标记）的 handler 清单"""
+    return [h for h in logging.getLogger().handlers if getattr(h, "_web_infra", False)]
+
+
+def test_application_logging_output_console_only(tmp_path):
+    """app.logging.output=console：仅控制台 handler"""
+    create_app({"app": {"logging": {"output": "console", "file": str(tmp_path / "a.log")}}})
+    handlers = _web_infra_handlers()
+    assert len(handlers) == 1
+    assert isinstance(handlers[0], logging.StreamHandler)
+    assert not isinstance(handlers[0], logging.handlers.TimedRotatingFileHandler)
+
+
+def test_application_logging_output_file_only(tmp_path):
+    """app.logging.output=file：仅文件 handler"""
+    log_file = tmp_path / "b.log"
+    create_app({"app": {"logging": {"output": "file", "file": str(log_file)}}})
+    handlers = _web_infra_handlers()
+    assert len(handlers) == 1
+    assert isinstance(handlers[0], logging.handlers.TimedRotatingFileHandler)
+
+
+def test_application_logging_output_default_both(tmp_path):
+    """app.logging 未覆盖 output：默认 both（控制台 + 文件同时输出）"""
+    log_file = tmp_path / "c.log"
+    create_app({"app": {"logging": {"file": str(log_file)}}})
+    handlers = _web_infra_handlers()
+    assert len(handlers) == 2
+    assert any(isinstance(h, logging.StreamHandler) for h in handlers)
+    assert any(isinstance(h, logging.handlers.TimedRotatingFileHandler) for h in handlers)
+
+
+def test_application_logging_unknown_sink_raises():
+    """app.logging.sinks 声明未注册通道：ConfigError 快速失败"""
+    with pytest.raises(ConfigError):
+        create_app({"app": {"logging": {"sinks": {"no-such-sink": {}}}}})

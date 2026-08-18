@@ -4,7 +4,7 @@
 @Author: 花海
 @Date: 2026/08/16 10:00
 @Description: 支付为可选能力（2026-08-17）：不随 web_infra 顶层导出，需显式从
-              web_infra.payment 引入；本测试覆盖"顶层不导出 + 子模块完整导出"的契约。
+              web_infra.capabilities.payment 引入；本测试覆盖"顶层不导出 + 子模块完整导出"的契约。
 """
 import importlib
 
@@ -23,8 +23,8 @@ def test_top_level_not_exported():
 
 
 def test_payment_submodule_exports():
-    """web_infra.payment 子模块完整导出（显式引入可用）"""
-    from web_infra.payment import (
+    """web_infra.capabilities.payment 子模块完整导出（显式引入可用）"""
+    from web_infra.capabilities.payment import (
         InMemoryPaymentGateway,
         PaymentGateway,
         PaymentGatewayRegistry,

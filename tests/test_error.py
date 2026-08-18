@@ -9,7 +9,7 @@ import logging
 
 import pytest
 
-from web_infra.error import (
+from web_infra.infra.error import (
     CommonErrorCode,
     CommonErrorCodeEnum,
     AiErrorCode,

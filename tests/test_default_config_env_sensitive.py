@@ -10,7 +10,7 @@
 """
 import os
 
-from web_infra.config import Settings
+from web_infra.infra.config import Settings
 
 
 def _read(keys: list[str]) -> dict[str, str]:

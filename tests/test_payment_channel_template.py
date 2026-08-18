@@ -13,7 +13,7 @@ from typing import Any, Mapping
 
 import pytest
 
-from web_infra.payment import (
+from web_infra.capabilities.payment import (
     InMemoryPaymentFlowStore,
     InMemoryPaymentOrderStore,
     PaymentCallback,
@@ -25,8 +25,8 @@ from web_infra.payment import (
     PaymentScene,
     PaymentStateMachine,
 )
-from web_infra.payment.payment_flow_status import PaymentFlowEvent, PaymentFlowStatus
-from web_infra.payment.payment_status import PaymentEvent, PaymentStatus
+from web_infra.capabilities.payment.payment_flow_status import PaymentFlowEvent, PaymentFlowStatus
+from web_infra.capabilities.payment.payment_status import PaymentEvent, PaymentStatus
 
 
 class FakeChannel(PaymentChannelTemplate):
@@ -47,7 +47,7 @@ class FakeChannel(PaymentChannelTemplate):
         return PaymentPrepayResponse(scene=request.scene, prepay_id="prepay-1")
 
     async def _do_query_order(self, out_trade_no: str) -> Any:
-        from web_infra.payment import PaymentOrder
+        from web_infra.capabilities.payment import PaymentOrder
 
         return PaymentOrder(
             out_trade_no=out_trade_no, status=self.query_status,
@@ -61,7 +61,7 @@ class FakeChannel(PaymentChannelTemplate):
         return self.next_callback
 
     async def _do_refund(self, request: Any) -> Any:
-        from web_infra.payment import PaymentRefundResponse
+        from web_infra.capabilities.payment import PaymentRefundResponse
 
         self.refund_called = True
         return PaymentRefundResponse(out_refund_no=request.out_refund_no, refund_id="REF-1", refund_amount=request.refund_amount)
@@ -108,7 +108,7 @@ async def test_refund_unsupported_capability():
         async def _parse_callback(self, headers, body):  # pragma: no cover
             raise NotImplementedError
 
-    from web_infra.payment import PaymentRefundRequest
+    from web_infra.capabilities.payment import PaymentRefundRequest
 
     channel = NoRefundChannel()
     with pytest.raises(Exception) as exc_info:
@@ -282,8 +282,8 @@ async def test_refund_exceeds_paid_amount_rejected():
     """退款超额：已退 + 本次 > 实付金额 → 拒绝（§5.3 部分退款累计约束）"""
     from decimal import Decimal
 
-    from web_infra.payment import PaymentFlowRecord, PaymentRefundRequest
-    from web_infra.payment.payment_flow_status import PaymentFlowEvent
+    from web_infra.capabilities.payment import PaymentFlowRecord, PaymentRefundRequest
+    from web_infra.capabilities.payment.payment_flow_status import PaymentFlowEvent
 
     order_store = InMemoryPaymentOrderStore()
     flow_store = InMemoryPaymentFlowStore()
@@ -299,7 +299,7 @@ async def test_refund_exceeds_paid_amount_rejected():
 
 def test_amount_fen_yuan_conversion_boundaries():
     """金额换算边界（§8.1/§10.3）：元→分、分→元边界值（0.01 / 99999999.99）"""
-    from web_infra.payment.provider.wechat.wechat_pay_provider import WeChatPayProvider
+    from web_infra.capabilities.payment.provider.wechat.wechat_pay_provider import WeChatPayProvider
 
     assert WeChatPayProvider._to_fen(Decimal("0.01")) == 1
     assert WeChatPayProvider._to_yuan(1) == Decimal("0.01")

@@ -15,11 +15,11 @@ pytest.importorskip("v2.nacos")
 
 from v2.nacos import Instance, NacosConfigService, NacosNamingService  # noqa: E402
 
-from web_infra.config.nacos_client_factory import build_client_config  # noqa: E402
-from web_infra.config.nacos_config_client import NacosConfigClient  # noqa: E402
-from web_infra.config.nacos_properties import NacosProperties  # noqa: E402
-from web_infra.registry.nacos_discovery import NacosDiscoveryClient  # noqa: E402
-from web_infra.registry.service_instance import ServiceInstance  # noqa: E402
+from web_infra.capabilities.config.nacos_client_factory import build_client_config  # noqa: E402
+from web_infra.capabilities.config.nacos_config_client import NacosConfigClient  # noqa: E402
+from web_infra.capabilities.config.nacos_properties import NacosProperties  # noqa: E402
+from web_infra.capabilities.registry.nacos_discovery import NacosDiscoveryClient  # noqa: E402
+from web_infra.capabilities.registry.service_instance import ServiceInstance  # noqa: E402
 
 
 # ----------------------------------------------------------------------

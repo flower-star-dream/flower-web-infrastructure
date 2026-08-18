@@ -13,12 +13,12 @@ import sys
 import pytest
 
 from web_infra import create_app
-from web_infra.capability import (
+from web_infra.core.capability import (
     Capability,
     CapabilityError,
     CapabilityRegistry,
 )
-from web_infra.config import ConfigError
+from web_infra.infra.config import ConfigError
 
 # 测试专用业务能力名（避免与内置能力冲突）
 TEST_ORDER = "test_order_cap"
@@ -28,7 +28,7 @@ TEST_CYCLE_B = "test_cycle_b"
 
 def _register_test_capabilities() -> None:
     """注册测试专用能力（幂等）：业务订单能力依赖支付；循环依赖对用于装配校验。"""
-    CapabilityRegistry.register(Capability(name=TEST_ORDER, modules=("web_infra.payment",), requires=("pay",)))
+    CapabilityRegistry.register(Capability(name=TEST_ORDER, modules=("web_infra.capabilities.payment",), requires=("pay",)))
     CapabilityRegistry.register(Capability(name=TEST_CYCLE_A, requires=(TEST_CYCLE_B,)))
     CapabilityRegistry.register(Capability(name=TEST_CYCLE_B, requires=(TEST_CYCLE_A,)))
 
@@ -54,14 +54,14 @@ def test_resolve_pay_includes_prerequisites():
     """启用支付按包含关系自动带上前置：user → authn → authz → pay（拓扑序）"""
     resolution = CapabilityRegistry.resolve("pay")
     assert [c.name for c in resolution.chain] == ["user", "authn", "authz", "pay"]
-    assert resolution.modules == ("web_infra.security", "web_infra.payment")
+    assert resolution.modules == ("web_infra.capabilities.security", "web_infra.capabilities.payment")
 
 
 def test_resolve_authn_includes_user():
     """认证与鉴权一样依赖用户系统前置：启用认证自动带出用户"""
     resolution = CapabilityRegistry.resolve("authn")
     assert [c.name for c in resolution.chain] == ["user", "authn"]
-    assert resolution.modules == ("web_infra.security",)
+    assert resolution.modules == ("web_infra.capabilities.security",)
 
 
 def test_resolve_unknown_raises():
@@ -120,9 +120,9 @@ def test_validate_reports_circular():
 def test_enable_pay_imports_modules():
     """启用 pay 自动导入前置与目标框架模块（幂等）"""
     resolution = CapabilityRegistry.enable("pay")
-    assert resolution.modules == ("web_infra.security", "web_infra.payment")
-    assert "web_infra.security" in sys.modules
-    assert "web_infra.payment" in sys.modules
+    assert resolution.modules == ("web_infra.capabilities.security", "web_infra.capabilities.payment")
+    assert "web_infra.capabilities.security" in sys.modules
+    assert "web_infra.capabilities.payment" in sys.modules
 
 
 def test_enable_user_no_modules():
@@ -141,7 +141,7 @@ def test_business_capability_registration():
     """业务层注册自定义能力（订单依赖支付），解析自动展开全部前置"""
     resolution = CapabilityRegistry.resolve(TEST_ORDER)
     assert [c.name for c in resolution.chain] == ["user", "authn", "authz", "pay", TEST_ORDER]
-    assert resolution.modules == ("web_infra.security", "web_infra.payment")
+    assert resolution.modules == ("web_infra.capabilities.security", "web_infra.capabilities.payment")
 
 
 # ---------------------------------------------------------------------------
@@ -166,4 +166,4 @@ def test_capability_top_level_export():
     from web_infra import CapabilityRegistry as TopLevelRegistry
 
     assert TopLevelRegistry is CapabilityRegistry
-    assert importlib.import_module("web_infra.capability") is not None
+    assert importlib.import_module("web_infra.core.capability") is not None

@@ -27,5 +27,8 @@ htmlcov/
 !.env.example
 *.local
 
+# 本地运行日志（框架默认输出通道 both：控制台 + 文件）
+logs/
+
 # 整改文档
 docs/superpowers/

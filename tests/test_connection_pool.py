@@ -7,7 +7,7 @@
 """
 import pytest
 
-from web_infra.ai import ConnectionPoolManager
+from web_infra.capabilities.ai import ConnectionPoolManager
 
 
 @pytest.mark.asyncio

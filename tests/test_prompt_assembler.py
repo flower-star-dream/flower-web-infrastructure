@@ -7,9 +7,9 @@
 """
 import pytest
 
-from web_infra.ai import PromptAssembler
-from web_infra.ai.chat_role_enum import ChatRole
-from web_infra.error import BizException
+from web_infra.capabilities.ai import PromptAssembler
+from web_infra.capabilities.ai.chat_role_enum import ChatRole
+from web_infra.infra.error import BizException
 
 
 def test_assemble_role_isolation():
@@ -28,7 +28,7 @@ def test_assemble_role_isolation():
 def test_assemble_with_history():
     """历史消息穿插在系统与用户消息之间"""
     assembler = PromptAssembler()
-    from web_infra.ai import ChatMessage
+    from web_infra.capabilities.ai import ChatMessage
 
     messages = assembler.assemble(
         system_prompt="system",

@@ -10,12 +10,12 @@ from decimal import Decimal
 
 import pytest
 
-from web_infra.payment.in_memory_payment_gateway import InMemoryPaymentGateway
-from web_infra.payment.payment_order import PaymentOrder
-from web_infra.payment.payment_scene import PaymentScene
-from web_infra.payment.payment_status import PaymentStatus, RefundStatus
-from web_infra.payment.prepay_request import PaymentPrepayRequest
-from web_infra.payment.refund_request import PaymentRefundRequest
+from web_infra.capabilities.payment.in_memory_payment_gateway import InMemoryPaymentGateway
+from web_infra.capabilities.payment.payment_order import PaymentOrder
+from web_infra.capabilities.payment.payment_scene import PaymentScene
+from web_infra.capabilities.payment.payment_status import PaymentStatus, RefundStatus
+from web_infra.capabilities.payment.prepay_request import PaymentPrepayRequest
+from web_infra.capabilities.payment.refund_request import PaymentRefundRequest
 
 
 @pytest.fixture

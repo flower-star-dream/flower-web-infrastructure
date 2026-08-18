@@ -9,13 +9,13 @@
 import pytest
 from pydantic import ValidationError
 
-from web_infra.constants import (
+from web_infra.infra.constants import (
     PARAM_COMMON_DEFAULT_PAGE_NO,
     PARAM_COMMON_DEFAULT_PAGE_SIZE,
     PARAM_COMMON_MAX_PAGE_SIZE,
 )
-from web_infra.constants.param_constant import ParamConstant
-from web_infra.db.page_query import CursorPageQuery, PageQuery
+from web_infra.infra.constants.param_constant import ParamConstant
+from web_infra.capabilities.db.page_query import CursorPageQuery, PageQuery
 
 # 深分页拒绝阈值（规范 S10-1）；constants/__init__.py 尚未重导出，直接经常量类访问
 PARAM_COMMON_MAX_OFFSET = ParamConstant.PARAM_COMMON_MAX_OFFSET

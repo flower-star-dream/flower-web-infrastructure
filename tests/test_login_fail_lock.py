@@ -8,7 +8,7 @@
 import pytest
 from redis.exceptions import RedisError
 
-from web_infra.security import LoginFailLockService
+from web_infra.capabilities.security import LoginFailLockService
 
 
 class _FakeRedis:

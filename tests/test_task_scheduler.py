@@ -10,8 +10,8 @@ import asyncio
 
 import pytest
 
-from web_infra.schedule import ScheduledTask, TaskScheduler
-from web_infra.task import InMemoryTaskRecordStore, TaskStatus
+from web_infra.capabilities.schedule import ScheduledTask, TaskScheduler
+from web_infra.capabilities.task import InMemoryTaskRecordStore, TaskStatus
 
 
 async def _noop() -> None:

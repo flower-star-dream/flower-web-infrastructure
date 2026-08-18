@@ -10,7 +10,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from web_infra.db import (
+from web_infra.capabilities.db import (
     DatabaseFactoryInterface,
     MySQLConfig,
     MySQLConnectionSettings,

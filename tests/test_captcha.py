@@ -9,7 +9,7 @@ import time
 
 import pytest
 
-from web_infra.security import CaptchaService, InMemoryCaptchaStore, RedisCaptchaStore
+from web_infra.capabilities.security import CaptchaService, InMemoryCaptchaStore, RedisCaptchaStore
 
 
 @pytest.mark.asyncio

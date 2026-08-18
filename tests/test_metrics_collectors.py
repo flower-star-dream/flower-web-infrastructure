@@ -10,14 +10,14 @@
 import pytest
 from concurrent.futures import ThreadPoolExecutor
 
-from web_infra.monitoring.cache_metrics import CacheMetrics
-from web_infra.monitoring.metrics import (
+from web_infra.infra.monitoring.cache_metrics import CacheMetrics
+from web_infra.infra.monitoring.metrics import (
     MYSQL_POOL_ACTIVE_CONNECTIONS,
     MYSQL_POOL_CONNECTION_TOTAL,
     MYSQL_POOL_IDLE_CONNECTIONS,
 )
-from web_infra.monitoring.mq_metrics import MqMetrics
-from web_infra.monitoring.pool_metrics import (
+from web_infra.infra.monitoring.mq_metrics import MqMetrics
+from web_infra.infra.monitoring.pool_metrics import (
     MONGO_POOL_MAX_CONNECTIONS,
     REDIS_POOL_ACTIVE_CONNECTIONS,
     REDIS_POOL_CONNECTION_TOTAL,
@@ -25,8 +25,8 @@ from web_infra.monitoring.pool_metrics import (
     record_mysql_pool_metrics,
     record_redis_pool_metrics,
 )
-from web_infra.monitoring.registry_metrics import RegistryMetrics
-from web_infra.monitoring.runtime_metrics import (
+from web_infra.infra.monitoring.registry_metrics import RegistryMetrics
+from web_infra.infra.monitoring.runtime_metrics import (
     PYTHON_GC_LIVE_OBJECTS,
     PYTHON_THREADS_CURRENT,
     THREAD_POOL_QUEUE_SIZE,
@@ -34,7 +34,7 @@ from web_infra.monitoring.runtime_metrics import (
     ThreadPoolMetrics,
     record_runtime_metrics,
 )
-from web_infra.monitoring.storage_metrics import StorageMetrics
+from web_infra.infra.monitoring.storage_metrics import StorageMetrics
 
 
 class _FakePool:
@@ -182,8 +182,8 @@ def test_registry_metrics_record():
 @pytest.mark.asyncio
 async def test_mq_update_metrics_refreshes_pending():
     """内存消息队列 update_metrics：积压数反映队列实际大小"""
-    from web_infra.mq.in_memory_message_queue import InMemoryMessageQueue
-    from web_infra.mq.message import Message
+    from web_infra.capabilities.mq.in_memory_message_queue import InMemoryMessageQueue
+    from web_infra.capabilities.mq.message import Message
 
     queue = InMemoryMessageQueue()
     await queue.publish(Message(topic="order", message_id="1"))
@@ -195,8 +195,8 @@ async def test_mq_update_metrics_refreshes_pending():
 @pytest.mark.asyncio
 async def test_registry_update_metrics_refreshes_instances():
     """内存注册中心 update_metrics：实例数反映已注册实例"""
-    from web_infra.registry.in_memory import InMemoryServiceRegistry
-    from web_infra.registry.service_instance import ServiceInstance
+    from web_infra.capabilities.registry.in_memory import InMemoryServiceRegistry
+    from web_infra.capabilities.registry.service_instance import ServiceInstance
 
     registry = InMemoryServiceRegistry()
     await registry.register("user-service", ServiceInstance(ip="127.0.0.1", port=8001))

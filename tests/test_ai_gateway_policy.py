@@ -14,7 +14,7 @@ import asyncio
 
 import pytest
 
-from web_infra.ai import (
+from web_infra.capabilities.ai import (
     ChatMessage,
     ChatRequest,
     ChatResponse,
@@ -37,12 +37,12 @@ from web_infra.ai import (
     UsageRecord,
     UsageRecordStoreInterface,
 )
-from web_infra.ai.model_access_policy import ModelAccessPolicy
-from web_infra.ai.model_gateway import ModelRouter, RouteEntry
-from web_infra.context import RequestContext
-from web_infra.db.tenant_guard import NO_TENANT
-from web_infra.error import BizException, PermException
-from web_infra.error.ai_error_code import AiErrorCode
+from web_infra.capabilities.ai.model_access_policy import ModelAccessPolicy
+from web_infra.capabilities.ai.model_gateway import ModelRouter, RouteEntry
+from web_infra.infra.context import RequestContext
+from web_infra.capabilities.db.tenant_guard import NO_TENANT
+from web_infra.infra.error import BizException, PermException
+from web_infra.infra.error.ai_error_code import AiErrorCode
 
 
 # ---------------------------------------------------------------------------
@@ -101,7 +101,7 @@ class _SpyQuotaManager(QuotaManager):
 class _DenyPolicy(ModelAccessPolicy):
     """拒绝所有模型访问的权限策略（AI-8 测试）"""
 
-    def check_access(self, model_name: str, tenant_id: str, user_id: str, scene: str | None = None) -> bool:
+    def check_access(self, model_name: str, tenant_id: str | None, user_id: str, scene: str | None = None) -> bool:
         """恒返回 False：一律拒绝"""
         return False
 
@@ -368,3 +368,17 @@ async def test_access_policy_deny_raises_perm(clean_registry):
 
     with pytest.raises(PermException):
         await gateway.embed(EmbeddingRequest(model="p1", input="hi"), scene="chat", tenant_id="t1", user_id="u1")
+
+
+@pytest.mark.asyncio
+async def test_access_policy_tenant_optional(clean_registry):
+    """AI-8：tenant_id 可选——单租户不传租户（默认空串）时权限策略仍生效"""
+    p1 = FakeProvider()
+    p1.name = "p1"
+    ModelProviderRegistry.register(p1)
+    gateway = _gateway({"chat": RouteEntry("p1")}, access_policy=_DenyPolicy())
+
+    with pytest.raises(PermException) as exc_info:
+        await gateway.chat(_request("p1"), scene="chat", user_id="u1")  # 不传 tenant_id
+    assert exc_info.value.code == "E2-PERM-000"
+    assert p1.chat_calls == 0

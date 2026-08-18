@@ -116,28 +116,40 @@ class TestBumpVersion:
         assert bump_version("2.9.9", CommitType.BREAKING, "main") == "3.0.0"
 
     def test_dev_first_commit(self) -> None:
-        assert bump_version("0.2.0", CommitType.FEAT, "dev") == "0.2.0.dev0"
-        assert bump_version("0.2.0", CommitType.PATCH, "dev") == "0.2.0.dev0"
+        assert bump_version("0.2.0", CommitType.FEAT, "dev") == "0.2.0-dev0"
+        assert bump_version("0.2.0", CommitType.PATCH, "dev") == "0.2.0-dev0"
 
     def test_dev_increment_dev_number(self) -> None:
-        assert bump_version("0.2.0.dev3", CommitType.FEAT, "dev") == "0.2.0.dev4"
-        assert bump_version("0.2.0.dev3", CommitType.PATCH, "dev") == "0.2.0.dev4"
+        assert bump_version("0.2.0-dev3", CommitType.FEAT, "dev") == "0.2.0-dev4"
+        assert bump_version("0.2.0-dev3", CommitType.PATCH, "dev") == "0.2.0-dev4"
 
     def test_dev_branch_pattern(self) -> None:
-        assert bump_version("0.2.0.dev1", CommitType.PATCH, "feature-dev") == "0.2.0.dev2"
+        assert bump_version("0.2.0-dev1", CommitType.PATCH, "feature-dev") == "0.2.0-dev2"
 
     def test_main_strip_dev_then_bump(self) -> None:
-        assert bump_version("0.2.0.dev5", CommitType.FEAT, "main") == "0.3.0"
-        assert bump_version("0.2.0.dev5", CommitType.PATCH, "main") == "0.2.1"
-        assert bump_version("0.2.0.dev5", CommitType.BREAKING, "main") == "1.0.0"
+        assert bump_version("0.2.0-dev5", CommitType.FEAT, "main") == "0.3.0"
+        assert bump_version("0.2.0-dev5", CommitType.PATCH, "main") == "0.2.1"
+        assert bump_version("0.2.0-dev5", CommitType.BREAKING, "main") == "1.0.0"
 
     def test_no_change_returns_none(self) -> None:
         assert bump_version("0.2.0", CommitType.NO_CHANGE, "main") is None
-        assert bump_version("0.2.0.dev0", CommitType.SKIP, "dev") is None
+        assert bump_version("0.2.0-dev0", CommitType.SKIP, "dev") is None
 
     def test_invalid_version_raises(self) -> None:
         with pytest.raises(ValueError):
             bump_version("abc", CommitType.FEAT, "main")
+
+    def test_leading_zero_rejected(self) -> None:
+        # SemVer 规范：MAJOR/MINOR/PATCH 为非负整数且禁止前导零
+        for bad in ("01.2.3", "1.02.3", "1.2.03"):
+            with pytest.raises(ValueError):
+                bump_version(bad, CommitType.FEAT, "main")
+
+    def test_unsupported_prerelease_rejected(self) -> None:
+        # SemVer 预发布格式仅支持 -devN（框架暂只使用 dev 预发布）
+        for bad in ("1.2.3-alpha.1", "1.2.3-01", "1.2.3+build.1"):
+            with pytest.raises(ValueError):
+                bump_version(bad, CommitType.FEAT, "main")
 
 
 class TestVersionFileIO:
@@ -229,23 +241,23 @@ class TestSyncReadmeExamples:
 
     def test_dev_branch_example(self) -> None:
         text = (
-            "- **开发分支**：打测试版本号（PEP 440），如 `0.1.0` → `0.1.0.dev0` → `0.1.0.dev1`；"
-            "（如 `0.1.0.dev5` + fix → `0.1.1`）。\n"
+            "- **开发分支**：打测试版本号（SemVer），如 `0.1.0` → `0.1.0-dev0` → `0.1.0-dev1`；"
+            "（如 `0.1.0-dev5` + fix → `0.1.1`）。\n"
         )
         expected = (
-            "- **开发分支**：打测试版本号（PEP 440），如 `0.2.0` → `0.2.0.dev0` → `0.2.0.dev1`；"
-            "（如 `0.2.0.dev5` + fix → `0.2.1`）。\n"
+            "- **开发分支**：打测试版本号（SemVer），如 `0.2.0` → `0.2.0-dev0` → `0.2.0-dev1`；"
+            "（如 `0.2.0-dev5` + fix → `0.2.1`）。\n"
         )
         assert self._sync(text, "0.1.0", "0.2.0") == expected
 
     def test_merge_guide_examples(self) -> None:
         text = (
-            "- 合入前 dev 版本为 `0.1.0.dev5`，合入后 main 上 `feat` 提交 → 剥离 `.devN` 得 `0.1.0` "
+            "- 合入前 dev 版本为 `0.1.0-dev5`，合入后 main 上 `feat` 提交 → 剥离 `-devN` 得 `0.1.0` "
             "→ 小版本 +1 → **`0.2.0`**（正式版）。\n"
             "> 手动打 tag 推送即可（`git tag v0.2.0 && git push origin v0.2.0`）。\n"
         )
         expected = (
-            "- 合入前 dev 版本为 `0.2.0.dev5`，合入后 main 上 `feat` 提交 → 剥离 `.devN` 得 `0.2.0` "
+            "- 合入前 dev 版本为 `0.2.0-dev5`，合入后 main 上 `feat` 提交 → 剥离 `-devN` 得 `0.2.0` "
             "→ 小版本 +1 → **`0.3.0`**（正式版）。\n"
             "> 手动打 tag 推送即可（`git tag v0.3.0 && git push origin v0.3.0`）。\n"
         )
@@ -263,6 +275,6 @@ class TestSyncReadmeExamples:
         assert self._sync(text, "0.1.0", "0.2.0") == expected
 
     def test_dev_base_unchanged_no_sync(self) -> None:
-        # dev 分支基础版本不变（0.1.0.dev0 → 0.1.0.dev1），示例不更新
+        # dev 分支基础版本不变（0.1.0-dev0 → 0.1.0-dev1），示例不更新
         text = "| `feat` | `0.1.0` → `0.2.0` |\n"
-        assert self._sync(text, "0.1.0.dev0", "0.1.0.dev1") == text
+        assert self._sync(text, "0.1.0-dev0", "0.1.0-dev1") == text

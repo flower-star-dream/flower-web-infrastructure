@@ -9,7 +9,7 @@ import asyncio
 
 import pytest
 
-from web_infra.mq import InMemoryMessageQueue, Message
+from web_infra.capabilities.mq import InMemoryMessageQueue, Message
 
 
 @pytest.mark.asyncio
