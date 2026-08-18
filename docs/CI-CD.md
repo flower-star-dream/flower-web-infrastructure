@@ -92,7 +92,7 @@ docker rm -f web-infra-smoke
 | push `main` | `main-<时间戳>-<构建号>` | 测试版，如 `main-202608161030-42` |
 | push `main` | `v<pyproject版本>` | main 最新构建的版本号引用（如 `v1.0.0`），随 main 构建滚动更新；与正式版 git tag 共用同一标签，正式版发布时覆盖为正式内容 |
 | push `dev` | `dev-<时间戳>-<构建号>` | 测试版，如 `dev-202608161030-7`（标签规则与 main 一致，仅分支名前缀不同） |
-| 版本 tag `v*` | `v<SemVer>` | 正式版，如 tag `v1.0.0` → 推送 `v1.0.0`（与 git tag / `pyproject.toml` 版本号一致，规范 §20.1.1 示例 v1.2.3） |
+| 版本 tag `v*` | `v<SemVer>` | 正式版，如 tag `v2.0.0` → 推送 `v2.0.0`（与 git tag / `pyproject.toml` 版本号一致，规范 §20.1.1 示例 v1.2.3） |
 | 版本 tag `v*` | `latest` | 正式版发布时覆盖为最新正式版 |
 | PR | 不推送 | 只构建/扫描/冒烟，避免测试镜像污染仓库 |
 
