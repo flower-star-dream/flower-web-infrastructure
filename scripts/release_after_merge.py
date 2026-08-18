@@ -105,6 +105,27 @@ def release_version(current: str, commit_type: CommitType) -> str | None:
     return f"{major}.{minor}.{patch + 1}"
 
 
+def detect_breaking_in_pr(messages: list[str]) -> bool:
+    """从 PR 提交历史检测破坏性变更标记（feat! / BREAKING CHANGE: footer）。
+
+    发版版本语义兜底：release workflow 依据 dev→main PR 标题解析提交类型，
+    标题漏标 `!` / BREAKING CHANGE 时会误发小版本（如三层重构应发 1.0.0 却发 0.2.0）。
+    本函数遍历 PR 参与合并的提交信息，复用 version_bump.parse_commit_type 的
+    breaking 判定（前缀带 `!` 或正文含 `BREAKING CHANGE:` / `BREAKING-CHANGE:`），
+    命中任一提交即视为破坏性变更，用于把版本语义升级为大版本。
+
+    :param messages: PR 提交 message 列表
+    :return: True 表示提交历史中存在破坏性变更标记
+    """
+    for message in messages:
+        lines = message.splitlines()
+        subject = lines[0] if lines else ""
+        body = "\n".join(lines[1:])
+        if parse_commit_type(subject, body) is CommitType.BREAKING:
+            return True
+    return False
+
+
 def parse_repo_remote(remote_url: str) -> tuple[str, str]:
     """从 git remote URL 解析 (owner, repo)。
 
@@ -195,6 +216,30 @@ class GitHubApi:
         response = self._client.get(f"/commits/{sha}/check-runs")
         _raise_for_status(response)
         return list(response.json().get("check_runs", []))
+
+    def find_pull(self, base: str, head: str) -> int | None:
+        """按 base/head 查找已合并 PR 的编号（用于发版前读取 dev→main 提交历史）。
+
+        :param base: 目标分支（如 main）
+        :param head: 源分支（同仓库直接用分支名，如 dev）
+        :return: PR 编号；未找到返回 None
+        :raises httpx.HTTPStatusError: API 报错（含响应体）
+        """
+        response = self._client.get("/pulls", params={"base": base, "head": head, "state": "all"})
+        _raise_for_status(response)
+        pulls = response.json()
+        return int(pulls[0]["number"]) if pulls else None
+
+    def list_pull_commits(self, pr_number: int) -> list[str]:
+        """列出 PR 的提交信息（合并后仍可用，返回参与合并的提交）。
+
+        :param pr_number: PR 编号
+        :return: 提交 message 列表
+        :raises httpx.HTTPStatusError: API 报错（含响应体）
+        """
+        response = self._client.get(f"/pulls/{pr_number}/commits", params={"per_page": 100})
+        _raise_for_status(response)
+        return [commit.get("commit", {}).get("message", "") for commit in response.json()]
 
     def merge_pull(self, number: int, method: str = "squash") -> None:
         """合并 PR。
@@ -296,6 +341,36 @@ def main() -> int:
         print(f"[release] 跳过：PR 标题为 merge/revert 场景（{args.pr_title!r}）")
         return 0
 
+    # 非 --skip-git 模式需要 GitHub API（Token 要求见模块文档）
+    token = os.environ.get("RELEASE_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    if not args.skip_git and not token:
+        print(
+            "[release] 错误：缺少 RELEASE_TOKEN 环境变量（release.yml 需注入 secrets.RELEASE_PAT；"
+            "本流程必须用 PAT，默认 GITHUB_TOKEN 创建的 PR 无法触发 CI）",
+            file=sys.stderr,
+        )
+        return 1
+
+    api: GitHubApi | None = None
+    if not args.skip_git:
+        repo_env = os.environ.get("GITHUB_REPOSITORY")
+        if repo_env:
+            owner, repo = repo_env.split("/", 1)
+        else:
+            owner, repo = parse_repo_remote(git(["remote", "get-url", "origin"], repo_root))
+        api = GitHubApi(token, owner, repo)
+
+        # 版本语义兜底（BREAKING）：PR 标题漏标 `!` / BREAKING CHANGE 时，
+        # 从 dev→main 提交历史检测破坏性标记并升级为大版本（如三层重构应发 1.0.0 而非 0.2.0）
+        if commit_type is not CommitType.BREAKING:
+            try:
+                pr_number = api.find_pull(base="main", head="dev")
+                if pr_number is not None and detect_breaking_in_pr(api.list_pull_commits(pr_number)):
+                    print("[release] dev→main PR 提交历史检测到 BREAKING CHANGE（! 或 BREAKING CHANGE:），升级为大版本")
+                    commit_type = CommitType.BREAKING
+            except Exception as exc:  # noqa: BLE001 - 检测失败不阻断发版，回退 PR 标题语义
+                print(f"[release] 警告：PR 提交历史 breaking 检测失败（{exc}），按 PR 标题解析结果发版")
+
     current = read_current_version(repo_root)
     new_version = release_version(current, commit_type)
     if new_version is None:
@@ -312,20 +387,6 @@ def main() -> int:
         print("[release] --skip-git：未执行 git / GitHub API 操作")
         return 0
 
-    token = os.environ.get("RELEASE_TOKEN") or os.environ.get("GITHUB_TOKEN")
-    if not token:
-        print(
-            "[release] 错误：缺少 RELEASE_TOKEN 环境变量（release.yml 需注入 secrets.RELEASE_PAT；"
-            "本流程必须用 PAT，默认 GITHUB_TOKEN 创建的 PR 无法触发 CI）",
-            file=sys.stderr,
-        )
-        return 1
-    repo_env = os.environ.get("GITHUB_REPOSITORY")
-    if repo_env:
-        owner, repo = repo_env.split("/", 1)
-    else:
-        owner, repo = parse_repo_remote(git(["remote", "get-url", "origin"], repo_root))
-
     # 1) 创建版本提交
     git(["config", "user.name", "github-actions[bot]"], repo_root)
     git(["config", "user.email", "41898282+github-actions[bot]@users.noreply.github.com"], repo_root)
@@ -341,7 +402,7 @@ def main() -> int:
     print(f"[release] 已推送 release 分支 {release_branch}")
 
     # 3) 创建 PR：release/vX.Y.Z → main（自动触发 CI 检查）
-    api = GitHubApi(token, owner, repo)
+    assert api is not None  # 非 --skip-git 模式已在上方实例化
     pr_body = (
         "自动发版（由 release workflow 在 dev→main PR 合并后生成）：\n"
         f"- 正式版本：{current} → {new_version}\n"

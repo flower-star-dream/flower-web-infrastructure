@@ -1,6 +1,6 @@
 # flower web 通用框架（flower-web-infrastructure）
 
-[![version](https://img.shields.io/badge/version-v0.1.0-dev5-blue)](https://github.com/flower-star-dream/flower-web-infrastructure)
+[![version](https://img.shields.io/badge/version-v0.1.0-dev6-blue)](https://github.com/flower-star-dream/flower-web-infrastructure)
 [![python](https://img.shields.io/badge/python-3.10%2B-blue)](https://github.com/flower-star-dream/flower-web-infrastructure)
 [![license](https://img.shields.io/badge/license-MIT-green)](https://github.com/flower-star-dream/flower-web-infrastructure)
 [![CI](https://img.shields.io/github/actions/workflow/status/flower-star-dream/flower-web-infrastructure/ci.yml?label=CI&logo=github)](https://github.com/flower-star-dream/flower-web-infrastructure/actions)
@@ -9,7 +9,7 @@
 
 | 项目     | 值                                              |
 | -------- | ----------------------------------------------- |
-| 当前版本 | v0.1.0-dev5                                          |
+| 当前版本 | v0.1.0-dev6                                          |
 | Python   | >= 3.10                                         |
 | License  | MIT                                             |
 | 构建     | [GitHub Actions](./.github/workflows/ci.yml)    |
@@ -855,8 +855,10 @@ GitHub Actions 工作流位于 `.github/workflows/ci.yml`，推送 `main` / `dev
   - `MAJOR`：不兼容的破坏性变更；
   - `MINOR`：向后兼容的新能力；
   - `PATCH`：向后兼容的缺陷修复。
-- 当前版本：**v0.1.0-dev5**（与 `pyproject.toml` 保持同步）。
+- 当前版本：**v0.1.0-dev6**（与 `pyproject.toml` 保持同步）。
 - 错误码 `E<大类>-<子类/域>-<3位编号>`、成功码 `S0000` 一经发布不可变更语义。
+- 破坏性变更记录：
+  - **v1.0.0（三层结构整改）**：子包路径迁移至 `core / infra / capabilities` 三层——`web_infra.{ai,db,mq,payment,security,...}` → `web_infra.capabilities.{ai,db,mq,payment,security,...}`（如 `web_infra.payment` → `web_infra.capabilities.payment`）；`web_infra` 顶层导出保持不变（`from web_infra import Result, create_app` 等不受影响）。升级指引：将子包导入路径统一改为 `web_infra.capabilities.*`（脚手架已适配，业务代码需同步调整）。
 
 ### 13.1 自动版本管理
 

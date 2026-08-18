@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from release_after_merge import (  # noqa: E402
     GitHubApi,
     _clean_stale_release_branch,
+    detect_breaking_in_pr,
     ensure_and_push_tag,
     evaluate_check_runs,
     parse_repo_remote,
@@ -102,6 +103,31 @@ class TestReleaseFromPrTitle:
         assert release_version("0.1.0-dev5", commit_type) == "0.1.1"
 
 
+class TestDetectBreakingInPr:
+    """PR 提交历史 breaking 检测（标题漏标 ! 时的版本语义兜底）。"""
+
+    def test_feat_bang_detected(self) -> None:
+        messages = ["feat: 新增缓存", "feat!: 重构三层结构\n\nBREAKING CHANGE: 子包路径迁移", "fix: 修复 bug"]
+        assert detect_breaking_in_pr(messages) is True
+
+    def test_breaking_change_footer_detected(self) -> None:
+        # 前缀不带 !，但正文含 BREAKING CHANGE: footer
+        messages = ["feat: 重构\n\nBREAKING CHANGE: 接口不兼容"]
+        assert detect_breaking_in_pr(messages) is True
+
+    def test_no_breaking_not_detected(self) -> None:
+        messages = ["feat: 新增缓存", "fix: 修复 bug", "docs: 更新文档"]
+        assert detect_breaking_in_pr(messages) is False
+
+    def test_empty_messages(self) -> None:
+        assert detect_breaking_in_pr([]) is False
+
+    def test_squash_single_message(self) -> None:
+        # squash 合并后单条提交信息
+        assert detect_breaking_in_pr(["feat: 合并多个功能"]) is False
+        assert detect_breaking_in_pr(["feat!: 合并破坏性重构"]) is True
+
+
 class TestParseRepoRemote:
     """git remote URL 解析。"""
 
@@ -157,6 +183,16 @@ class TestGitHubApi:
     def _transport() -> MockTransport:
         def handler(request: Request) -> Response:
             path = request.url.path
+            if path.endswith("/pulls") and request.method == "GET":
+                # find_pull：head=dev 返回已合并 PR，其他 head 返回空列表
+                if request.url.params.get("head") == "dev":
+                    return Response(200, json=[{"number": 7, "state": "merged"}])
+                return Response(200, json=[])
+            if path.endswith("/pulls/7/commits") and request.method == "GET":
+                return Response(200, json=[
+                    {"commit": {"message": "feat!: 重构三层结构"}},
+                    {"commit": {"message": "fix: 修复问题"}},
+                ])
             if path.endswith("/pulls") and request.method == "POST":
                 head = json.loads(request.content)["head"]
                 if head == "release/v0.4.0":
@@ -201,6 +237,16 @@ class TestGitHubApi:
     def test_list_check_runs(self) -> None:
         runs = self._api().list_check_runs("abc123")
         assert runs == [{"name": "CI", "status": "completed", "conclusion": "success"}]
+
+    def test_find_pull(self) -> None:
+        assert self._api().find_pull(base="main", head="dev") == 7
+
+    def test_find_pull_not_found(self) -> None:
+        assert self._api().find_pull(base="main", head="feature/x") is None
+
+    def test_list_pull_commits(self) -> None:
+        commits = self._api().list_pull_commits(7)
+        assert commits == ["feat!: 重构三层结构", "fix: 修复问题"]
 
     def test_merge_pull(self) -> None:
         self._api().merge_pull(42, method="squash")
