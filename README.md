@@ -1,6 +1,6 @@
 # flower web 通用框架（flower-web-infrastructure）
 
-[![version](https://img.shields.io/badge/version-v2.0.0-blue)](https://github.com/flower-star-dream/flower-web-infrastructure)
+[![version](https://img.shields.io/badge/version-v1.0.0-blue)](https://github.com/flower-star-dream/flower-web-infrastructure)
 [![python](https://img.shields.io/badge/python-3.10%2B-blue)](https://github.com/flower-star-dream/flower-web-infrastructure)
 [![license](https://img.shields.io/badge/license-MIT-green)](https://github.com/flower-star-dream/flower-web-infrastructure)
 [![CI](https://img.shields.io/github/actions/workflow/status/flower-star-dream/flower-web-infrastructure/ci.yml?label=CI&logo=github)](https://github.com/flower-star-dream/flower-web-infrastructure/actions)
@@ -9,7 +9,7 @@
 
 | 项目     | 值                                              |
 | -------- | ----------------------------------------------- |
-| 当前版本 | v2.0.0                                          |
+| 当前版本 | v1.0.0                                          |
 | Python   | >= 3.10                                         |
 | License  | MIT                                             |
 | 构建     | [GitHub Actions](./.github/workflows/ci.yml)    |
@@ -868,10 +868,10 @@ GitHub Actions 工作流位于 `.github/workflows/ci.yml`，推送 `main` / `dev
   - `MAJOR`：不兼容的破坏性变更；
   - `MINOR`：向后兼容的新能力；
   - `PATCH`：向后兼容的缺陷修复。
-- 当前版本：**v2.0.0**（与 `pyproject.toml` 保持同步）。
+- 当前版本：**v1.0.0**（与 `pyproject.toml` 保持同步）。
 - 错误码 `E<大类>-<子类/域>-<3位编号>`、成功码 `S0000` 一经发布不可变更语义。
 - 破坏性变更记录：
-  - **v2.0.0（三层结构整改）**：子包路径迁移至 `core / infra / capabilities` 三层——`web_infra.{ai,db,mq,payment,security,...}` → `web_infra.capabilities.{ai,db,mq,payment,security,...}`（如 `web_infra.payment` → `web_infra.capabilities.payment`）；`web_infra` 顶层导出保持不变（`from web_infra import Result, create_app` 等不受影响）。升级指引：将子包导入路径统一改为 `web_infra.capabilities.*`（脚手架已适配，业务代码需同步调整）。
+  - **v1.0.0（三层结构整改）**：子包路径迁移至 `core / infra / capabilities` 三层——`web_infra.{ai,db,mq,payment,security,...}` → `web_infra.capabilities.{ai,db,mq,payment,security,...}`（如 `web_infra.payment` → `web_infra.capabilities.payment`）；`web_infra` 顶层导出保持不变（`from web_infra import Result, create_app` 等不受影响）。升级指引：将子包导入路径统一改为 `web_infra.capabilities.*`（脚手架已适配，业务代码需同步调整）。
 
 ### 13.1 版本管理（release-only）
 
@@ -891,16 +891,16 @@ GitHub Actions 工作流位于 `.github/workflows/ci.yml`，推送 `main` / `dev
 
 | 提交前缀（conventional commits）          | 版本变化        | 示例                          |
 | ----------------------------------------- | --------------- | ----------------------------- |
-| `feat` / `feat(scope)`                    | 小版本 +1       | `2.0.0` → `2.1.0`             |
-| `fix` / `refactor` / `perf` / `test` / `build` / `ci` / `style` | 补丁 +1 | `2.0.0` → `2.0.1` |
-| 含 `BREAKING CHANGE:`（footer）或 `!:`（如 `feat!: xxx`） | 大版本 +1 | `2.0.0` → `3.0.0` |
+| `feat` / `feat(scope)`                    | 小版本 +1       | `1.0.0` → `1.1.0`             |
+| `fix` / `refactor` / `perf` / `test` / `build` / `ci` / `style` | 补丁 +1 | `1.0.0` → `1.0.1` |
+| 含 `BREAKING CHANGE:`（footer）或 `!:`（如 `feat!: xxx`） | 大版本 +1 | `1.0.0` → `2.0.0` |
 | `docs` / `chore`（纯文档/杂物）           | 不变            | —                             |
 | `Merge ...` / revert / squash（无前缀，无法解析） | 跳过，不变 | —                             |
-| 其他无前缀提交                            | 按补丁 +1（建议使用规范前缀） | `2.0.0` → `2.0.1` |
+| 其他无前缀提交                            | 按补丁 +1（建议使用规范前缀） | `1.0.0` → `1.0.1` |
 
 分支规则：
 
-- **开发分支（`dev` / `dev/*` / `dev-*` / `*-dev`）**：release-only 下本地提交不再自动递增版本号，dev 分支版本保持当前状态（如 `2.0.0-dev8` 或与上次发布一致）；如需手动维护 dev 预发布号，可执行 `python -c "import sys; sys.path.insert(0, 'scripts'); from version_bump import *"` 参考计算逻辑，或直接改版本文件（pre-commit 会校验三处一致）。
+- **开发分支（`dev` / `dev/*` / `dev-*` / `*-dev`）**：release-only 下本地提交不再自动递增版本号，dev 分支版本保持当前状态（如 `1.0.0-dev8` 或与上次发布一致）；如需手动维护 dev 预发布号，可执行 `python -c "import sys; sys.path.insert(0, 'scripts'); from version_bump import *"` 参考计算逻辑，或直接改版本文件（pre-commit 会校验三处一致）。
 - **正式分支（`main` 等）**：正式版本号由 dev→main 合入时的 release workflow 依据 PR 标题自动递增。
 - 版本打 tag（`v*`，触发 CI 正式版镜像发布）：dev→main 走 PR 合入时由 release workflow **自动完成**；直接提交 main / 本地合入场景需手动执行（`git tag vX.Y.Z && git push origin vX.Y.Z`）。
 
