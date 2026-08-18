@@ -195,7 +195,7 @@ class TestVersionFileIO:
         )
         docs_dir = tmp_path / "docs"
         docs_dir.mkdir()
-        (docs_dir / "CI-CD.md").write_text("如 tag `v0.1.0` → 推送 `0.1.0`（与 pyproject.toml 保持一致）\n", encoding="utf-8")
+        (docs_dir / "CI-CD.md").write_text("如 tag `v0.1.0` → 推送 `v0.1.0`（与 pyproject.toml 保持一致）\n", encoding="utf-8")
         (docs_dir / "使用说明.md").write_text('pip install "git+https://github.com/<org>/flower-web-infrastructure.git@v0.1.0"\n', encoding="utf-8")
 
         write_version(tmp_path, "0.1.0", "0.2.0")
@@ -212,7 +212,7 @@ class TestVersionFileIO:
             "增量脚本：`V0.2.0-mq-outbox-next-retry-ddl.sql`\n"
         )
         assert readme.read_text(encoding="utf-8") == expected_readme
-        assert (docs_dir / "CI-CD.md").read_text(encoding="utf-8") == "如 tag `v0.2.0` → 推送 `0.2.0`（与 pyproject.toml 保持一致）\n"
+        assert (docs_dir / "CI-CD.md").read_text(encoding="utf-8") == "如 tag `v0.2.0` → 推送 `v0.2.0`（与 pyproject.toml 保持一致）\n"
         assert (docs_dir / "使用说明.md").read_text(encoding="utf-8") == 'pip install "git+https://github.com/<org>/flower-web-infrastructure.git@v0.2.0"\n'
 
 

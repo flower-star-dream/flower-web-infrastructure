@@ -39,7 +39,7 @@ class _Repo:
         (tmp_path / "README.md").write_text(readme, encoding="utf-8")
         docs_dir = tmp_path / "docs"
         docs_dir.mkdir()
-        (docs_dir / "CI-CD.md").write_text(f"如 tag `v{version}` → 推送 `{version}`（与 pyproject.toml 保持一致）\n", encoding="utf-8")
+        (docs_dir / "CI-CD.md").write_text(f"如 tag `v{version}` → 推送 `v{version}`（与 pyproject.toml 保持一致）\n", encoding="utf-8")
         (docs_dir / "使用说明.md").write_text(
             f'pip install "git+https://github.com/<org>/flower-web-infrastructure.git@v{version}"\n',
             encoding="utf-8",
@@ -82,7 +82,7 @@ class TestCheckVersionConsistency:
 
     def test_docs_missing_reference(self, tmp_path: Path) -> None:
         repo = _Repo(tmp_path, "1.0.0")
-        (repo.root / "docs" / "CI-CD.md").write_text("如 tag `v0.9.0` → 推送 `0.9.0`\n", encoding="utf-8")
+        (repo.root / "docs" / "CI-CD.md").write_text("如 tag `v0.9.0` → 推送 `v0.9.0`\n", encoding="utf-8")
         problems = check_version_consistency(repo.root)
         assert any("CI-CD.md" in p for p in problems)
 

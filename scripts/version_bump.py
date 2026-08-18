@@ -58,7 +58,7 @@ _DOC_VERSION_RULES: tuple[tuple[str, str], ...] = (
     ("README.md", r"version-v{v}(?=-blue)"),        # 徽章版本
     ("README.md", r"\| 当前版本 \| v{v}"),            # 项目信息表当前版本
     ("README.md", r"当前版本：\*\*v{v}\*\*"),         # §13 当前版本
-    ("docs/CI-CD.md", r"tag `v{v}` → 推送 `{v}`"),     # 镜像标签规范示例
+    ("docs/CI-CD.md", r"tag `v{v}` → 推送 `v{v}`"),    # 镜像标签规范示例（v 前缀，规范 §20.1.1）
     ("docs/使用说明.md", r"@v{v}"),                    # Git 依赖安装示例
 )
 
