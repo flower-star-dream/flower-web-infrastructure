@@ -354,7 +354,7 @@ from web_infra.infra.utils import (
 )
 from web_infra.core.application import Application, create_app
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 
 __all__ = [
     # 响应与错误码
