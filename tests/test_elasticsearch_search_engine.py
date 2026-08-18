@@ -14,11 +14,14 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from elasticsearch import BadRequestError, NotFoundError
 
-from web_infra.infra.error import BizException
-from web_infra.capabilities.search import ElasticsearchSearchEngine, SearchErrorCode, SearchQuery
-from web_infra.capabilities.search.search_hit import SearchHit
+pytest.importorskip("elasticsearch")
+
+from elasticsearch import BadRequestError, NotFoundError  # noqa: E402
+
+from web_infra.infra.error import BizException  # noqa: E402
+from web_infra.capabilities.search import ElasticsearchSearchEngine, SearchErrorCode, SearchQuery  # noqa: E402
+from web_infra.capabilities.search.search_hit import SearchHit  # noqa: E402
 
 # 租户/索引隔离命名断言
 INDEX_NAME = "web_t1_products"
