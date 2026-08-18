@@ -41,6 +41,7 @@ class CommonErrorCode:
 
     COMMON_NOT_FOUND: ErrorCode = CommonErrorCodeEnum.COMMON_NOT_FOUND.value
     COMMON_CONFLICT: ErrorCode = CommonErrorCodeEnum.COMMON_CONFLICT.value
+    ACCESS_DENIED: ErrorCode = CommonErrorCodeEnum.ACCESS_DENIED.value
 
     LOCK_FAILED: ErrorCode = CommonErrorCodeEnum.LOCK_FAILED.value
 

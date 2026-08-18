@@ -51,6 +51,10 @@ from web_infra.capabilities.ai.quota import QuotaConfig, QuotaManager
 from web_infra.capabilities.mq.message_queue_registry import MessageQueueRegistry
 from web_infra.capabilities.storage.object_storage_registry import ObjectStorageRegistry
 from web_infra.capabilities.registry.service_discovery_registry import ServiceDiscoveryRegistry
+from web_infra.capabilities.capacity.assessor import CapacityAssessor
+from web_infra.capabilities.capacity.capacity_config import CapacityConfig, DiagnosticAccessConfig, RemoteProbeConfig
+from web_infra.capabilities.capacity.capacity_endpoint import register_capacity_endpoints
+from web_infra.infra.web.diagnostic_access import DiagnosticAccessGuard
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +145,10 @@ class Application:
         # 生命周期钩子（startup/shutdown）由 _lifespan 在应用启动/停机时按序编排
         self._extension_chain: list[str] = []
         self._extension_instances: dict[str, Any] = {}
+        # 容量评估与诊断端点访问控制（app.capacity.enabled 时装配，见 _setup_capacity）：
+        # 守卫在 _setup_capacity 构造、供 /capacity 与 /metrics（_setup_health）共用
+        self._capacity_assessor: CapacityAssessor | None = None
+        self._diagnostic_guard: DiagnosticAccessGuard | None = None
 
         app_title = title or self.settings.get("app.name")
         app_version = version or self.settings.get("app.version")
@@ -169,6 +177,7 @@ class Application:
         self._setup_extensions()
         self._setup_web()
         self._setup_tenant()
+        self._setup_capacity()
         self._setup_health()
         return self.app
 
@@ -340,7 +349,75 @@ class Application:
             self.app,
             components=self._components,
             service_name=self.settings.get("app.name"),
+            access_guard=self._diagnostic_guard,
         )
+
+    def _setup_capacity(self) -> None:
+        """容量评估装配（app.capacity.enabled=true 时，设计文档 §8）：
+
+        - 读取 app.capacity 配置段构造 CapacityAssessor（组合 StaticEstimator + RuntimeSampler
+          + RemoteProbe），挂 app.state.capacity 供业务访问；
+        - 注册 /capacity 端点（content-negotiation JSON/HTML），生产环境注入
+          DiagnosticAccessGuard（IP 白名单，app.diagnostics.access 段；与 /metrics 共用）；
+        - 构造守卫并存入 self._diagnostic_guard，供 _setup_health 的 /metrics 复用
+          （诊断端点生产访问控制统一，设计文档 §9）。
+        未启用时零配置零开销：不构造评估器、不注册端点、不创建采样任务。
+        """
+        if not self.settings.get_bool("app.capacity.enabled"):
+            return
+        capacity_config = self._build(
+            CapacityConfig,
+            "app.capacity",
+            [
+                "cpu_cores", "memory_mb", "workload_type", "io_concurrency_factor",
+                "assumed_avg_latency_ms", "safe_ratio", "slo_alert_ratio",
+                "slo_target_availability", "sample_window", "sample_interval",
+            ],
+        )
+        remote_config = RemoteProbeConfig(
+            connect_timeout=self.settings.get_float("app.capacity.remote.connect_timeout", 3.0) or 3.0,
+            read_timeout=self.settings.get_float("app.capacity.remote.read_timeout", 5.0) or 5.0,
+            write_timeout=self.settings.get_float("app.capacity.remote.write_timeout", 5.0) or 5.0,
+            pool_timeout=self.settings.get_float("app.capacity.remote.pool_timeout", 5.0) or 5.0,
+            timeout=self.settings.get_float("app.capacity.remote.timeout", 10.0) or 10.0,
+            max_retries=int(self.settings.get("app.capacity.remote.max_retries", 0) or 0),
+            diff_interval=self.settings.get_float("app.capacity.remote.diff_interval", 0.0) or 0.0,
+            max_response_bytes=int(self.settings.get("app.capacity.remote.max_response_bytes", 10 * 1024 * 1024) or 0),
+        )
+        targets = self.settings.get("app.capacity.remote_targets") or ()
+        from dataclasses import replace
+
+        capacity_config = replace(capacity_config, remote=remote_config, remote_targets=tuple(targets))
+
+        # 诊断端点访问守卫（生产 IP 白名单）先于端点注册构造：
+        # /capacity 与 /metrics（_setup_health 晚于本方法）共用同一守卫（设计文档 §9）
+        diag_config = DiagnosticAccessConfig(
+            enabled=self.settings.get_bool("app.diagnostics.access.enabled", True),
+            allowed_cidrs=tuple(self.settings.get("app.diagnostics.access.allowed_cidrs") or ()),
+        )
+        self._diagnostic_guard = DiagnosticAccessGuard(
+            enabled=diag_config.enabled,
+            allowed_cidrs=diag_config.allowed_cidrs,
+        )
+
+        self._capacity_assessor = CapacityAssessor(self.settings, capacity_config)
+        register_capacity_endpoints(
+            self.app,
+            self._capacity_assessor,
+            service_name=self.settings.get("app.name"),
+            access_guard=self._diagnostic_guard,
+        )
+        self.app.state.capacity = self._capacity_assessor
+
+    async def _start_capacity_sampler(self) -> None:
+        """启动容量采样任务（startup 钩子）：评估器装配后才可启动，未启用时跳过。"""
+        if self._capacity_assessor is not None:
+            await self._capacity_assessor.start()
+
+    async def _stop_capacity_sampler(self) -> None:
+        """停止容量采样任务（shutdown 钩子）：幂等，未启用时跳过。"""
+        if self._capacity_assessor is not None:
+            await self._capacity_assessor.stop()
 
     # ------------------------------------------------------------------
     # 内部：组件构建（按 type 选择实现）
@@ -537,7 +614,9 @@ class Application:
         setup_uvicorn_access_log(self.app)
         await self._register_ai_models_from_store()
         await self._run_extension_startups()
+        await self._start_capacity_sampler()
         yield
+        await self._stop_capacity_sampler()
         await self._run_extension_shutdowns()
         await self._shutdown()
 

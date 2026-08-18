@@ -18,6 +18,7 @@ from web_infra.infra.web.redis_idempotency_store import RedisIdempotencyStore
 from web_infra.infra.web.idempotency_middleware import IdempotencyMiddleware
 from web_infra.infra.web.auth_middleware import AuthMiddleware
 from web_infra.infra.web.rate_limit_middleware import RateLimitMiddleware
+from web_infra.infra.web.diagnostic_access import DiagnosticAccessGuard
 
 __all__ = [
     "RequestContextMiddleware",
@@ -38,4 +39,5 @@ __all__ = [
     "IdempotencyMiddleware",
     "AuthMiddleware",
     "RateLimitMiddleware",
+    "DiagnosticAccessGuard",
 ]

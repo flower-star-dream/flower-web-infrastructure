@@ -14,12 +14,13 @@
 from __future__ import annotations
 
 import inspect
-from typing import Any
+from typing import Any, Callable
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, Response
 
 from web_infra.infra.constants import HttpStatusConstant
+from web_infra.infra.error import CommonErrorCode
 from web_infra.infra.logging import get_logger
 from web_infra.infra.monitoring.metrics_html import render_metrics_html, should_render_html
 from web_infra.infra.monitoring.runtime_metrics import record_runtime_metrics
@@ -84,6 +85,7 @@ def register_health_endpoints(
     components: dict[str, Any] | None = None,
     service_name: str = "web-infra",
     enable_metrics: bool = True,
+    access_guard: Callable[[Any], bool] | None = None,
 ) -> None:
     """注册健康检查与指标端点。
 
@@ -91,6 +93,9 @@ def register_health_endpoints(
     :param components: 已装配组件字典（name -> component），探测其 health_check 连通性
     :param service_name: 健康检查响应中的 service 字段
     :param enable_metrics: 是否注册 /metrics 端点（默认开启）
+    :param access_guard: /metrics 访问守卫 `(request) -> 是否放行`；None 不限制。
+        生产环境由 Application 注入 DiagnosticAccessGuard（IP 白名单，与 /capacity 共用），
+        未命中时 /metrics 返回 403（诊断端点生产访问控制，设计文档 §9）。
     """
     components = components or {}
 
@@ -148,7 +153,17 @@ def register_health_endpoints(
             浏览器（Accept 含 text/html）返回格式化 HTML 可视化页面，
             可通过 ?format=html / ?format=text 强制指定格式；
             Prometheus 抓取返回 OpenMetrics 文本，不破坏监控采集。
+            生产环境配置了 access_guard 时，来源不在白名单内返回 403（设计文档 §9）。
             """
+            if access_guard is not None and not access_guard(request):
+                return BigIntJSONResponse(
+                    status_code=HttpStatusConstant.HTTP_FORBIDDEN,
+                    content={
+                        "code": CommonErrorCode.ACCESS_DENIED.code,
+                        "message": CommonErrorCode.ACCESS_DENIED.message,
+                        "data": None,
+                    },
+                )
             # 抓取前刷新推送式指标（连接池 / Python 运行时）
             _refresh_pushed_metrics(components)
             if should_render_html(format, request.headers.get("accept")):

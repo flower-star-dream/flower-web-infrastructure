@@ -44,6 +44,8 @@ class CommonErrorCodeEnum(Enum):
 
     COMMON_NOT_FOUND = ErrorCode("E4-COMMON-000", "资源不存在", 404, "E4", log_level=logging.WARNING)
     COMMON_CONFLICT = ErrorCode("E4-COMMON-001", "资源冲突", 409, "E4", log_level=logging.WARNING)
+    # 诊断端点生产访问控制（设计文档 §9）：来源不在白名单内拒绝（与 PERM_DENIED 区分——权限 vs 来源可信）
+    ACCESS_DENIED = ErrorCode("E4-SYS-004", "来源不在允许的白名单内", 403, "E4", log_level=logging.WARNING)
 
     LOCK_FAILED = ErrorCode("E3-LOCK-000", "锁获取失败", 423, "E3", retryable=True, log_level=logging.ERROR)
 

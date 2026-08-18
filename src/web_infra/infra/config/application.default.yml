@@ -284,3 +284,39 @@ app:
       # tls_cert_file: ""
       # tls_key_file: ""
       # heartbeat_interval: 5
+
+  # 并发访问能力评估（默认不启用，设计文档《并发访问能力评估设计.md》）：
+  # app.capacity.enabled=true 时装配 /capacity 端点（JSON/HTML 内容协商）并启动运行时采样任务；
+  # 静态估算 = 硬件（CPU 核数探测 + 配置覆盖）× 装配配置（连接池/线程池/限流）瓶颈模型 + Little's Law；
+  # 运行时 = 直读 prometheus 指标（QPS/并发/延迟/CPU，滑动窗口）；集群视图经 remote_targets 拉取其他实例 /metrics。
+  capacity:
+    enabled: false               # 是否启用评估能力（注册 /capacity + 采样任务）
+    cpu_cores: null              # 覆盖自动探测的 CPU 核数；null 用 os.cpu_count()
+    memory_mb: null              # 覆盖自动探测内存（MB）；null 探测失败跳过
+    workload_type: io_intensive  # io_intensive（默认）| cpu_intensive
+    io_concurrency_factor: 25    # IO 密集单核并发系数（经验值，可运行时校准）
+    assumed_avg_latency_ms: 200  # Little's Law 平均响应时间假设（毫秒）
+    safe_ratio: 0.7              # 安全水位系数（理论 QPS × safe_ratio）
+    slo_alert_ratio: 0.8         # SLO 错误率预警阈值系数
+    slo_target_availability: 0.99  # SLO 目标可用性（允许错误率 = 1 - 该值）
+    sample_window: 60            # 运行时滑动窗口秒数
+    sample_interval: 5           # 采样间隔秒数
+    remote:
+      connect_timeout: 3         # 远程探针连接超时（秒，httpx connect）
+      read_timeout: 5            # 远程探针读取超时（秒，httpx read）
+      write_timeout: 5           # 远程探针写入超时（秒，httpx write）
+      pool_timeout: 5            # 远程探针连接池等待超时（秒，httpx pool）
+      timeout: 10                # 总耗时上限（秒，asyncio.wait_for 包裹整体请求）
+      max_retries: 0             # 远程探针重试次数（默认 0：失败下轮采样天然重试）
+      diff_interval: 0           # QPS 差分间隔（秒）；0=快照差分（复用采样周期），>0=独立连续两次拉取
+      max_response_bytes: 10485760  # 响应体大小上限（字节，默认 10MB）
+    remote_targets: []           # 集群其他实例 /metrics 地址，空则只评估本实例
+
+  # 诊断端点生产访问控制（app.diagnostics.access，设计文档 §9）：
+  # /capacity 与 /metrics 共用守卫——生产（APP_ENV=prod）默认仅允许内网来源
+  # （精确白名单：127.0.0.1、::1、10/8、172.16/12、192.168/16 + allowed_cidrs 追加），
+  # 外部 IP 拒绝 403（E4-SYS-004，fail-closed：无法解析客户端 IP 也拒绝）。
+  diagnostics:
+    access:
+      enabled: true              # 生产默认启用 IP 白名单；dev/test/stage 忽略
+      allowed_cidrs: []          # 追加白名单 CIDR，空则仅默认内网段
