@@ -52,7 +52,7 @@ app:
         ttl_seconds: 86400
       auth:
         enabled: false          # 统一鉴权中间件默认不引入，需业务自行启用
-        whitelist: ["/health", "/health/live", "/health/ready", "/metrics", "/docs", "/redoc", "/openapi.json"]
+        whitelist: ["/health", "/health/live", "/health/ready", "/metrics", "/capacity", "/docs", "/redoc", "/openapi.json"]
       # 安全响应头中间件（整改 S25-1）：默认关闭（向后兼容，避免破坏既有响应头断言），推荐业务显式启用；
       # 默认值收敛于此（与 SecurityHeadersMiddleware 类内默认一致），业务可整体覆盖
       security_headers:

@@ -72,6 +72,15 @@ async def test_whitelist_path_anonymous_allowed():
 
 
 @pytest.mark.asyncio
+async def test_capacity_path_anonymous_allowed():
+    """白名单含 /capacity：匿名放行（未注册路由返回 404 而非 401）"""
+    app = _build_app()
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        assert (await client.get("/capacity")).status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_missing_token_returns_401():
     """受保护路径无凭证：401 E2-AUTH-000"""
     app = _build_app()

@@ -33,7 +33,7 @@ class AuthMiddleware:
         app: ASGIApp,
         *,
         token_verifier: Callable[[str], Awaitable[dict[str, Any]]] | None = None,
-        whitelist: tuple[str, ...] = ("/health", "/metrics", "/docs", "/redoc", "/openapi.json"),
+        whitelist: tuple[str, ...] = ("/health", "/metrics", "/capacity", "/docs", "/redoc", "/openapi.json"),
         bearer_prefix: str = "Bearer ",
         excluded_methods: tuple[str, ...] = ("OPTIONS",),
     ) -> None:
