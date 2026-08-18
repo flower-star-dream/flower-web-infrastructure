@@ -995,9 +995,9 @@ GitHub Actions 工作流位于 `.github/workflows/ci.yml`，推送 `main` / `dev
 | 提交前缀（conventional commits）          | 版本变化        | 示例                          |
 | ----------------------------------------- | --------------- | ----------------------------- |
 | `feat` / `feat(scope)`                    | 小版本 +1       | `1.0.0` → `1.1.0`             |
-| `fix` / `refactor` / `perf` / `test` / `build` / `ci` / `style` | 补丁 +1 | `1.0.0` → `1.0.1` |
+| `fix` / `refactor` / `perf` | 补丁 +1 | `1.0.0` → `1.0.1` |
 | 含 `BREAKING CHANGE:`（footer）或 `!:`（如 `feat!: xxx`） | 大版本 +1 | `1.0.0` → `2.0.0` |
-| `docs` / `chore`（纯文档/杂物）           | 不变            | —                             |
+| `docs` / `chore` / `test` / `build` / `ci` / `style`（文档/杂物/测试/构建/CI/格式，不改变库行为） | 不变 | — |
 | `Merge ...` / revert / squash（无前缀，无法解析） | 跳过，不变 | —                             |
 | 其他无前缀提交                            | 按补丁 +1（建议使用规范前缀） | `1.0.0` → `1.0.1` |
 

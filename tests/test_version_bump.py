@@ -36,9 +36,14 @@ class TestParseCommitType:
     def test_fix(self) -> None:
         assert parse_commit_type("fix: 修复并发问题") is CommitType.PATCH
 
-    def test_other_prefixes_as_patch(self) -> None:
-        for prefix in ("refactor", "perf", "test", "build", "ci", "style"):
+    def test_refactor_perf_as_patch(self) -> None:
+        for prefix in ("refactor", "perf"):
             assert parse_commit_type(f"{prefix}: 调整") is CommitType.PATCH, prefix
+
+    def test_toolchain_prefixes_no_change(self) -> None:
+        # 测试/构建/CI/格式改动不改变库行为，不迭代版本（与 docs/chore 一致）
+        for prefix in ("test", "build", "ci", "style"):
+            assert parse_commit_type(f"{prefix}: 调整") is CommitType.NO_CHANGE, prefix
 
     def test_docs_no_change(self) -> None:
         assert parse_commit_type("docs: 更新说明文档") is CommitType.NO_CHANGE

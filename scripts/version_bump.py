@@ -70,7 +70,7 @@ class CommitType(Enum):
     """提交类型（决定版本递增策略）。"""
 
     SKIP = "skip"        # merge / revert / squash：跳过，不更新版本
-    NO_CHANGE = "no_change"  # docs / chore：纯文档或杂物，不更新版本
+    NO_CHANGE = "no_change"  # docs / chore / test / build / ci / style：文档/杂物/测试/构建/CI/格式，不更新版本
     BREAKING = "breaking"    # 破坏性变更：大版本 +1
     FEAT = "feat"            # 新功能：小版本 +1
     PATCH = "patch"          # 修复或其他小修改：补丁 +1
@@ -103,7 +103,8 @@ def parse_commit_type(subject: str, body: str = "", source: str = "") -> CommitT
     has_bang = m.group("breaking") == "!"
     if breaking_footer or has_bang:
         return CommitType.BREAKING
-    if commit_type in ("docs", "chore"):
+    # 不改变库行为的提交类型不更新版本（纯文档/杂物/测试/构建/CI/格式调整）
+    if commit_type in ("docs", "chore", "test", "build", "ci", "style"):
         return CommitType.NO_CHANGE
     if commit_type == "feat":
         return CommitType.FEAT
