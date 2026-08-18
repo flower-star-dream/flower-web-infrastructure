@@ -12,6 +12,12 @@ Web 系统通用后端基础设施
               `from web_infra.payment import ...` 主动引入（部分系统无需支付功能）。
               能力依赖模型（2026-08-17）：CapabilityRegistry 声明能力契约与依赖包含规则
               （用户系统 → 鉴权 → 支付，以此类推），启用能力按包含关系自动带上前置。
+              统一扩展注册器（2026-08-18）：ExtensionRegistry 登记插件协议对象
+              （ExtensionPoint：build/startup/shutdown/requires），app.extensions.enabled 声明即启用，
+              生命周期钩子随应用启动/停机按拓扑序编排（插件扩展点，如新数据源/第三方 SDK）。
+              搜索引擎（2026-08-18）：SearchEngineInterface 全文检索 SPI（索引生命周期/写入/检索，
+              默认内存实现，ES 生产实现经 es extra 延迟导入）；向量检索经 ElasticsearchVectorStore
+              接入 VectorStoreInterface（dense_vector + kNN）。
 """
 # .env 提前加载（2026-08-17）：Settings.default_source() 仅在 create_app() 调用时才加载项目根 .env，
 # 而 SnowflakeUtil / LocalObjectStorage / TokenCounter 等模块在包导入期读取环境变量
@@ -57,7 +63,7 @@ from web_infra.error import (
     register_global_exception_handlers,
 )
 from web_infra.context import RequestContext, RequestContextSnapshot, generate_trace_id
-from web_infra.logging import configure_logging, get_logger
+from web_infra.logging import LogSinkInterface, LogSinkRegistry, configure_logging, get_logger
 from web_infra.logging.masking import mask
 from web_infra.resilience import (
     RetryConfig,
@@ -143,6 +149,19 @@ from web_infra.web import (
     AuthMiddleware,
     RateLimitMiddleware,
 )
+from web_infra.search import (
+    SearchEngineInterface,
+    SearchQuery,
+    SearchHit,
+    InMemorySearchEngine,
+    ElasticsearchSearchEngine,
+    SearchConfig,
+    ElasticsearchSearchConfig,
+    SearchConstant,
+    SearchErrorCode,
+    SearchErrorCodeEnum,
+    SearchEngineRegistry,
+)
 from web_infra.config import (
     ConfigSourceInterface,
     ConfigError,
@@ -173,6 +192,13 @@ from web_infra.capability import (
     CapabilityResolution,
     CapabilityValidation,
 )
+from web_infra.extension import (
+    ExtensionPoint,
+    ExtensionError,
+    ExtensionRegistry,
+    ExtensionResolution,
+    ExtensionValidation,
+)
 from web_infra.cache import KeyBuilder, CacheBackendInterface, CacheConfig, MemoryCacheBackend, CacheBackendRegistry
 from web_infra.cache.tenant_key_builder import TenantKeyBuilder
 from web_infra.db import (
@@ -182,6 +208,9 @@ from web_infra.db import (
     DatabaseSessionInterface,
     DatabaseFactoryInterface,
     DatabaseRegistry,
+    MongoSessionInterface,
+    MongoDatabaseFactoryInterface,
+    MongoDatabaseRegistry,
     MySQLConnectionSettings,
     release_session_connection,
     connection_released,
@@ -328,6 +357,7 @@ __all__ = [
     # 上下文与日志
     "RequestContext", "RequestContextSnapshot", "generate_trace_id",
     "configure_logging", "get_logger", "mask",
+    "LogSinkInterface", "LogSinkRegistry",
     # 韧性
     "RetryConfig", "retry", "CircuitBreaker", "CircuitBreakerConfig", "CircuitBreakerState",
     "CircuitOpenError", "RateLimitConfig", "TokenBucketRateLimiter", "DistributedLock",
@@ -351,6 +381,10 @@ __all__ = [
     "format_sse", "format_sse_error", "sse_response",
     "IdempotencyResult", "IdempotencyStoreInterface", "InMemoryIdempotencyStore",
     "RedisIdempotencyStore", "IdempotencyMiddleware", "AuthMiddleware", "RateLimitMiddleware",
+    # 搜索引擎（全文检索 SPI + 内存默认实现 + ES 生产实现）
+    "SearchEngineInterface", "SearchQuery", "SearchHit", "InMemorySearchEngine",
+    "ElasticsearchSearchEngine", "SearchConfig", "ElasticsearchSearchConfig",
+    "SearchConstant", "SearchErrorCode", "SearchErrorCodeEnum", "SearchEngineRegistry",
     # 配置
     "ConfigSourceInterface", "ConfigError", "EnvConfigSource", "DictConfigSource", "JsonFileConfigSource",
     "YamlConfigSource", "CompositeConfigSource", "Settings", "BaseConfig", "ConfigClientInterface",
@@ -362,10 +396,14 @@ __all__ = [
     "CacheBackendRegistry",
     # 能力（能力契约与依赖包含规则：用户 → 鉴权 → 支付，按包含关系自动启用前置）
     "Capability", "CapabilityError", "CapabilityRegistry", "CapabilityResolution", "CapabilityValidation",
+    # 统一扩展注册器（扩展点契约与生命周期钩子：build/startup/shutdown/requires，
+    # 配置驱动 app.extensions.enabled，启动拓扑序/停机逆序编排）
+    "ExtensionPoint", "ExtensionError", "ExtensionRegistry", "ExtensionResolution", "ExtensionValidation",
     # 数据库（依赖 sqlalchemy/redis/mongo 的实现名不在 __all__，保证最小安装 `from web_infra import *`
     # 不触发惰性导入；需用时显式导入，如 from web_infra import MySQLConfig / Base）
     "DatabaseConfig", "PageQuery", "SqliteSessionFactory", "DatabaseSessionInterface", "DatabaseFactoryInterface",
     "DatabaseRegistry",
+    "MongoSessionInterface", "MongoDatabaseFactoryInterface", "MongoDatabaseRegistry",
     "SessionScopeMixin", "provide_db_session",
     "MySQLConnectionSettings", "release_session_connection", "connection_released",
     "TenantGuard", "DatabaseRouterInterface", "TenantDatabaseRouter",
@@ -419,6 +457,8 @@ _LAZY_DB_EXPORTS: frozenset[str] = frozenset({
     "MySQLConfig",
     "MySQLDatabase",
     "MongoDBConfig",
+    "BeanieMongoSession",
+    "MongoDatabase",
     "RedisConfig",
     "RedisCacheBackend",
     "TenantAwareMixin",
@@ -447,6 +487,8 @@ _LAZY_ALL_REQUIRES: dict[str, tuple[str, ...]] = {
     "MySQLConfig": ("sqlalchemy",),
     "MySQLDatabase": ("sqlalchemy",),
     "MongoDBConfig": ("pymongo", "beanie"),
+    "BeanieMongoSession": ("pymongo", "beanie"),
+    "MongoDatabase": ("pymongo", "beanie"),
     "RedisConfig": ("redis",),
     "RedisCacheBackend": ("redis",),
     "TenantAwareMixin": ("sqlalchemy",),

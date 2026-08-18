@@ -4,9 +4,11 @@
 @Author: 花海
 @Date: 2026/08/14 15:00
 @Description: 基于内存字典的向量存储（默认实现，测试/小规模场景），
-              线性扫描余弦相似度检索；真实大规模场景建议接入 FAISS 等实现 VectorStoreInterface。
-              内部按 tenant_id 划分命名空间（多租户规范 §2：检索结果遵守数据权限，
-              禁止跨租户命中知识库内容），各租户数据互不可见。
+              线性扫描余弦相似度检索；真实大规模场景建议接入 FAISS / ES 等实现 VectorStoreInterface。
+              tenant_id 可选（2026-08-18 评审调整，与 SearchEngineInterface 一致）：显式传则按租户隔离；
+              缺省读请求上下文（TenantGuard.current_tenant），再无回落 no-tenant 占位——
+              单租户系统无需传租户，所有数据收敛同一命名空间，隔离退化为全局共享。
+              内部按（解析后租户）划分命名空间（多租户规范 §2：禁止跨租户命中知识库内容）。
 """
 from __future__ import annotations
 
@@ -15,6 +17,7 @@ from threading import Lock
 
 from web_infra.ai.retrieval.vector_hit import VectorHit
 from web_infra.ai.retrieval.vector_store_interface import VectorStoreInterface
+from web_infra.db.tenant_guard import TenantGuard
 
 
 class InMemoryVectorStore(VectorStoreInterface):
@@ -37,6 +40,11 @@ class InMemoryVectorStore(VectorStoreInterface):
         self._lock = Lock()
 
     @staticmethod
+    def _resolve_tenant(tenant_id: str | None) -> str:
+        """解析租户标识：显式传入优先；否则从请求上下文读取；再无则 no-tenant 占位（多租户规范 §2）"""
+        return tenant_id or TenantGuard.current_tenant()
+
+    @staticmethod
     def _cosine_similarity(a: list[float], b: list[float]) -> float:
         """余弦相似度"""
         if not a or not b or len(a) != len(b):
@@ -48,10 +56,11 @@ class InMemoryVectorStore(VectorStoreInterface):
             return 0.0
         return dot / (norm_a * norm_b)
 
-    def add(self, tenant_id: str, ids: list[str], vectors: list[list[float]]) -> None:
+    def add(self, tenant_id: str | None, ids: list[str], vectors: list[list[float]]) -> None:
         """批量写入向量（仅写入指定租户命名空间；超出容量上限时淘汰最旧写入的向量）"""
         if len(ids) != len(vectors):
             raise ValueError("ids 与 vectors 长度不一致")
+        tenant_id = self._resolve_tenant(tenant_id)
         with self._lock:
             data = self._store.setdefault(tenant_id, {})
             order = self._order.setdefault(tenant_id, [])
@@ -66,8 +75,9 @@ class InMemoryVectorStore(VectorStoreInterface):
                     data.pop(old_vid, None)
                 del order[:overflow]
 
-    def delete(self, tenant_id: str, ids: list[str]) -> None:
+    def delete(self, tenant_id: str | None, ids: list[str]) -> None:
         """批量删除指定租户下的向量"""
+        tenant_id = self._resolve_tenant(tenant_id)
         with self._lock:
             data = self._store.get(tenant_id)
             if not data:
@@ -76,8 +86,9 @@ class InMemoryVectorStore(VectorStoreInterface):
                 data.pop(vid, None)
             self._order[tenant_id] = [vid for vid in self._order[tenant_id] if vid in data]
 
-    def search(self, tenant_id: str, query_vector: list[float], top_k: int) -> list[VectorHit]:
+    def search(self, tenant_id: str | None, query_vector: list[float], top_k: int) -> list[VectorHit]:
         """按相似度检索指定租户命名空间内的 top_k 个命中"""
+        tenant_id = self._resolve_tenant(tenant_id)
         with self._lock:
             data = self._store.get(tenant_id, {})
             scored = [
@@ -87,13 +98,15 @@ class InMemoryVectorStore(VectorStoreInterface):
         scored.sort(key=lambda item: item[1], reverse=True)
         return [VectorHit(id=vid, score=score, vector=vector) for vid, score, vector in scored[:top_k]]
 
-    def get(self, tenant_id: str, ids: list[str]) -> dict[str, list[float]]:
+    def get(self, tenant_id: str | None, ids: list[str]) -> dict[str, list[float]]:
         """按 ID 取回指定租户下的向量，未找到的 ID 不返回"""
+        tenant_id = self._resolve_tenant(tenant_id)
         with self._lock:
             data = self._store.get(tenant_id, {})
             return {vid: data[vid] for vid in ids if vid in data}
 
-    def ids_in_order(self, tenant_id: str) -> list[str]:
+    def ids_in_order(self, tenant_id: str | None) -> list[str]:
         """按写入顺序返回指定租户下全部向量 ID"""
+        tenant_id = self._resolve_tenant(tenant_id)
         with self._lock:
             return list(self._order.get(tenant_id, []))

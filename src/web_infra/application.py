@@ -21,10 +21,12 @@ from fastapi import FastAPI
 
 from web_infra.config import ConfigError, CompositeConfigSource, DictConfigSource, Settings
 from web_infra.capability import CapabilityRegistry
+from web_infra.extension import ExtensionRegistry
 from web_infra.context import RequestContext
 from web_infra.error import register_global_exception_handlers
 from web_infra.logging import configure_logging
 from web_infra.web import TraceIdMiddleware, register_health_endpoints
+from web_infra.web.logging_middleware import setup_uvicorn_access_log
 from web_infra.web.auth_middleware import AuthMiddleware
 from web_infra.web.idempotency_middleware import IdempotencyMiddleware
 from web_infra.web.in_memory_idempotency_store import InMemoryIdempotencyStore
@@ -33,13 +35,13 @@ from web_infra.web.rate_limit_middleware import RateLimitMiddleware
 from web_infra.web.security_headers_middleware import SecurityHeadersMiddleware
 from web_infra.cache.cache_backend_registry import CacheBackendRegistry
 from web_infra.db import (
-    MongoDBConfig,
     SqliteSessionFactory,
     TenantQueryFilter,
 )
 from web_infra.db.database_registry import DatabaseRegistry
 from web_infra.db.database_manager import DatabaseManager
 from web_infra.db.database_router import TenantDatabaseRouter
+from web_infra.db.mongo_database_registry import MongoDatabaseRegistry
 from web_infra.ai.model_gateway import ModelRouter, RouteEntry, ModelGateway
 from web_infra.ai.model_auto_registrar import ModelAutoRegistrar
 from web_infra.ai.model_config_store_registry import ModelConfigStoreRegistry
@@ -135,6 +137,10 @@ class Application:
     ) -> None:
         self.settings = self._resolve_settings(settings)
         self._components: dict[str, Any] = {}
+        # 扩展点装配结果（app.extensions.enabled，见 _setup_extensions）：拓扑序启用链与实例表，
+        # 生命周期钩子（startup/shutdown）由 _lifespan 在应用启动/停机时按序编排
+        self._extension_chain: list[str] = []
+        self._extension_instances: dict[str, Any] = {}
 
         app_title = title or self.settings.get("app.name")
         app_version = version or self.settings.get("app.version")
@@ -154,10 +160,13 @@ class Application:
         """装配应用：日志 -> 能力装配校验 -> 组件装配 -> Web 基础能力 -> 中间件 -> 多租户 -> 健康检查/指标端点。
 
         组件先于中间件装配：依赖框架组件的中间件（如幂等存储复用 cache 组件 Redis 客户端）装配期可取已装配组件。
+        扩展点在组件之后、中间件之前装配：插件 build 可复用已装配组件（ctx.components），
+        插件注入的实例同样可被中间件装配复用。
         """
         self._setup_logging()
         self._setup_capabilities()
         self._setup_components()
+        self._setup_extensions()
         self._setup_web()
         self._setup_tenant()
         self._setup_health()
@@ -196,11 +205,27 @@ class Application:
     # ------------------------------------------------------------------
 
     def _setup_logging(self) -> None:
-        """统一日志格式（文本/JSON 可配置，规范 §17；格式与级别默认值收敛于 yml）"""
+        """统一日志格式与输出通道（文本/JSON、控制台/文件可配置，规范 §17；默认值收敛于 yml）。
+
+        输出通道（app.logging.output）：both（默认，控制台+文件同时输出）/ console / file；
+        文件路径 app.logging.file、保留天数 app.logging.retention_days；
+        自定义通道经 app.logging.sinks 声明（LogSinkInterface SPI，LogSinkRegistry 按名解析）。
+        通道配置非法（未注册通道/output=file 缺路径）抛 ConfigError 快速失败。
+        """
         fmt = self.settings.get("app.logging.format")
         level_name = self.settings.get("app.logging.level")
         level = getattr(logging, str(level_name).upper(), logging.INFO)
-        configure_logging(level=level, fmt=fmt)
+        try:
+            configure_logging(
+                level=level,
+                fmt=fmt,
+                output=self.settings.get("app.logging.output") or "both",
+                log_file=self.settings.get("app.logging.file"),
+                log_retention_days=int(self.settings.get("app.logging.retention_days") or 30),
+                sinks=self.settings.get("app.logging.sinks") or {},
+            )
+        except ValueError as exc:
+            raise ConfigError(f"日志配置错误: {exc}", key="app.logging") from exc
 
     def _setup_capabilities(self) -> None:
         """能力装配校验与启用（app.capabilities.enabled，可选能力依赖包含规则）。
@@ -254,6 +279,38 @@ class Application:
             setattr(self.app.state, name, component)
         # 配置挂载到 app.state.settings（业务/组件装配期读取统一配置，如 app.mq.outbox）
         self.app.state.settings = self.settings
+
+    def _setup_extensions(self) -> None:
+        """扩展点装配（app.extensions.enabled，统一扩展注册器 ExtensionRegistry）。
+
+        声明即启用：按依赖拓扑序构建各扩展点实例（build(配置段, 装配上下文)），
+        实例挂 app.state.extensions 供业务访问；生命周期钩子（startup/shutdown）
+        由 _lifespan 在应用启动/停机时按序编排（启动拓扑序、停机逆序）。
+        未注册的扩展点/依赖循环装配期快速失败（ConfigError，避免拼写错误/缺前置静默）。
+        """
+        enabled = self.settings.get("app.extensions.enabled") or []
+        if not enabled:
+            return
+        validation = ExtensionRegistry.validate(enabled)
+        if not validation.ok:
+            details: list[str] = []
+            if validation.unknown:
+                details.append(f"未注册的扩展点: {', '.join(sorted(validation.unknown))}")
+            if validation.circular:
+                details.append("扩展点依赖循环: " + "; ".join(" -> ".join(c) for c in validation.circular))
+            raise ConfigError("扩展点装配校验失败：" + "；".join(details), key="app.extensions.enabled")
+        instances: dict[str, Any] = {}
+        for name in validation.chain:
+            entry = ExtensionRegistry.get(name)
+            if entry is None or entry.build is None:
+                instances[name] = None
+                continue
+            options = self.settings.get(f"app.extensions.{name}") or {}
+            ctx = {"settings": self.settings, "components": self._components}
+            instances[name] = entry.build(options, ctx)
+        self._extension_chain = list(validation.chain)
+        self._extension_instances = instances
+        self.app.state.extensions = instances
 
     def _setup_tenant(self) -> None:
         """多租户装配（app.tenant.enabled=true）：将租户条件过滤器挂载到数据库会话（多租户规范 §2）。
@@ -334,16 +391,19 @@ class Application:
         return DatabaseManager(connections, router)
 
     def _build_mongo(self) -> Any:
-        """MongoDB 组件（仅当 app.mongo.enabled=true 时装配，默认关闭收敛于 yml）"""
-        return self._build(
-            MongoDBConfig,
-            "app.mongo",
-            [
-                "url", "database", "username", "password", "max_pool_size", "min_pool_size",
-                "max_idle_time_ms", "connect_timeout_ms", "server_selection_timeout_ms",
-                "socket_timeout_ms", "wait_queue_timeout_ms", "heartbeat_frequency_ms", "retry_writes",
-            ],
-        )
+        """MongoDB 组件（MongoDatabaseFactoryInterface SPI，MongoDatabaseRegistry 按名装配）：
+        - 仅当 app.mongo.enabled=true 时装配（默认关闭收敛于 yml）；
+        - 按 app.mongo.type 经注册表按名装配（内置 beanie 默认实现，自定义文档数据库经 register 接入）；
+        - 未注册的 mongo.type 启动期快速失败（ConfigError，避免拼写错误/未注册类型静默回落）。
+        """
+        mongo_type = self.settings.get("app.mongo.type") or "beanie"
+        params = self._mongo_params()
+        return _resolve_registry(MongoDatabaseRegistry, mongo_type, "app.mongo.type")(params)
+
+    def _mongo_params(self) -> dict[str, Any]:
+        """读取 app.mongo 段作为实例连接参数（排除 enabled/type 装配字段）"""
+        data = self.settings.get("app.mongo") or {}
+        return {k: v for k, v in data.items() if v is not None and k not in ("enabled", "type")}
 
     def _build_storage(self) -> Any:
         """对象存储组件：按 app.storage.type 经 ObjectStorageRegistry 按名装配（内置 local/minio，自定义经注册表接入）"""
@@ -469,11 +529,43 @@ class Application:
 
     @asynccontextmanager
     async def _lifespan(self, app: FastAPI) -> AsyncGenerator[None, None]:
-        """应用生命周期：启动前清理上下文、模型配置来源自动注册；停机时释放可关闭组件"""
+        """应用生命周期：启动前清理上下文、模型配置来源自动注册、接管 uvicorn 访问日志；停机时释放可关闭组件"""
         RequestContext.clear()
+        # 装配了访问日志中间件时，启动阶段关闭 uvicorn 原生访问日志（由中间件输出唯一访问日志，避免重复）。
+        # 自定义 lifespan 下 Starlette 不会执行 router 的 on_startup 事件，故在此显式调用
+        # （uvicorn Config 日志配置早于 lifespan 启动，此处执行时机在接受连接之前，原生日志全程不输出）。
+        setup_uvicorn_access_log(self.app)
         await self._register_ai_models_from_store()
+        await self._run_extension_startups()
         yield
+        await self._run_extension_shutdowns()
         await self._shutdown()
+
+    async def _run_extension_startups(self) -> None:
+        """扩展点启动钩子：按拓扑序（前置先启动）执行各扩展点 startup(build 产物)（同步/异步皆可）。
+
+        启动失败由钩子自行抛错/记录（与组件装配一致：不吞异常，启动失败即应用启动失败）。
+        """
+        for name in self._extension_chain:
+            entry = ExtensionRegistry.get(name)
+            if entry is None or entry.startup is None:
+                continue
+            result = entry.startup(self._extension_instances.get(name))
+            if inspect.isawaitable(result):
+                await result
+
+    async def _run_extension_shutdowns(self) -> None:
+        """扩展点停机钩子：按逆拓扑序（后启先停）执行各扩展点 shutdown(build 产物)（同步/异步皆可）。
+
+        停机先于框架组件 close 执行：插件可能依赖框架组件（如 Redis 客户端），先用完再关底层。
+        """
+        for name in reversed(self._extension_chain):
+            entry = ExtensionRegistry.get(name)
+            if entry is None or entry.shutdown is None:
+                continue
+            result = entry.shutdown(self._extension_instances.get(name))
+            if inspect.isawaitable(result):
+                await result
 
     async def _register_ai_models_from_store(self) -> None:
         """模型配置来源（app.ai.store.type=db 或自定义 SPI 来源）：启动时全量加载并自动同步 SPI 注册表（AI 规范 §17.4）。

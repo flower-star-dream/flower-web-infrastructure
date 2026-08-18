@@ -76,10 +76,10 @@ def release_version(current: str, commit_type: CommitType) -> str | None:
     """计算合入 main 后的正式版本号。
 
     main 分支发版语义：
-    - 带 .devN 测试后缀：先剥离；docs/chore 仅剥离正式化（不递增），其余按类型递增；
-    - 不带 .devN：docs/chore 不变（返回 None），其余按类型递增。
+    - 带 -devN 预发布后缀：先剥离；docs/chore 仅剥离正式化（不递增），其余按类型递增；
+    - 不带 -devN：docs/chore 不变（返回 None），其余按类型递增。
 
-    :param current: main 分支当前版本（X.Y.Z 或 X.Y.Z.devN）
+    :param current: main 分支当前版本（X.Y.Z 或 X.Y.Z-devN，SemVer 规范）
     :param commit_type: PR 标题解析出的提交类型
     :return: 正式版本号；None 表示无需更新
     :raises ValueError: 当前版本号格式非法
@@ -89,15 +89,15 @@ def release_version(current: str, commit_type: CommitType) -> str | None:
 
     m = _VERSION_RE.match(current)
     if m is None:
-        raise ValueError(f"无法解析版本号: {current!r}（期望 X.Y.Z 或 X.Y.Z.devN）")
+        raise ValueError(f"无法解析版本号: {current!r}（期望 X.Y.Z 或 X.Y.Z-devN，SemVer 规范）")
     major, minor, patch = int(m.group("major")), int(m.group("minor")), int(m.group("patch"))
     has_dev = m.group("dev") is not None
 
-    # docs/chore：仅剥离 .devN 正式化，不递增；无 .devN 时不更新
+    # docs/chore：仅剥离 -devN 正式化，不递增；无 -devN 时不更新
     if commit_type is CommitType.NO_CHANGE:
         return None if not has_dev else f"{major}.{minor}.{patch}"
 
-    # 正式发版：剥离 .devN（若有）后按提交类型递增基础版本
+    # 正式发版：剥离 -devN（若有）后按提交类型递增基础版本
     if commit_type is CommitType.BREAKING:
         return f"{major + 1}.0.0"
     if commit_type is CommitType.FEAT:
@@ -299,7 +299,7 @@ def main() -> int:
     current = read_current_version(repo_root)
     new_version = release_version(current, commit_type)
     if new_version is None:
-        print(f"[release] 无版本变更（docs/chore 且 main 无 .devN 测试后缀），当前版本 {current}")
+        print(f"[release] 无版本变更（docs/chore 且 main 无 -devN 预发布后缀），当前版本 {current}")
         return 0
     if new_version == current:
         print(f"[release] 版本无变化（{current}），跳过")

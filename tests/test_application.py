@@ -5,11 +5,14 @@
 @Date: 2026/08/14 10:00
 @Description: 验证 Application 配置驱动自动装配（Spring Boot 风格）与统一鉴权上下文注入顺序（规范 §6.4）。
 """
+import logging
+
 import httpx
 import pytest
 
 from web_infra import (
     Application,
+    ConfigError,
     create_app,
     MemoryCacheBackend,
     RedisCacheBackend,
@@ -171,3 +174,47 @@ async def test_tenant_header_injected_into_context():
         resp = await client.get("/whoami", headers={"X-Tenant-Id": "t-1001"})
         assert resp.status_code == 200
         assert resp.json()["tenant_id"] == "t-1001"
+
+
+# ---------------------------------------------------------------------------
+# 日志输出通道配置（app.logging.output / file / sinks）
+# ---------------------------------------------------------------------------
+
+
+def _web_infra_handlers():
+    """根日志器上由框架挂载（打 _web_infra 标记）的 handler 清单"""
+    return [h for h in logging.getLogger().handlers if getattr(h, "_web_infra", False)]
+
+
+def test_application_logging_output_console_only(tmp_path):
+    """app.logging.output=console：仅控制台 handler"""
+    create_app({"app": {"logging": {"output": "console", "file": str(tmp_path / "a.log")}}})
+    handlers = _web_infra_handlers()
+    assert len(handlers) == 1
+    assert isinstance(handlers[0], logging.StreamHandler)
+    assert not isinstance(handlers[0], logging.handlers.TimedRotatingFileHandler)
+
+
+def test_application_logging_output_file_only(tmp_path):
+    """app.logging.output=file：仅文件 handler"""
+    log_file = tmp_path / "b.log"
+    create_app({"app": {"logging": {"output": "file", "file": str(log_file)}}})
+    handlers = _web_infra_handlers()
+    assert len(handlers) == 1
+    assert isinstance(handlers[0], logging.handlers.TimedRotatingFileHandler)
+
+
+def test_application_logging_output_default_both(tmp_path):
+    """app.logging 未覆盖 output：默认 both（控制台 + 文件同时输出）"""
+    log_file = tmp_path / "c.log"
+    create_app({"app": {"logging": {"file": str(log_file)}}})
+    handlers = _web_infra_handlers()
+    assert len(handlers) == 2
+    assert any(isinstance(h, logging.StreamHandler) for h in handlers)
+    assert any(isinstance(h, logging.handlers.TimedRotatingFileHandler) for h in handlers)
+
+
+def test_application_logging_unknown_sink_raises():
+    """app.logging.sinks 声明未注册通道：ConfigError 快速失败"""
+    with pytest.raises(ConfigError):
+        create_app({"app": {"logging": {"sinks": {"no-such-sink": {}}}}})

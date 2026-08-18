@@ -60,13 +60,20 @@ class MongoDBConfig:
         self._lock = asyncio.Lock()
 
     async def connect(self, document_models: list[type] | None = None) -> None:
-        """建立连接并初始化 Beanie ODM（document_models 为 Document 模型类列表）"""
+        """建立连接并初始化 Beanie ODM（document_models 为 Document 模型类列表）。
+
+        已连接时若传入模型则重新 init_beanie（覆盖注册模型，需调用方传全量）；
+        并发建连由 asyncio.Lock 保护，幂等。
+        """
         from beanie import init_beanie
         from pymongo import AsyncMongoClient
         from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
 
         async with self._lock:
             if self.client is not None:
+                # 已连接：追加注册 Beanie Document 模型（重新 init_beanie 覆盖 document_models）
+                if document_models:
+                    await init_beanie(database=self.get_database(), document_models=document_models)
                 return
 
             client_kwargs: dict[str, Any] = {

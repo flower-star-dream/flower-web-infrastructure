@@ -5,15 +5,14 @@
 @Date: 2026/08/14 15:00
 @Description: 统一检索流程（AI 规范 §11）：向量召回 → 邻居扩展（可选）→ Rerank → 相似度阈值过滤；
               向量库/嵌入异常时降级返回空列表（保证主流程可用）。
-              检索遵守多租户规范 §2：从请求上下文读取当前租户传入向量库，
-              无租户上下文时使用 no-tenant 占位隔离，禁止跨租户命中知识库内容。
+              检索遵守多租户规范 §2：从请求上下文读取当前租户传入向量库（tenant_id 可选，
+              2026-08-18 评审调整：无租户时由向量存储实现回落 no-tenant 占位），禁止跨租户命中知识库内容。
 """
 from __future__ import annotations
 
 import logging
 
 from web_infra.context import RequestContext
-from web_infra.db.tenant_guard import NO_TENANT
 from web_infra.ai.retrieval.embedding_provider import EmbeddingProviderInterface
 from web_infra.ai.retrieval.identity_reranker import IdentityReranker
 from web_infra.ai.retrieval.reranker import RerankerInterface
@@ -60,8 +59,8 @@ class Retriever:
         :return: 检索结果列表；异常时返回空列表（降级）
         """
         try:
-            # 多租户隔离：从请求上下文读取当前租户，无租户时使用 no-tenant 占位
-            tenant_id = RequestContext.get_tenant_id() or NO_TENANT
+            # 多租户隔离：从请求上下文读取当前租户（无租户时由向量存储实现回落 no-tenant 占位）
+            tenant_id = RequestContext.get_tenant_id()
             query_vector = self._embedding_provider.embed(query)
             hits = self._vector_store.search(tenant_id, query_vector, top_k=top_k)
             ids = [hit.id for hit in hits]

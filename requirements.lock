@@ -16,6 +16,9 @@ colorama==0.4.6
 coverage==7.15.4
 cryptography==50.0.0
 dnspython==2.8.0
+elastic-transport==8.19.0
+elasticsearch==8.19.3
+elasticsearch-dsl==8.18.0
 fastapi==0.141.1
 # Editable Git install with no remote (flower-web-infrastructure==0.1.0)
 -e f:\baseproject\flower-web-infrastructure

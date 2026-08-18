@@ -225,3 +225,31 @@ def test_retriever_no_tenant_context_uses_no_tenant():
     results = retriever.search("目标A")
     assert [r.id for r in results] == ["n1"]
     assert "a1" not in [r.id for r in results]  # tenant-a 数据不可见
+
+
+def test_vector_store_tenant_optional_reads_context():
+    """tenant_id 可选：缺省从请求上下文（RequestContext）读取"""
+    store = InMemoryVectorStore()
+    emb = _FakeEmbedding()
+    RequestContext.set_tenant_id("tenant-a")
+    try:
+        store.add(None, ["a1"], emb.embed_batch(["目标A"]))
+    finally:
+        RequestContext.clear()
+    hits = store.search("tenant-a", emb.embed("目标A"), top_k=5)
+    assert [h.id for h in hits] == ["a1"]
+    # 无租户上下文（no-tenant）检索不到 tenant-a 数据
+    assert store.search(None, emb.embed("目标A"), top_k=5) == []
+
+
+def test_vector_store_tenant_optional_defaults_placeholder():
+    """tenant_id 可选：无上下文且不传租户 → no-tenant 占位命名空间（单租户数据收敛）"""
+    RequestContext.clear()
+    store = InMemoryVectorStore()
+    emb = _FakeEmbedding()
+    store.add(None, ["n1"], emb.embed_batch(["目标A"]))
+    hits = store.search(None, emb.embed("目标A"), top_k=5)
+    assert [h.id for h in hits] == ["n1"]
+    # 显式 no-tenant 与缺省解析结果一致
+    hits = store.search(NO_TENANT, emb.embed("目标A"), top_k=5)
+    assert [h.id for h in hits] == ["n1"]

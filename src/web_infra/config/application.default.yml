@@ -16,12 +16,28 @@ app:
   logging:
     level: INFO
     format: text
+    # 日志输出通道（默认控制台 + 文件同时输出）：both（两者同时）/ console（仅控制台）/ file（仅文件）
+    output: both
+    # 文件日志路径（output 为 both/file 时生效；生产可经 APP_LOGGING_FILE 环境变量覆盖，目录自动创建）
+    file: ${APP_LOGGING_FILE:logs/app.log}
+    # 文件日志保留天数（按天轮转备份数，规范 §17.2 要求 ≥30 天）
+    retention_days: 30
+    # 自定义日志通道（LogSinkInterface SPI，LogSinkRegistry 按名解析）：name -> 通道配置（options）；
+    # 未注册的通道名配置期快速失败（ValueError→ConfigError）
+    sinks: {}
 
   # 能力装配（可选能力依赖包含规则，2026-08-17）：enabled 声明系统启用的能力，装配时按包含关系校验
   # （缺前置自动补足；未知能力/依赖循环抛 ConfigError）并自动导入前置能力的框架模块。
   # 核心依赖链：用户系统(user，契约能力，业务实现) → 认证(authn) → 鉴权(authz) → 支付(pay)，以此类推；
   # 全能力清单与依赖见 web_infra.capability（CapabilityRegistry）。默认不启用任何可选能力。
   capabilities:
+    enabled: []
+
+  # 统一扩展注册器（app.extensions，配置驱动：声明即启用；app.extensions.<name> 为扩展点配置段）
+  # 扩展点契约（ExtensionPoint：build/startup/shutdown/requires）由业务注册进 ExtensionRegistry，
+  # 装配期按依赖拓扑序构建实例并挂 app.state.extensions；生命周期钩子随应用启动/停机编排
+  # （启动拓扑序、停机逆序，先于框架组件关闭）。默认不启用任何扩展点（业务按需声明）。
+  extensions:
     enabled: []
 
   # Web 中间件装配（配置驱动：声明即引入；enabled: false 显式关闭；trace_id 默认引入）
@@ -157,9 +173,11 @@ app:
       max_cost: 0.0
       window_seconds: 3600
 
-  # MongoDB（默认不启用）
+  # MongoDB（默认不启用；MongoDatabaseRegistry 按 type 装配：内置 beanie 默认实现（Beanie + PyMongo），
+  # 自定义文档数据库经 MongoDatabaseRegistry.register 注册后按名接入）
   mongo:
     enabled: false
+    type: beanie
     url: mongodb://localhost:27017
     database: app
     # 敏感配置（账号/密码）经 ${ENV:default} 引用环境变量/.env，默认空字符串兜底
@@ -224,6 +242,21 @@ app:
       cert_auto_download: false
       public_key_id: ${APP_PAYMENT_WECHAT_PUBLIC_KEY_ID:}
       public_key: ${APP_PAYMENT_WECHAT_PUBLIC_KEY:}
+      connect_timeout: 5
+      read_timeout: 30
+
+  # 搜索引擎（SearchEngineRegistry 按 type 装配：内置 memory/elasticsearch，自定义经 register 注册后接入；
+  # 默认不启用，需业务显式开启；索引真实命名 {index_prefix}_{tenant}_{index}，多租户前缀隔离）
+  search:
+    enabled: false
+    type: memory            # 默认实现：memory（内存测试/小规模）| elasticsearch（生产推荐，需 es extra）
+    index_prefix: web       # 真实索引名前缀（按部署环境可覆盖，如 app_search）
+    elasticsearch:
+      hosts: ["http://localhost:9200"]  # ES 节点地址（列表或逗号分隔字符串，经 APP_SEARCH_ELASTICSEARCH_HOSTS 覆盖）
+      # 敏感配置（账号/密码）经 ${ENV:default} 引用环境变量/.env，默认空字符串兜底
+      username: ${APP_SEARCH_ELASTICSEARCH_USERNAME:}
+      password: ${APP_SEARCH_ELASTICSEARCH_PASSWORD:}
+      verify_certs: true      # TLS 证书校验（生产默认开启；测试环境可显式关闭）
       connect_timeout: 5
       read_timeout: 30
 

@@ -45,6 +45,9 @@ storage = ["minio>=7.2"]                               # MinIO 对象存储（�
 yaml = ["pyyaml>=6.0"]                                 # YAML 配置（已在核心，兼容旧写法）
 rag = ["faiss-cpu>=1.8", "sentence-transformers>=3.0"] # RAG 向量检索（AI 规范 §11）
 pdf = ["playwright>=1.40"]                             # PDF 渲染导出（规范 §22）
+# Elasticsearch 搜索引擎（搜索引擎接入计划 v0.2.0）：elasticsearch-dsl ORM（自动携带 elasticsearch-py），
+# 全文检索（SearchEngineInterface）与向量检索（ElasticsearchVectorStore，dense_vector + kNN）；延迟导入
+es = ["elasticsearch-dsl>=8.0"]
 # 能力依赖链（可选能力，按需主动引入）：用户系统(user，业务实现) → 认证(authn) → 鉴权(authz) → 支付(pay)；
 # 依赖均为核心依赖（httpx/cryptography 等），extras 仅作能力声明与后续 SDK 挂载点；
 # 依赖包含规则由 web_infra.capability 能力注册表维护（启用 pay 自动带上前置 authz/authn/user），
@@ -81,7 +84,7 @@ min-microservice = [
     "rocketmq-client-python>=2.0",
     "minio>=7.2",
 ]
-# 全量安装：核心 + 全部可选能力（user/authn/authz/pay + nacos/rocketmq/storage/migrate/rag/pdf/mysql/redis/mongo）
+# 全量安装：核心 + 全部可选能力（user/authn/authz/pay + nacos/rocketmq/storage/migrate/rag/pdf/es/mysql/redis/mongo）
 all = [
     "nacos-sdk-python>=2.0",
     "rocketmq-client-python>=2.0",
@@ -90,6 +93,7 @@ all = [
     "faiss-cpu>=1.8",
     "sentence-transformers>=3.0",
     "playwright>=1.40",
+    "elasticsearch-dsl>=8.0",
     "sqlalchemy>=2.0.51",
     "aiomysql>=0.3.2",
     "aiosqlite>=0.19.0",

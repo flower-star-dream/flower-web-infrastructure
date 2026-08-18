@@ -37,6 +37,7 @@ from web_infra.ai.retrieval.document_chunker import DocumentChunkerInterface
 from web_infra.ai.retrieval.markdown_chunker import MarkdownChunker
 from web_infra.ai.retrieval.vector_store_interface import VectorStoreInterface
 from web_infra.ai.retrieval.in_memory_vector_store import InMemoryVectorStore
+from web_infra.ai.retrieval.elasticsearch_vector_store import ElasticsearchVectorStore
 from web_infra.ai.retrieval.embedding_provider import EmbeddingProviderInterface
 from web_infra.ai.retrieval.reranker import RerankerInterface
 from web_infra.ai.retrieval.retriever import Retriever
@@ -93,6 +94,7 @@ __all__ = [
     "MarkdownChunker",
     "VectorStoreInterface",
     "InMemoryVectorStore",
+    "ElasticsearchVectorStore",
     "EmbeddingProviderInterface",
     "RerankerInterface",
     "Retriever",

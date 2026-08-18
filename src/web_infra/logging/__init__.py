@@ -6,14 +6,20 @@
 @Description: 统一日志格式、TraceId/用户上下文注入与敏感信息脱敏，遵循规范 §17。
               提供 get_logger 统一入口，支持文本与 JSON 两种格式（JSON 便于集中采集，§17.5）。
               文本格式：[时间] [级别] [TraceId] [阶段] [模块] [类名.方法] [用户ID] 消息内容
+              日志输出通道可配置（app.logging.output：both/console/file，默认控制台+文件同时输出，
+              文件路径与保留天数见 app.logging.file / app.logging.retention_days）；
+              自定义存储位置/传输方式经 LogSinkInterface SPI（LogSinkRegistry）注册后，
+              在 app.logging.sinks 中声明即启用。
 """
 from __future__ import annotations
 
 import logging
-from logging.handlers import TimedRotatingFileHandler
+from typing import Any
 
 from web_infra.logging.context_filter import ContextFilter
 from web_infra.logging.json_formatter import JsonFormatter
+from web_infra.logging.log_sink_interface import LogSinkInterface
+from web_infra.logging.log_sink_registry import ConsoleLogSink, FileLogSink, LogSinkRegistry
 from web_infra.logging.sensitive_data_filter import SensitiveDataFilter
 
 # 文本日志格式（规范 §17.2）
@@ -23,6 +29,19 @@ TEXT_FORMAT = (
 )
 
 _LOGGER_PREFIX = "web_infra"
+
+__all__ = [
+    "TEXT_FORMAT",
+    "get_logger",
+    "configure_logging",
+    "ContextFilter",
+    "JsonFormatter",
+    "SensitiveDataFilter",
+    "LogSinkInterface",
+    "LogSinkRegistry",
+    "ConsoleLogSink",
+    "FileLogSink",
+]
 
 
 def get_logger(name: str = _LOGGER_PREFIX) -> logging.Logger:
@@ -35,15 +54,29 @@ def get_logger(name: str = _LOGGER_PREFIX) -> logging.Logger:
 def configure_logging(
     level: int = logging.INFO,
     fmt: str = "text",
+    *,
+    output: str | None = None,
     log_file: str | None = None,
     log_retention_days: int = 30,
+    sinks: dict[str, dict[str, Any]] | None = None,
 ) -> None:
     """初始化根日志器：统一注入上下文/脱敏过滤器与格式（幂等，可重复调用）。
 
+    输出通道由 output 决定（默认控制台 + 文件同时输出，见 app.logging.output 默认值）：
+      - "both"：控制台 + 文件同时输出（需 log_file）；
+      - "console"：仅控制台；
+      - "file"：仅文件（需 log_file）；
+      - None：按 log_file 推导（传 log_file 为 both，否则仅控制台，向后兼容旧调用）。
+    另可经 sinks 附加自定义日志通道（LogSinkInterface SPI，LogSinkRegistry 按名解析），
+    如 output=console 仅保留控制台、sinks 仍按声明启用（多通道并存）。
+
     :param level: 根日志级别，默认 INFO
     :param fmt: 输出格式，"text" 或 "json"
-    :param log_file: 日志文件路径；提供时额外输出到文件（按天轮转），None 表示仅控制台
+    :param output: 内置输出通道（both/console/file）；None 表示按 log_file 推导（向后兼容）
+    :param log_file: 日志文件路径（output 含 file 时必填；None 表示不输出文件）
     :param log_retention_days: 文件日志保留天数（轮转备份数），默认 30（规范 §17.2 要求 ≥30 天）
+    :param sinks: 自定义日志通道（SPI）：name -> 通道配置（options），经 LogSinkRegistry 解析并启用
+    :raises ValueError: output 非法、output 含 file 但未提供 log_file、sinks 中通道未注册或通道配置缺失
     """
     root = logging.getLogger()
     # 清理旧 handler，避免重复添加与格式冲突
@@ -53,28 +86,54 @@ def configure_logging(
 
     formatter = JsonFormatter() if fmt == "json" else logging.Formatter(TEXT_FORMAT)
 
-    stream_handler = logging.StreamHandler()
-    stream_handler.setFormatter(formatter)
-    stream_handler.addFilter(ContextFilter())
-    stream_handler.addFilter(SensitiveDataFilter())
-    setattr(stream_handler, "_web_infra", True)
+    for name in _resolve_output_channels(output, log_file):
+        options = {"file": log_file, "retention_days": log_retention_days} if name == "file" else None
+        root.addHandler(_build_handler(LogSinkRegistry.create(name, options).create_handler(options), formatter))
+
+    for name, options in (sinks or {}).items():
+        try:
+            sink = LogSinkRegistry.create(name, options)
+        except KeyError:
+            raise ValueError(
+                f"未注册的日志通道: {name!r}（内置 console/file；自定义通道经 LogSinkRegistry.register 注册）"
+            ) from None
+        root.addHandler(_build_handler(sink.create_handler(options), formatter))
 
     root.setLevel(level)
-    root.addHandler(stream_handler)
 
-    if log_file:
-        # S17-2 本地文件+日志轮转：按天轮转（midnight），backupCount 控制保留天数
-        # （默认 30 天 ≥ 规范要求），utf-8 编码兼容中文日志。
-        file_handler = TimedRotatingFileHandler(
-            log_file,
-            when="midnight",
-            backupCount=log_retention_days,
-            encoding="utf-8",
-        )
-        file_handler.setFormatter(formatter)
-        file_handler.addFilter(ContextFilter())
-        file_handler.addFilter(SensitiveDataFilter())
-        # 与 StreamHandler 相同的 web_infra 标记，便于 configure_logging 幂等清理；
-        # 用 setattr 赋值以规避静态类型检查对动态属性赋值的报错（既有基线的同类写法保留）。
-        setattr(file_handler, "_web_infra", True)
-        root.addHandler(file_handler)
+
+def _resolve_output_channels(output: str | None, log_file: str | None) -> list[str]:
+    """解析内置输出通道名列表。
+
+    - output=None（默认）：按 log_file 推导——传 log_file 为 ["console", "file"]（向后兼容），否则 ["console"]；
+    - output="both"：["console", "file"]（需 log_file）；
+    - output="console"：["console"]；
+    - output="file"：["file"]（需 log_file）。
+
+    :param output: 配置的输出通道（both/console/file 或 None）
+    :param log_file: 日志文件路径
+    :return: 通道名列表（console/file）
+    :raises ValueError: output 非法，或 output 含 file 但未提供 log_file
+    """
+    if output is None:
+        return ["console", "file"] if log_file else ["console"]
+    if output not in ("console", "file", "both"):
+        raise ValueError(f"output 仅支持 console/file/both，当前: {output!r}")
+    channels = {"both": ["console", "file"], "console": ["console"], "file": ["file"]}[output]
+    if "file" in channels and not log_file:
+        raise ValueError("output 含 file 通道时必须提供 log_file（如 configure_logging(log_file=...) 或配置 app.logging.file）")
+    return channels
+
+
+def _build_handler(handler: logging.Handler, formatter: logging.Formatter) -> logging.Handler:
+    """统一挂载格式器与上下文/脱敏过滤器，并打 web_infra 标记（供 configure_logging 幂等清理）。
+
+    :param handler: 通道构造的日志 Handler
+    :param formatter: 按 fmt 配置的格式器（text/json）
+    :return: 挂载完成的 Handler
+    """
+    handler.setFormatter(formatter)
+    handler.addFilter(ContextFilter())
+    handler.addFilter(SensitiveDataFilter())
+    setattr(handler, "_web_infra", True)
+    return handler

@@ -104,24 +104,24 @@ def test_phase_timer_mark_without_context_is_silent():
     PhaseTimer.mark("auth")  # 不抛错
 
 
-def test_request_out_log_contains_auth_phase(caplog):
-    """鉴权通过后 request_out 日志包含鉴权阶段耗时（phase_auth_ms）"""
+def test_access_log_contains_uvicorn_format_and_phase(caplog):
+    """鉴权通过后访问日志为 uvicorn 标准格式且含分阶段耗时（phase_auth_ms）"""
     client = TestClient(_build_app())
     with caplog.at_level(logging.INFO):
         resp = client.get("/secure", headers={"Authorization": f"Bearer {_token()}"})
     assert resp.status_code == 200
     messages = [r.getMessage() for r in caplog.records]
-    assert any("request_out" in m and "phase_auth_ms=" in m for m in messages)
+    assert any('"GET /secure HTTP/1.1"' in m and "phase_auth_ms=" in m and "trace_id=" in m for m in messages)
 
 
-def test_request_out_log_contains_phase_on_auth_failure(caplog):
-    """鉴权失败（401）路径同样输出 phase 字段（失败路径埋点）"""
+def test_access_log_contains_phase_on_auth_failure(caplog):
+    """鉴权失败（401）路径同样输出访问日志且含分阶段耗时（失败路径埋点）"""
     client = TestClient(_build_app())
     with caplog.at_level(logging.INFO):
         resp = client.get("/secure")
     assert resp.status_code == 401
     messages = [r.getMessage() for r in caplog.records]
-    assert any("request_out" in m and "phase_auth_ms=" in m for m in messages)
+    assert any('"GET /secure HTTP/1.1"' in m and "phase_auth_ms=" in m for m in messages)
 
 
 # ---------------------------------------------------------------------------

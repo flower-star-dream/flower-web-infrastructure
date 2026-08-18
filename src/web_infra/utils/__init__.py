@@ -14,6 +14,7 @@ from web_infra.utils.data_util import DataUtil
 from web_infra.utils.math_util import MathUtil
 from web_infra.utils.token_counter import TokenCounter, count_tokens
 from web_infra.utils.pdf_renderer import PdfRenderer
+from web_infra.utils.ip_address_util import IPAddressUtil
 
 __all__ = [
     "DateUtil",
@@ -26,4 +27,5 @@ __all__ = [
     "TokenCounter",
     "count_tokens",
     "PdfRenderer",
+    "IPAddressUtil",
 ]

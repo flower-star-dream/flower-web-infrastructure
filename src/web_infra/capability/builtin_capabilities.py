@@ -80,6 +80,14 @@ BUILTIN_CAPABILITIES: tuple[Capability, ...] = (
         description="缓存：内存/Redis 后端 + 键构建（web_infra.cache）",
         modules=("web_infra.cache",),
     ),
+    Capability(
+        name="search",
+        description="搜索引擎：全文检索 SPI + 内存默认实现 + ES 生产实现（web_infra.search；"
+                    "向量检索经 ElasticsearchVectorStore 接入 VectorStoreInterface，dense_vector + kNN）",
+        modules=("web_infra.search",),
+        contract="框架 SPI：SearchEngineInterface（索引生命周期/写入/删除/关键词检索，全文 BM25/高亮）；"
+                 "默认 memory 无外部依赖，生产注入 elasticsearch-dsl（es extra）",
+    ),
 )
 
 

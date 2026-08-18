@@ -63,19 +63,34 @@
 - [14. Web 模块（web）](#14-web-模块web)
   - [14.1 IdempotencyStoreInterface —— API 幂等键存储接口](#141-idempotencystoreinterface--api-幂等键存储接口)
 - [15. 支付模块（payment）](#15-支付模块payment)
-- [16. 扩展接入指引](#16-扩展接入指引)
-  - [16.1 接入步骤](#161-接入步骤)
-  - [16.2 三方平台接入步骤（参照 `DemoSocialPlatform`）](#162-三方平台接入步骤参照-demosocialplatform)
-  - [16.3 自定义模型供应商示例（参照 `OpenAICompatibleProvider`）](#163-自定义模型供应商示例参照-openaicompatibleprovider)
-  - [16.4 自定义对象存储实现示例（参照 `MinioStorage`）](#164-自定义对象存储实现示例参照-miniostorage)
-  - [16.5 自定义指标分组示例（参照 `metric_group_provider_interface.py`）](#165-自定义指标分组示例参照-metricgroupproviderinterfacepy)
-  - [16.6 常见替换对照](#166-常见替换对照)
-- [17. 能力注册表（capability）](#17-能力注册表capability)
-  - [17.1 能力契约与内置依赖图](#171-能力契约与内置依赖图)
-  - [17.2 依赖解析（resolve）与装配校验（validate）](#172-依赖解析resolve与装配校验validate)
-  - [17.3 启用能力（enable / app.capabilities.enabled）](#173-启用能力enable--appcapabilitiesenabled)
-  - [17.4 业务扩展自定义能力](#174-业务扩展自定义能力)
-- [18. 维护指南](#18-维护指南)
+- [16. 日志模块（logging）](#16-日志模块logging)
+  - [16.1 LogSinkInterface —— 日志输出通道接口](#161-logsinkinterface--日志输出通道接口)
+- [17. 扩展接入指引](#17-扩展接入指引)
+  - [17.1 接入步骤](#171-接入步骤)
+  - [17.2 三方平台接入步骤（参照 `DemoSocialPlatform`）](#172-三方平台接入步骤参照-demosocialplatform)
+  - [17.3 自定义模型供应商示例（参照 `OpenAICompatibleProvider`）](#173-自定义模型供应商示例参照-openaicompatibleprovider)
+  - [17.4 自定义对象存储实现示例（参照 `MinioStorage`）](#174-自定义对象存储实现示例参照-miniostorage)
+  - [17.5 自定义指标分组示例（参照 `metric_group_provider_interface.py`）](#175-自定义指标分组示例参照-metricgroupproviderinterfacepy)
+  - [17.6 常见替换对照](#176-常见替换对照)
+- [18. 能力注册表（capability）](#18-能力注册表capability)
+  - [18.1 能力契约与内置依赖图](#181-能力契约与内置依赖图)
+  - [18.2 依赖解析（resolve）与装配校验（validate）](#182-依赖解析resolve与装配校验validate)
+  - [18.3 启用能力（enable / app.capabilities.enabled）](#183-启用能力enable--appcapabilitiesenabled)
+  - [18.4 业务扩展自定义能力](#184-业务扩展自定义能力)
+- [19. 统一扩展注册器（extension）](#19-统一扩展注册器extension)
+  - [19.1 定位与边界](#191-定位与边界)
+  - [19.2 扩展点契约（ExtensionPoint）](#192-扩展点契约extensionpoint)
+  - [19.3 注册（同名默认拒绝）](#193-注册同名默认拒绝)
+  - [19.4 依赖解析（resolve）与装配校验（validate）](#194-依赖解析resolve与装配校验validate)
+  - [19.5 配置驱动启用（app.extensions.enabled）](#195-配置驱动启用appextensionsenabled)
+  - [19.6 生命周期编排（startup 拓扑序 / 停机逆序）](#196-生命周期编排startup-拓扑序--停机逆序)
+  - [19.7 接入示例（业务插件）](#197-接入示例业务插件)
+- [20. 搜索引擎模块（search）](#20-搜索引擎模块search)
+  - [20.1 SearchEngineInterface —— 全文搜索引擎接口](#201-searchengineinterface--全文搜索引擎接口)
+  - [20.2 默认实现与生产实现](#202-默认实现与生产实现)
+  - [20.3 向量检索接入（ElasticsearchVectorStore）](#203-向量检索接入elasticsearchvectorstore)
+  - [20.4 错误码与配置](#204-错误码与配置)
+- [21. 维护指南](#21-维护指南)
 
 ## 1. SPI 机制概述
 
@@ -106,6 +121,8 @@
 | db | `DatabaseSessionInterface` | Protocol | `SqlAlchemyDatabaseSession` / `SqliteSession` | PG/其他 ORM |
 | db | `DatabaseFactoryInterface` | Protocol | `SqliteSessionFactory` / `MySQLDatabase`（`DatabaseRegistry` 按 `app.db.type` 或 `app.db.instances` 装配） | PG 工厂（register 接入） |
 | db | `DatabaseRouterInterface` | ABC | `TenantDatabaseRouter` | 自定义路由策略 |
+| db | `MongoSessionInterface` | Protocol | `BeanieMongoSession`（集合级文档 CRUD） | 其他文档数据库 |
+| db | `MongoDatabaseFactoryInterface` | Protocol | `MongoDatabase`（Beanie + PyMongo，`MongoDatabaseRegistry` 按 `app.mongo.type` 装配，内置 `beanie`） | 其他文档数据库工厂（register 接入） |
 | registry | `ServiceRegistryInterface` | Protocol | `InMemoryServiceRegistry` | Nacos/Eureka/Consul |
 | loadbalance | `LoadBalancerInterface` | ABC | `RandomBalancer` / `RoundRobinBalancer` / `WeightedRoundRobinBalancer` | 自定义策略 |
 | ai | `ModelProviderInterface` | ABC | `OpenAICompatibleProvider` | Anthropic/DeepSeek 等 |
@@ -114,7 +131,7 @@
 | ai | `QuotaStoreInterface` | ABC | `InMemoryQuotaStore` | Redis（INCR + TTL 窗口） |
 | ai | `PromptTemplateStoreInterface` | ABC | `InMemoryPromptTemplateStore` | 数据库 prompt_templates 表 |
 | ai | `UsageRecordStoreInterface` | ABC | 结构化日志输出 | 数据库（计费/审计） |
-| ai | `VectorStoreInterface` | ABC | `InMemoryVectorStore` | FAISS/Milvus 等 |
+| ai | `VectorStoreInterface` | ABC | `InMemoryVectorStore` | FAISS/Milvus/`ElasticsearchVectorStore`（dense_vector + kNN，es extra） |
 | ai | `EmbeddingProviderInterface` | ABC | `HashEmbeddingProvider`（稳定哈希本地嵌入） | bge-m3/OpenAI 等 |
 | ai | `DocumentChunkerInterface` | ABC | `MarkdownChunker` | 按文档类型扩展 |
 | ai | `RerankerInterface` | ABC | `IdentityReranker` | CrossEncoder 等 |
@@ -143,6 +160,8 @@
 | payment | `PaymentGateway` | Protocol | `InMemoryPaymentGateway` | 微信/支付宝等渠道 |
 | payment | `PaymentCallbackVerifier` | Protocol | `InMemoryPaymentCallbackVerifier` | 微信回调验签（平台证书/公钥） |
 | payment | `PaymentCallbackHandler` | ABC | 无（业务必选） | 支付/退款回调业务处理 |
+| logging | `LogSinkInterface` | Protocol | `ConsoleLogSink` / `FileLogSink`（`LogSinkRegistry` 按 `app.logging.sinks` 装配） | 远端日志平台/消息队列等自定义通道 |
+| search | `SearchEngineInterface` | Protocol | `InMemorySearchEngine`（`SearchEngineRegistry` 按 `app.search.type` 装配） | Elasticsearch（es extra）/自研（register 接入） |
 
 ## 3. 配置模块（config）
 
@@ -360,6 +379,94 @@ async with db.get("audit").session() as session:   # PostgreSQL
 
 - 默认实现：`TenantDatabaseRouter`——显式映射优先，未命中按命名模板 `tenant_{tenant_id}` 生成；`unregister` 仅移除显式映射。
 
+### 4.4 MongoSessionInterface —— MongoDB 通用会话接口
+
+- 文件：`src/web_infra/db/mongo_session_interface.py`
+- 定位：MongoDB 功能 SPI 化（与关系型 DatabaseSessionInterface 对齐），一次文档数据库交互的最小单元。
+  契约采用**集合级通用形态**（`collection` 名 + dict 文档/filter，返回值统一归一化），
+  屏蔽 Beanie / PyMongo / 其他 ODM 差异；filter / update / pipeline 沿用 MongoDB 查询语法。
+- 类型：`Protocol`（`@runtime_checkable`）
+
+| 方法 | 说明 |
+| ---- | ---- |
+| `async insert_one(collection, document) -> str` | 插入单条文档，返回 `_id` 字符串形式 |
+| `async insert_many(collection, documents) -> list[str]` | 批量插入，返回 `_id` 字符串列表 |
+| `async find_one(collection, filter, projection, sort) -> dict \| None` | 查询单条文档，返回 dict 或 None |
+| `async find_many(collection, filter, projection, sort, skip, limit) -> list[dict]` | 查询多条文档（limit<=0 不限制数量） |
+| `async update_one(collection, filter, update, upsert, array_filters) -> int` | 更新单条，返回实际修改条数 |
+| `async update_many(collection, filter, update, upsert, array_filters) -> int` | 更新多条，返回实际修改条数 |
+| `async replace_one(collection, filter, replacement, upsert) -> int` | 替换单条，返回实际修改条数 |
+| `async delete_one(collection, filter) -> int` | 删除单条，返回删除条数 |
+| `async delete_many(collection, filter) -> int` | 删除多条，返回删除条数 |
+| `async count(collection, filter) -> int` | 统计匹配文档条数 |
+| `async aggregate(collection, pipeline) -> list[dict]` | 聚合管道查询 |
+| `async distinct(collection, key, filter) -> list[Any]` | 指定字段去重取值 |
+| `async create_index(collection, keys, name, unique) -> str` | 创建索引，返回索引名 |
+| `async commit() / rollback() / close()` | 事务提交/回滚（非事务会话为空操作）/ 关闭会话 |
+
+### 4.5 MongoDatabaseFactoryInterface —— MongoDB 通用数据库工厂接口
+
+- 文件：`src/web_infra/db/mongo_database_factory_interface.py`
+- 定位：MongoDB 数据库工厂 SPI 扩展点（与关系型 DatabaseFactoryInterface 对齐）。
+- 类型：`Protocol`（`@runtime_checkable`）
+
+| 方法 | 说明 |
+| ---- | ---- |
+| `async create_session() -> MongoSessionInterface` | 创建通用 MongoDB 会话 |
+| `session() -> AsyncContextManager[MongoSessionInterface]` | 异步上下文管理器：进入创建会话，退出自动提交（异常回滚）并关闭 |
+| `async close() -> None` | 关闭客户端连接/释放底层资源 |
+| `async health_check() -> bool` | 健康检查（ping） |
+
+**可选能力**（非必需，按需实现即可被框架对应功能识别）：
+- `register_document_models(models)`：注册 Beanie Document 模型并初始化 ODM（业务模型入口；未注册时仅集合级访问，纯 PyMongo 也可用）；
+- `transaction()`：多文档事务上下文（需 MongoDB 副本集；事务内会话所有操作自动携带事务 session）；
+- `get_database()` / `get_collection(name)`：原生访问入口（业务需要驱动级能力时使用）；
+- `update_pool_metrics()`：刷新连接池运行指标（/metrics 抓取前调用）。
+
+### 4.6 MongoDatabaseRegistry —— MongoDB 数据库注册表与默认实现（Beanie）
+
+- 文件：`src/web_infra/db/mongo_database_registry.py`
+- 定位：按 type 名注册/查询 `MongoDatabaseFactoryInterface` 工厂，装配期（`app.mongo.type`）按名实例化；
+  内置 **`beanie`** 默认实现（`MongoDatabase` = `MongoDBConfig` 连接管理 + `BeanieMongoSession` 集合级会话，Beanie + PyMongo），
+  未注册的 `app.mongo.type` 启动期快速失败（ConfigError）。
+- 注册方式：`MongoDatabaseRegistry.register(name, factory)`（模块导入即注册，幂等；同名覆盖）。
+- 工厂签名：入参为 `app.mongo` 段连接参数（排除 `enabled`/`type`）。
+
+**装配与使用**（`app.mongo.enabled=true` 时经 `MongoDatabaseRegistry` 按 `app.mongo.type` 装配为 `app.state.mongo`）：
+
+```yaml
+# application.yml
+mongo:
+  enabled: true
+  type: beanie            # MongoDatabaseRegistry 按名装配（内置 beanie 默认实现）
+  url: mongodb://localhost:27017
+  database: app
+  username: ${APP_MONGO_USERNAME:}
+  password: ${APP_MONGO_PASSWORD:}
+```
+
+```python
+# 通用会话（集合级契约，业务只依赖 MongoSessionInterface，屏蔽 Beanie/PyMongo 差异）
+mongo = app.state.mongo
+async with mongo.session() as session:
+    order_id = await session.insert_one("orders", {"user_id": 1, "amount": 99.5})
+    order = await session.find_one("orders", {"_id": order_id})
+
+# 注册 Beanie Document 模型（生命周期钩子内调用，可多次追加；ODM 初始化后可用 Document 类方法）
+class User(Document):  # beanie.Document 子类
+    name: str
+    ...
+await mongo.register_document_models([User])
+
+# 多文档事务（需副本集；事务内操作自动携带事务 session）
+async with mongo.transaction() as session:
+    await session.insert_one("accounts", {"user_id": 1, "balance": 100})
+    await session.update_one("accounts", {"user_id": 1}, {"$inc": {"balance": -50}})
+```
+
+**自定义实现接入**：实现 `MongoDatabaseFactoryInterface`（+ 可选能力），`MongoDatabaseRegistry.register("my_mongo", factory)` 注册后
+按 `app.mongo.type: my_mongo` 装配，无需改动框架装配代码。
+
 ## 5. 注册发现模块（registry）
 
 ### 5.1 ServiceRegistryInterface —— 服务注册发现通用接口
@@ -495,18 +602,22 @@ async with db.get("audit").session() as session:   # PostgreSQL
 ### 7.7 VectorStoreInterface —— 向量存储接口
 
 - 文件：`src/web_infra/ai/retrieval/vector_store_interface.py`
-- 定位：向量库抽象（AI 规范 §11），提供增删查与按 ID 取回；FAISS 等真实向量库可通过该接口接入。
+- 定位：向量库抽象（AI 规范 §11），提供增删查与按 ID 取回；FAISS / Elasticsearch 等真实向量库可通过该接口接入。
 - 类型：`ABC`
+- **tenant_id 可选**（2026-08-18 评审调整，租户非系统必备，与 `SearchEngineInterface` 一致）：显式传入时按租户隔离命名空间；
+  缺省从请求上下文（`RequestContext`）读取；再无则回落 `no-tenant` 占位——单租户系统无需传租户，所有数据收敛同一命名空间。
 
 | 方法 | 说明 |
 | ---- | ---- |
-| `add(ids: list[str], vectors: list[list[float]]) -> None` | 批量写入向量（ID 与向量一一对应） |
-| `delete(ids: list[str]) -> None` | 批量删除向量 |
-| `search(query_vector: list[float], top_k: int) -> list[VectorHit]` | 按相似度检索 top_k 个命中（得分越大越相似） |
-| `get(ids: list[str]) -> dict[str, list[float]]` | 按 ID 取回向量（用于邻居扩展等场景），未找到的 ID 不返回 |
-| `ids_in_order() -> list[str]` | 按写入顺序返回全部向量 ID（供邻居扩展定位相邻块） |
+| `add(tenant_id, ids, vectors) -> None` | 批量写入向量（ID 与向量一一对应，仅写入指定租户命名空间） |
+| `delete(tenant_id, ids) -> None` | 批量删除指定租户下的向量 |
+| `search(tenant_id, query_vector, top_k) -> list[VectorHit]` | 按相似度检索指定租户命名空间内 top_k 个命中（得分越大越相似） |
+| `get(tenant_id, ids) -> dict[str, list[float]]` | 按 ID 取回指定租户下的向量（用于邻居扩展等场景），未找到的 ID 不返回 |
+| `ids_in_order(tenant_id) -> list[str]` | 按写入顺序返回指定租户下全部向量 ID（供邻居扩展定位相邻块） |
 
-- 默认实现：`InMemoryVectorStore`（`retrieval/in_memory_vector_store.py`）。
+- 默认实现：`InMemoryVectorStore`（`retrieval/in_memory_vector_store.py`，内存字典 + 余弦相似度，单实例/测试场景）。
+- 生产实现：`ElasticsearchVectorStore`（`retrieval/elasticsearch_vector_store.py`，dense_vector + kNN，依赖 `es` extra，见 §20.3）。
+- 组装：`Retriever` 从请求上下文读取租户传给向量存储（tenant_id 可选），无租户时由实现回落 `no-tenant` 占位。
 
 ### 7.8 EmbeddingProviderInterface —— 向量嵌入供应商接口
 
@@ -969,16 +1080,81 @@ async with db.get("audit").session() as session:   # PostgreSQL
 - 文件：`src/web_infra/payment/payment_permission.py`
 - 定位：`PaymentPermission` 常量（`AUTH_PERM_` 前缀）：下单/查单/关单/退款/冲正/对账/账单管理分离；退款/冲正/人工补记属高风险操作（独立权限点 + 审批流 + 全量审计），由业务接入框架 RBAC/审批组件按权限点拦截。
 
-## 16. 扩展接入指引
+## 16. 日志模块（logging）
 
-### 16.1 接入步骤
+### 16.1 LogSinkInterface —— 日志输出通道接口
+
+- 文件：`src/web_infra/logging/log_sink_interface.py`
+- 定位：日志输出通道 SPI。日志的**存储位置/传输方式**（控制台、本地文件、远端日志平台、消息队列等）可配置且可扩展：
+  内置 `console`（控制台）与 `file`（文件，按天轮转）两条通道，经 `app.logging.output`（both/console/file，
+  默认 both：控制台 + 文件同时输出）与 `app.logging.file` / `app.logging.retention_days` 配置；
+  自定义通道经 `LogSinkRegistry.register` 注册后，在 `app.logging.sinks.<name>` 声明即启用。
+- 方法契约：
+
+| 方法 | 说明 |
+| ---- | ---- |
+| `create_handler(options: dict \| None = None) -> logging.Handler` | 构造日志输出 Handler（标准库 `logging.Handler` 或子类）；框架统一挂载格式器（text/json，规范 §17.2）与 ContextFilter / SensitiveDataFilter（§17.1/§17.3），保证输出格式与脱敏一致 |
+
+- 内置实现：
+  - `ConsoleLogSink`：`logging.StreamHandler`（控制台）；
+  - `FileLogSink`：`TimedRotatingFileHandler`（按天轮转 + 保留天数，目录自动创建，`encoding="utf-8"`）。
+- 注册表：`LogSinkRegistry`（类级注册，同名覆盖内置/已注册通道），`register(name, factory)` 注册工厂
+  `(options: dict | None) -> LogSinkInterface`；未注册的通道名在 `configure_logging` / `create_app` 装配期快速失败。
+- 配置示例：
+
+```yaml
+app:
+  logging:
+    level: INFO
+    format: text        # text | json
+    output: both        # both（默认，控制台+文件）/ console（仅控制台）/ file（仅文件）
+    file: logs/app.log  # 文件路径（output 含 file 时生效，目录自动创建）
+    retention_days: 30  # 文件保留天数（按天轮转，规范 §17.2 要求 ≥30 天）
+    sinks:              # 自定义日志通道（LogSinkInterface SPI）：name -> 通道配置
+      elk:
+        url: http://log-collector:8200
+```
+
+- 接入示例（自定义通道）：
+
+```python
+# my_log_sink.py（create_app 前导入即注册，幂等）
+import logging
+from web_infra.logging import LogSinkRegistry
+
+
+class HttpLogSink:  # LogSinkInterface 为 Protocol，结构子类型，方法签名匹配即可
+    def create_handler(self, options=None):
+        # 自定义 Handler：将日志投递到远端日志平台（options 为 app.logging.sinks.<name> 配置）
+        return MyHttpLogHandler(**(options or {}))
+
+
+LogSinkRegistry.register("elk", lambda options: HttpLogSink())
+```
+
+```yaml
+app:
+  logging:
+    output: console      # 仅保留控制台
+    sinks:
+      elk:               # 自定义通道与内置通道并存
+        url: http://log-collector:8200
+```
+
+- 输出通道配置：`configure_logging(output=..., log_file=..., sinks=...)`（`output` 仅控制台/仅文件/两者，
+  None 按 `log_file` 推导向后兼容）；`Application` 装配读取 `app.logging.output/file/retention_days/sinks`，
+  配置非法（未注册通道、`output=file` 缺路径）抛 `ConfigError` 快速失败。
+
+## 17. 扩展接入指引
+
+### 17.1 接入步骤
 
 1. 确定目标 SPI 接口（见第 2 节总览表），实现其全部抽象方法。
    - `Protocol` 类型：结构子类型，类无需继承接口，方法签名匹配即可；`ABC` 类型：继承接口并实现 `@abstractmethod`。
 2. 通过注册表显式注册（或配置声明装配）。
 3. 多实例/跨进程场景，默认内存实现需替换为共享存储实现（Redis/MySQL 等）。
 
-### 16.2 三方平台接入步骤（参照 `DemoSocialPlatform`）
+### 17.2 三方平台接入步骤（参照 `DemoSocialPlatform`）
 
 1. 实现 `SocialPlatform`（`build_authorize_url` / `exchange_token` / `fetch_userinfo`，Protocol 结构子类型，无需继承）。
 2. `SocialPlatformRegistry.register(platform)` 显式注册。
@@ -986,7 +1162,7 @@ async with db.get("audit").session() as session:   # PostgreSQL
 4. 登录成功由 `SocialLoginService.login` 复用 `JWTUtil` 签发框架自有 JWT，后续鉴权走 `AuthMiddleware`。
 5. 多实例部署时替换绑定存储：实现 `SocialBindingStore` 的 Redis/DB 版并注入。
 
-### 16.3 自定义模型供应商示例（参照 `OpenAICompatibleProvider`）
+### 17.3 自定义模型供应商示例（参照 `OpenAICompatibleProvider`）
 
 ```python
 # my_provider.py
@@ -1007,7 +1183,7 @@ class MyProvider(ModelProviderInterface):
 ModelProviderRegistry.register(MyProvider())
 ```
 
-### 16.4 自定义对象存储实现示例（参照 `MinioStorage`）
+### 17.4 自定义对象存储实现示例（参照 `MinioStorage`）
 
 ```python
 # my_storage.py
@@ -1031,7 +1207,7 @@ class MyObjectStorage(ObjectStorageInterface):
         ...
 ```
 
-### 16.5 自定义指标分组示例（参照 `metric_group_provider_interface.py`）
+### 17.5 自定义指标分组示例（参照 `metric_group_provider_interface.py`）
 
 ```python
 # my_metrics_group.py
@@ -1055,7 +1231,7 @@ class OrderMetricsGroup(MetricGroupProviderInterface):
 MetricGroupProviderRegistry.register(OrderMetricsGroup())
 ```
 
-### 16.6 常见替换对照
+### 17.6 常见替换对照
 
 | 场景 | 默认实现 | 替换实现 |
 | ---- | ---- | ---- |
@@ -1066,13 +1242,13 @@ MetricGroupProviderRegistry.register(OrderMetricsGroup())
 | 本地 MQ -> 分布式 MQ | `InMemoryMessageQueue` | `RocketMqPublisher`（已内置） |
 | 接入新模型供应商 | `OpenAICompatibleProvider` | 自定义 `ModelProviderInterface` 实现 |
 
-## 17. 能力注册表（capability）
+## 18. 能力注册表（capability）
 
 > **能力依赖模型（2026-08-17）**：支付的前置是鉴权，鉴权的前置是认证，认证的前置是用户系统（否则无意义）。
 > 框架声明能力契约（SPI）与依赖包含规则，启用能力时按包含关系自动启用前置（启用支付默认启用鉴权→认证→用户，以此类推）；
 > 具体业务实现（如用户系统 user-service）交由业务层提供。
 
-### 17.1 能力契约与内置依赖图
+### 18.1 能力契约与内置依赖图
 
 - 文件：`src/web_infra/capability/`（`Capability` / `CapabilityRegistry` / `CapabilityError` / `CapabilityResolution` / `CapabilityValidation`）
 - `Capability`（契约）：能力名 / 说明 / 随能力启用的框架模块（modules）/ 前置能力（requires，按包含关系自动启用）/ 业务契约（contract）。
@@ -1092,8 +1268,9 @@ MetricGroupProviderRegistry.register(OrderMetricsGroup())
 | `config` | `web_infra.config` | - | 配置（本地源 + Nacos 配置中心） |
 | `db` | `web_infra.db` | - | 数据访问（ORM 会话/读写分离/多租户过滤） |
 | `cache` | `web_infra.cache` | - | 缓存（内存/Redis） |
+| `search` | `web_infra.search` | - | 搜索引擎：全文检索 SPI（默认 memory，生产 ES）+ 向量 kNN（es extra，延迟导入） |
 
-### 17.2 依赖解析（resolve）与装配校验（validate）
+### 18.2 依赖解析（resolve）与装配校验（validate）
 
 - `CapabilityRegistry.resolve(name)`：按包含关系展开传递前置，返回 `CapabilityResolution`（拓扑序能力链 chain、需导入框架模块 modules）；
   未注册能力 / 依赖循环抛 `CapabilityError`。
@@ -1111,7 +1288,7 @@ validation = CapabilityRegistry.validate(["pay"])
 assert validation.ok and validation.closure == frozenset({"user", "authn", "authz", "pay"})
 ```
 
-### 17.3 启用能力（enable / app.capabilities.enabled）
+### 18.3 启用能力（enable / app.capabilities.enabled）
 
 - 运行时显式启用：`CapabilityRegistry.enable("pay")` —— 解析（校验）后按拓扑序自动导入前置与目标能力的框架模块（幂等）。
 - 配置驱动装配（推荐）：`application.yml` 声明 `app.capabilities.enabled`，`create_app` 装配时自动校验（未知能力/循环抛
@@ -1128,7 +1305,7 @@ app:
 > 框架内置模块能力（config / db / cache / mq / storage / registry / ai）的框架代码随核心安装即可用
 > （内存/本地实现开箱即用，外部实现需对应 extras + 配置），在 `enabled` 中声明仅用于显式装配校验与依赖展开。
 
-### 17.4 业务扩展自定义能力
+### 18.4 业务扩展自定义能力
 
 业务层（使用框架的项目开发者）按同一机制登记业务能力并声明依赖（以此类推）：
 
@@ -1144,7 +1321,181 @@ CapabilityRegistry.register(Capability(
 CapabilityRegistry.enable("order")
 ```
 
-## 18. 维护指南
+## 19. 统一扩展注册器（extension）
+
+### 19.1 定位与边界
+
+- 文件：`src/web_infra/extension/`（`ExtensionPoint` / `ExtensionRegistry` / `ExtensionError` / `ExtensionResolution` / `ExtensionValidation`）
+- **定位（2026-08-18）**：为「各种数据源 / 其他插件」提供统一扩展入口。与第 4~16 章领域注册表（`DatabaseRegistry` 等）的边界是
+  **「上层编排层」**：领域注册表按名管资源工厂（装配期实例化，如 `app.db.type=mysql`）；扩展注册器管插件协议对象
+  （`build/startup/shutdown` 生命周期 + 依赖顺序）。两者互补不冲突，插件可自行选择：
+  - 纯资源替换（如新增 PostgreSQL 数据源）→ 走领域注册表（§4.2，已支持混合多源并存）；
+  - 有生命周期/横切性质的插件（第三方 SDK 初始化与释放、启动订阅、定时资源）→ 走扩展注册器。
+- **冲突避免规则**（与框架生态设计一致，不引入平行体系）：
+  - 同名默认拒绝（`overwrite=True` 才覆盖），避免误覆盖内置/已注册条目；
+  - 命名带命名空间（如 `datasource.postgres`、`sdk.loki`），不与内置短名冲突；
+  - 契约只进不退：`build/startup/shutdown` 均为可选钩子，新能力只增不改；
+  - 延迟启用：插件经 `app.extensions.enabled` 配置驱动启用，未启用不实例化。
+
+### 19.2 扩展点契约（ExtensionPoint）
+
+| 字段 | 类型 | 说明 |
+| ---- | ---- | ---- |
+| `name` | str | 扩展点名（注册表键，与 `app.extensions.enabled` 匹配） |
+| `description` | str | 扩展点说明 |
+| `requires` | tuple[str, ...] | 前置扩展点名（按拓扑序先启用；未知/循环装配期快速失败） |
+| `build` | Callable \| None | 装配期构建器，签名 `(options, ctx) -> 实例`；`options` 为 `app.extensions.<name>` 配置段，`ctx` 含 `{"settings", "components"}` |
+| `startup` | Callable \| None | 启动钩子，入参 build 产物（同步/异步皆可） |
+| `shutdown` | Callable \| None | 停机钩子，入参 build 产物（同步/异步皆可） |
+
+### 19.3 注册（同名默认拒绝）
+
+- `ExtensionRegistry.register(extension, overwrite=False)`：同名默认拒绝（抛 `ExtensionError`），显式 `overwrite=True` 才覆盖。
+- `get(name)`（未注册返回 None）/ `names()` / `unregister(name)`（静默）。
+- 校验：扩展点名不能为空、不能依赖自身。
+
+### 19.4 依赖解析（resolve）与装配校验（validate）
+
+- `ExtensionRegistry.resolve(name)`：按依赖包含规则展开传递前置，返回 `ExtensionResolution`（拓扑序扩展点链 chain，前置在前）；
+  未注册 / 依赖循环抛 `ExtensionError`。
+- `ExtensionRegistry.validate(enabled)`：返回 `ExtensionValidation`（ok / unknown / circular / closure / chain）。
+  **缺前置不视为失败**——按包含关系自动补足。
+
+```python
+from web_infra import ExtensionRegistry
+
+resolution = ExtensionRegistry.resolve("child")   # requires=("parent",)
+assert [e.name for e in resolution.chain] == ["parent", "child"]
+
+validation = ExtensionRegistry.validate(["child"])
+assert validation.ok and validation.closure == frozenset({"parent", "child"})
+```
+
+### 19.5 配置驱动启用（app.extensions.enabled）
+
+`create_app` 装配时校验（未知扩展点/依赖循环抛 `ConfigError`）并按拓扑序构建实例，实例挂 `app.state.extensions`：
+
+```yaml
+app:
+  extensions:
+    enabled: [my_plugin]      # 声明即启用（默认空 []，业务按需声明）
+    my_plugin:                # 扩展点配置段，透传给 build 的 options
+      endpoint: https://example.com
+```
+
+### 19.6 生命周期编排（startup 拓扑序 / 停机逆序）
+
+- 装配顺序：`logging → capabilities → components → extensions → web → tenant → health`。
+  `build` 在组件装配之后执行——插件可复用已装配组件（`ctx["components"]`，如 Redis 客户端）。
+- 启动：`startup` 按拓扑序执行（前置先启动）；停机：`shutdown` 按逆拓扑序执行（后启先停），
+  且**先于框架组件 close**（插件可能依赖框架组件，先用完再关底层）。
+- 钩子同步/异步皆可（返回 awaitable 自动 await）。
+
+### 19.7 接入示例（业务插件）
+
+```python
+# my_plugin.py（create_app 前导入即注册；或项目入口显式 import）
+from web_infra import ExtensionPoint, ExtensionRegistry
+
+def build_client(options, ctx):
+    # options: app.extensions.my_plugin 配置段；ctx: {"settings", "components"}
+    return SdkClient(endpoint=options.get("endpoint"))
+
+async def close_client(client):
+    await client.close()
+
+ExtensionRegistry.register(ExtensionPoint(
+    name="my_plugin",
+    description="第三方 SDK 插件（启动初始化/停机释放）",
+    build=build_client,
+    startup=lambda client: client.connect(),   # 同步/异步皆可
+    shutdown=close_client,
+))
+```
+
+```yaml
+# application.yml
+app:
+  extensions:
+    enabled: [my_plugin]
+    my_plugin:
+      endpoint: https://example.com
+```
+
+装配后业务通过 `app.state.extensions["my_plugin"]` 访问插件实例。
+
+> **完整可运行示例**：数据源插件（实现 `DatabaseFactoryInterface` + `ExtensionPoint` 生命周期钩子，含两种接入路径）
+> 见 [examples/demo_datasource_extension.py](../examples/demo_datasource_extension.py)，配套测试
+> [tests/test_example_demo_datasource.py](../tests/test_example_demo_datasource.py)。
+
+## 20. 搜索引擎模块（search）
+
+> 搜索引擎能力（2026-08-18 落地，搜索引擎接入计划 v0.2.0）：全文检索 SPI 三件套 + ES 生产实现
+> （elasticsearch-dsl ORM），向量检索复用 `VectorStoreInterface` 接入 dense_vector + kNN。
+> 与缓存/对象存储同属**顶层导出能力**（默认实现无外部依赖），es extra 仅 ES 生产实现需要。
+
+### 20.1 SearchEngineInterface —— 全文搜索引擎接口
+
+- 文件：`src/web_infra/search/search_engine_interface.py`
+- 定位：全文搜索引擎统一抽象（索引生命周期 / 写入 / 删除 / 关键词检索），业务代码只依赖本接口，屏蔽 ES / 内存 / 自研差异。
+- 类型：`Protocol`（`@runtime_checkable`），全部方法 **async**。
+- **tenant_id 可选**（2026-08-18 评审调整，租户非系统必备）：显式传入时按租户隔离命名空间（多租户规范 §2：禁止跨租户命中）；
+  缺省从请求上下文（`RequestContext`）读取；再无则回落 `no-tenant` 占位（`TenantGuard.current_tenant`）——单租户系统无需传租户，
+  所有数据收敛同一命名空间，隔离退化为全局共享。
+
+| 方法 | 说明 |
+| ---- | ---- |
+| `async create_index(tenant_id, index_name, *, mappings=None, settings=None)` | 创建索引（幂等：已存在静默）；`mappings` 支持业务自定义分析器/分词器（如 IK 中文分词），`settings` 覆盖分片/副本 |
+| `async delete_index(tenant_id, index_name)` | 删除索引（幂等：不存在静默） |
+| `async index_document(tenant_id, index_name, doc_id, document, *, refresh=False)` | 写入/覆盖单条文档（doc_id 幂等，全量替换） |
+| `async bulk_index(tenant_id, index_name, documents, *, refresh=False)` | 批量写入（元素必须含 `id` 键作为文档标识，缺 id 跳过并告警，不中断整批） |
+| `async delete_document(tenant_id, index_name, doc_id, *, refresh=False)` | 按文档 ID 删除（幂等：不存在静默） |
+| `async search(tenant_id, query: SearchQuery) -> list[SearchHit]` | 关键词检索，按相关性降序返回命中（得分/原文/可选高亮） |
+
+检索参数 `SearchQuery`（`search_query.py`）：`keyword`（必填）、`index_name`（默认 `default`）、
+`offset/size`（分页，对应 ES from/size）、`highlight`（高亮开关）。命中结果 `SearchHit`（`search_hit.py`）：
+`id / score / source（原文）/ highlight（字段 → 片段列表）`。
+
+### 20.2 默认实现与生产实现
+
+| 实现 | 文件 | 说明 |
+| ---- | ---- | ---- |
+| `InMemorySearchEngine` | `in_memory_search_engine.py` | **默认实现**：内存倒排 + 简单分词（中文单字/英文单词）+ 简化 BM25 打分 + 高亮（`<em>` 包裹）；按（租户+索引）命名空间隔离，容量上限按命名空间淘汰最旧（防内存无限增长）；单实例/测试场景，多实例需替换 ES 实现 |
+| `ElasticsearchSearchEngine` | `elasticsearch_search_engine.py` | **生产实现**：基于官方 `elasticsearch-dsl`（异步 AsyncSearch/AsyncIndex，检索 DSL 构建），真实索引名 `{index_prefix}_{tenant_id}_{index_name}`；依赖 `es` extra（`elasticsearch-dsl>=8.0`，自动携带 elasticsearch-py），**延迟导入**——未安装 es extra 时导入模块不报错，构造实例才加载并提示安装 |
+
+- 注册装配：`SearchEngineRegistry`（`search_engine_registry.py`）按 `app.search.type` 实例化，
+  内置 `memory` / `elasticsearch` 条目；业务自研实现 `register(name, factory)` 后按 type 接入，
+  未注册的 type 装配期快速失败（ConfigError），与 `CacheBackendRegistry` / `ObjectStorageRegistry` 同构。
+- 租户隔离：真实索引名前缀隔离（如 `web_t1_products`）；`tenant_id` 可选（缺省读请求上下文/回落 `no-tenant`），
+  显式传入的 `tenant_id` / `index_name` 禁止含下划线（防拼接歧义）。
+
+### 20.3 向量检索接入（ElasticsearchVectorStore）
+
+- 文件：`src/web_infra/ai/retrieval/elasticsearch_vector_store.py`
+- 定位：`VectorStoreInterface` 的 ES 生产实现（搜索引擎接入计划 §3.3）——dense_vector 字段 + ES 8 原生 kNN 查询，
+  与 `InMemoryVectorStore` 同一组装方式（注入 `Retriever` / `EmbeddingProviderInterface` 即用，**不改动 retriever.py**）。
+- 索引名：`{index_prefix}_{tenant_id}_vector`；写入/检索前自动幂等建索引（`auto_create_index` 可关闭）；
+  `dims` 与嵌入模型对齐（默认 768）；`search` 走 `extra(knn=...)`（`num_candidates` 建议 ≥ 10*top_k）。
+- 能力说明：ES 不保证写入顺序，`ids_in_order` 按 `_id` 升序返回（邻居扩展定位用；业务可用时间序雪花 ID 编码保证顺序）。
+
+### 20.4 错误码与配置
+
+- 错误码（`search_error_code.py`，模块导入即登记 `ErrorCodeRegistry`，规范 §4）：
+
+| 错误码 | 语义 | HTTP | 可重试 |
+| ---- | ---- | ---- | ---- |
+| `E3-SRCH-000` | 搜索引擎调用失败（网络/集群不可用等） | 502 | 是 |
+| `E3-SRCH-001` | 索引操作失败 | 502 | 是 |
+| `E4-SRCH-001` | 搜索引擎未配置/未注册 | 422 | 否 |
+| `E4-SRCH-002` | 检索参数非法 | 422 | 否 |
+| `E4-SRCH-003` | 索引不存在 | 404 | 否 |
+
+- 配置（`application.default.yml` `app.search` 段 + `SearchConfig` 模型）：`enabled`（默认 false）、
+  `type`（`memory` / `elasticsearch` / `custom`）、`index_prefix`（默认 `web`）、`elasticsearch.hosts/username/password/verify_certs/connect_timeout/read_timeout`
+  （敏感项经 `APP_SEARCH_ELASTICSEARCH_*` 环境变量注入）。
+- 能力登记：`capability` 注册表内置 `search` 能力（无前置，`app.capabilities.enabled: ["search"]` 可声明启用，自动导入 `web_infra.search`）。
+
+## 21. 维护指南
 
 | 场景 | 操作位置 |
 | ---- | ---- |
@@ -1153,3 +1504,4 @@ CapabilityRegistry.enable("order")
 | 修改接口方法 | 同步修改全部实现类与本文档对应方法表 |
 | 涉及数据库存储实现 | 同步更新 `db/init/ddl/001-mq-init-ddl.sql` 及对应 DML |
 | 新增支付渠道 | 在 `src/web_infra/payment/provider/` 继承 `PaymentChannelTemplate`（§3.1 骨架）填充 `_do_*`/`_parse_callback`、声明 `capabilities` 并注册 `PaymentGatewayRegistry`；同步补充契约测试（§15.1/§15.4） |
+| 新增搜索引擎实现 | 实现 `SearchEngineInterface`（§20.1）或 `VectorStoreInterface`，注册 `SearchEngineRegistry`；同步补充单元测试与 §2 总览表 |
