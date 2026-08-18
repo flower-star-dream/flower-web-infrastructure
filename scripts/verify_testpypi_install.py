@@ -4,7 +4,9 @@
 @Date: 2026/08/18 10:30
 @Description: 模拟用户从 TestPyPI 安装包的真实行为并验证核心/支付能力：
               创建独立虚拟环境（默认 <项目根>/.venv-testpypi，存在则复用）
-              → 从 TestPyPI 安装（包本体走 TestPyPI，依赖走官方 PyPI）
+              → 从 TestPyPI 安装（包本体走 TestPyPI，依赖走官方 PyPI，
+                两步分开：TestPyPI 上存在抢注同名包，合并索引会装到损坏依赖，
+                详见 install_package）
               → 在目标环境中执行验证代码：
                 web_infra 版本 / create_app 可创建应用（默认加载随包 application.default.yml）/
                 支付模块（注册表 + 内存网关 prepay 冒烟 + 微信渠道 provider 可导入）。
@@ -20,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -106,19 +109,48 @@ def ensure_venv(venv_dir: Path) -> None:
         print(f"[setup] 复用虚拟环境: {venv_dir}")
 
 
+def _load_core_dependencies() -> list[str]:
+    """从 pyproject.toml 解析 [project].dependencies 核心依赖列表（正则解析，兼容 Python 3.10，无需 tomllib）。
+
+    :return: 依赖规格列表（如 ["fastapi>=0.110", ...]）
+    :raises SystemExit: 无法解析 dependencies 段时
+    """
+    text = (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    match = re.search(r"^dependencies = \[(.*?)^\]", text, re.MULTILINE | re.DOTALL)
+    if not match:
+        raise SystemExit("[install] 无法解析 pyproject.toml 的 [project].dependencies")
+    dependencies: list[str] = []
+    for line in match.group(1).splitlines():
+        line = line.strip().rstrip(",")
+        if line.startswith('"') and line.endswith('"'):
+            dependencies.append(line[1:-1])
+    return dependencies
+
+
 def install_package(python: Path, source: str) -> None:
-    """在验证环境中安装目标包（依赖随源解析）。
+    """在验证环境中安装目标包。
+
+    TestPyPI 依赖解析的坑（实测踩中）：TestPyPI 上存在抢注的同名依赖包
+    （如损坏的 FASTAPI-1.0.tar.gz），用 --index-url testpypi + --extra-index-url pypi
+    合并索引时，pip 会选中 TestPyPI 上的损坏候选导致安装失败。因此分两步：
+    1) 核心依赖（pyproject [project].dependencies）先走官方 PyPI；
+    2) 包本体再 --no-deps 从 TestPyPI 拉取（依赖已在环境中，无需二次解析）。
 
     :param python: 验证环境解释器
-    :param source: testpypi（包本体走 TestPyPI，依赖走官方 PyPI）/ local（本地 dist/，--no-index）
+    :param source: testpypi（依赖官方 PyPI + 本体 TestPyPI）/ local（本地 dist/）
     """
     if source == "testpypi":
-        args = [
-            str(python), "-m", "pip", "install",
-            "--index-url", TESTPYPI_INDEX,
-            "--extra-index-url", PYPI_INDEX,
-            PACKAGE_NAME,
-        ]
+        dependencies = _load_core_dependencies()
+        print(f"[install] 1/2 官方 PyPI 安装核心依赖（{len(dependencies)} 项）...")
+        subprocess.run(
+            [str(python), "-m", "pip", "install", "--index-url", PYPI_INDEX, *dependencies],
+            check=True,
+        )
+        print("[install] 2/2 TestPyPI 安装包本体（--no-deps，避免索引串扰）...")
+        subprocess.run(
+            [str(python), "-m", "pip", "install", "--index-url", TESTPYPI_INDEX, "--no-deps", PACKAGE_NAME],
+            check=True,
+        )
     else:
         dist_dir = PROJECT_ROOT / "dist"
         if not any(dist_dir.glob("*.whl")) and not any(dist_dir.glob("*.tar.gz")):
@@ -129,8 +161,8 @@ def install_package(python: Path, source: str) -> None:
             "--index-url", PYPI_INDEX,           # 依赖照常从官方 PyPI 解析
             PACKAGE_NAME,
         ]
-    print(f"[install] 安装来源: {source}（{'TestPyPI + 官方 PyPI' if source == 'testpypi' else '本地 dist/'}）")
-    subprocess.run(args, check=True)
+        subprocess.run(args, check=True)
+    print(f"[install] 安装来源: {source}")
 
 
 def run_verify(python: Path) -> None:
