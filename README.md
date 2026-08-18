@@ -40,7 +40,8 @@ flower web 通用框架是一套**配置驱动**的后端基础设施库，面�
 - 缓存、数据库、消息队列（含 Outbox 可靠投递）、对象存储、服务注册发现；
 - 定时任务、异步任务、韧性设计（重试 / 熔断 / 限流 / 分布式锁）；
 - AI 模型网关（模型自动注册、场景路由、主备降级、配额计费）与 RAG 检索能力；
-- 多租户（上下文校验、缓存隔离、SQL 自动注入租户条件、多数据源动态路由）。
+- 多租户（上下文校验、缓存隔离、SQL 自动注入租户条件、多数据源动态路由）；
+- 通用状态机（合法流转表 + 事件分发）、全文搜索引擎（内存 / Elasticsearch）、并发容量评估、统一扩展注册器（插件协议 + 生命周期编排）。
 
 业务项目通过 `create_app` 自动装配组件，按需通过 YAML 配置启用 / 关闭中间件与组件，**无需在业务代码中重复封装**。各能力遵循「抽象接口 + 默认实现 + 真实实现」模式，业务只依赖抽象接口，通过配置切换实现。框架预留的全部 SPI 扩展点清单与方法契约见 [SPI 扩展点文档](./docs/SPI-Extensions.md)。
 
@@ -62,7 +63,7 @@ flower web 通用框架是一套**配置驱动**的后端基础设施库，面�
 | 对象存储        | `ObjectStorage` 抽象 + 本地 / MinIO 实现，分片上传/断点续传                                                                                                                               |
 | 服务注册发现    | `ServiceRegistry` 抽象 + 内存 / Nacos 实现，负载均衡与 Feign 调用                                                                                                                         |
 | 韧性设计        | 重试（指数退避）、熔断、令牌桶限流、Redis 分布式锁                                                                                                                                          |
-| 认证与安全      | JWT 签发校验/登出、密码加密、图形验证码、登录防爆破锁定（**认证/鉴权能力依赖用户系统（业务实现），默认关闭**，见 [6 配置说明](#6-配置说明)） |
+| 认证与安全      | JWT 签发校验/登出、密码加密、图形验证码、登录防爆破锁定、三方社交登录（微信等，SPI）（**认证/鉴权能力依赖用户系统（业务实现），默认关闭**，见 [6 配置说明](#6-配置说明)） |
 | 统一鉴权中间件  | 统一入口 Bearer 校验 + 白名单 + 上下文注入，RBAC 声明式权限守卫（默认关闭，需显式启用） |
 | API 幂等键      | 写接口幂等键占用 + 结果缓存（内存/Redis），重复请求返回首次结果                                                                                                                             |
 | OAuth2          | 客户端注册 SPI + 令牌签发/校验/撤销（client_credentials 最小实现）                                                                                                                          |
@@ -80,6 +81,10 @@ flower web 通用框架是一套**配置驱动**的后端基础设施库，面�
 | 健康检查/指标   | `/health`（组件连通性探测）+ `/metrics`（Prometheus 文本 + 浏览器 HTML 可视化；连接池/运行时/线程池/缓存/存储/消息队列/注册中心组件指标，按组件启用配置动态采集与展示，自定义分组 SPI） |
 | 支付能力        | 渠道 SPI + 骨架兜底（下单幂等/关单确认/回调校验/流水落库）+ 微信渠道 + 超时关单 + 对账/冲正 + 风控限额 + 审计/权限点；**可选能力**：不随顶层导出，依赖 鉴权→认证→用户系统（业务实现），按需主动引入（见 [7.12 支付](#712-支付) / [docs/使用说明.md 4.2](./docs/使用说明.md#42-能力依赖与装配)） |
 | 能力注册表      | `CapabilityRegistry`：能力契约（SPI）+ 依赖包含规则 + 装配校验；依赖链 用户系统→认证→鉴权→支付，启用按包含关系自动带上前置（`app.capabilities.enabled` 声明，见 [docs/使用说明.md 4.2](./docs/使用说明.md#42-能力依赖与装配)） |
+| 统一扩展注册器  | `ExtensionRegistry`：插件协议对象（build/startup/shutdown/requires）+ 依赖拓扑序编排 + 声明即启用（`app.extensions.enabled`，启动拓扑序/停机逆序，先于框架组件关闭） |
+| 通用状态机      | `StateMachineRegistry`：状态/事件枚举基类 + 合法流转表 + 事件处理器 + 引擎 SPI（可替换第三方库），非法流转/空状态/空参数统一拦截（E4-STATE-*）；持久化由处理器自行完成 |
+| 搜索引擎        | `SearchEngineInterface` 全文检索 SPI：索引生命周期/写入/检索/高亮 + 内存 BM25 默认实现 + Elasticsearch 生产实现（IK 中文分词入口）+ 租户前缀索引隔离（`{prefix}_{tenant}_{index}`） |
+| 容量评估        | 静态估算（硬件 × 装配配置瓶颈模型 + Little's Law）+ 运行时采样（直读 Prometheus）+ 集群探测三源组合，`/capacity` 端点（JSON/HTML）+ CLI + Prometheus Gauge（`capacity_*`） |
 | 通用工具        | 雪花 ID、日期、文件锁、数学、Token 精确计数、PDF 渲染                                                                                                                                    |
 
 ## 3. 技术栈
@@ -218,6 +223,13 @@ app:
     type: memory             # memory / rocketmq
   registry:
     type: memory             # memory / nacos
+  extensions:
+    enabled: []              # 统一扩展注册器：声明即启用（如 [my_plugin]，业务经 ExtensionRegistry.register 注册）
+  search:
+    enabled: false           # 全文检索开关（type: memory / elasticsearch，生产建议 ES，需 es extra）
+    type: memory
+  capacity:
+    enabled: false           # 并发访问能力评估开关（注册 /capacity 端点 + 运行时采样任务）
 ```
 
 关键配置项：
@@ -236,8 +248,11 @@ app:
 | `app.storage.type`    | **local** / minio     | 对象存储切换                                     |
 | `app.mq.type`         | **memory** / rocketmq | 消息队列切换                                     |
 | `app.registry.type`   | **memory** / nacos    | 注册发现切换                                     |
+| `app.extensions.enabled` | **[]** / 扩展点名列表 | 统一扩展注册器声明即启用（业务经 `ExtensionRegistry.register` 注册，装配期按拓扑序构建，启动序/停机逆序） |
+| `app.search.enabled`  | **false** / true      | 搜索引擎开关（`type: memory` / `elasticsearch`，生产建议 ES + `es` extra） |
+| `app.capacity.enabled` | **false** / true     | 并发访问能力评估开关（注册 `/capacity` + 运行时采样任务） |
 
-已装配组件通过 `app.state.<name>` 访问（cache / db / mongo / storage / mq / registry / ai / ai_registrar）。
+已装配组件通过 `app.state.<name>` 访问（cache / db / mongo / storage / mq / registry / ai / ai_registrar / extensions / capacity）；搜索引擎不经 `create_app` 装配，需按需经 `SearchEngineRegistry.create("memory" / "elasticsearch", settings)` 创建（见 [7.14 搜索引擎](#714-搜索引擎)）。
 
 ## 7. 常用功能示例
 
@@ -715,6 +730,92 @@ await guard.check_prepay(user_id=1, channel="memory", amount=Decimal("99.50"),
 （`PaymentAuditStore`）、权限点（`PaymentPermission`）、契约测试（`payment/testing`）。
 
 **文档**：[订单兜底策略](./docs/订单兜底策略.md) / [SPI-Extensions §15](./docs/SPI-Extensions.md#15-支付模块payment)
+
+### 7.13 统一扩展注册器
+
+插件协议对象（`build` 装配期构建 / `startup` / `shutdown` 生命周期钩子，同步或异步均可），注册进 `ExtensionRegistry` 后 `app.extensions.enabled` 声明即启用，启动按拓扑序、停机逆序（先于框架组件关闭）：
+
+```python
+from web_infra import ExtensionPoint, ExtensionRegistry
+
+class MyPlugin:
+    def start(self) -> None: ...    # 预加载资源 / 建立连接
+    def stop(self) -> None: ...     # 释放资源
+
+ExtensionRegistry.register(ExtensionPoint(
+    name="my_plugin",
+    description="示例插件",
+    requires=(),                       # 前置扩展点名（依赖拓扑序自动编排）
+    build=lambda options, ctx: MyPlugin(),   # ctx 含 {"settings", "components"}
+    startup=lambda inst: inst.start(),
+    shutdown=lambda inst: inst.stop(),
+))
+```
+
+```yaml
+app:
+  extensions:
+    enabled: [my_plugin]   # 声明即启用；app.extensions.<name> 为插件配置段
+```
+
+### 7.14 搜索引擎
+
+全文检索 SPI（索引生命周期 / 写入 / 检索 / 高亮），默认内存实现（简化 BM25 + 中文单字分词），生产接入 Elasticsearch（需 `es` extra，IK 中文分词入口；`elasticsearch-dsl` 驱动）：
+
+```python
+from web_infra import SearchEngineRegistry, SearchQuery
+
+engine = SearchEngineRegistry.create("memory", settings)   # 或 "elasticsearch"
+await engine.create_index(None, "products",
+                          mappings={"properties": {"title": {"type": "text"}}})
+await engine.index_document(None, "products", "doc-1", {"title": "框架文档", "body": "..."})
+await engine.bulk_index(None, "products", [
+    {"id": "doc-2", "title": "快速开始", "body": "10 分钟跑通"},
+])
+
+hits = await engine.search(None, SearchQuery(
+    keyword="框架", index_name="products", highlight=True, size=10))
+for hit in hits:                      # SearchHit: id / score / source / highlight
+    print(hit.id, hit.score, hit.source)
+```
+
+索引真实命名 `{index_prefix}_{tenant_id}_{index_name}`（`app.search.index_prefix` 默认 `web`），多租户自动隔离；生产配置：
+
+```yaml
+app:
+  search:
+    enabled: true
+    type: elasticsearch
+    elasticsearch:
+      hosts: ["http://es-host:9200"]
+      username: ${APP_SEARCH_ELASTICSEARCH_USERNAME:}
+```
+
+### 7.15 容量评估
+
+静态估算（硬件 × 装配配置瓶颈模型 + Little's Law）+ 运行时采样（直读 Prometheus）+ 集群探测三源组合，`app.capacity.enabled: true` 后自动注册 `/capacity` 端点并启动采样任务：
+
+```yaml
+app:
+  capacity:
+    enabled: true
+    workload_type: io_intensive
+    assumed_avg_latency_ms: 200      # Little's Law 平均响应假设
+    safe_ratio: 0.7                  # 安全水位系数
+```
+
+```bash
+# 浏览器访问 /capacity → HTML 容量报告（理论 QPS / 安全水位 / 瓶颈组件 / 建议）
+# CLI（无需启动应用，静态估算 + 可选集群探测；退出码 0=完成 / 2=目标全部不可达）
+python -m web_infra.capabilities.capacity --json
+python -m web_infra.capabilities.capacity --remote
+```
+
+```python
+report = await app.state.capacity.assess()          # CapacityReport
+print(report.static.theoretical_max_qps, report.utilization_ratio)
+print(report.suggestions)                            # 瓶颈/限流受限/SLO 风险等建议
+```
 
 ## 8. 项目结构
 
