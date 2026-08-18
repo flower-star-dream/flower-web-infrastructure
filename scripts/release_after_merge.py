@@ -126,6 +126,20 @@ def detect_breaking_in_pr(messages: list[str]) -> bool:
     return False
 
 
+def should_detect_breaking(commit_type: CommitType) -> bool:
+    """判断是否需要对 dev→main PR 提交历史做 breaking 兜底检测。
+
+    兜底语义是「PR 标题漏标 `!` / BREAKING CHANGE」：仅对会递增版本的提交类型
+    （feat / fix 等）生效。docs / chore（NO_CHANGE）与 merge / revert（SKIP）不参与
+    版本递增，跳过检测，避免 docs PR 合入时被 dev 分支历史中的 breaking 提交误升级
+    发大版本（如 PR 标题 docs: 却发布 v2.0.0）。
+
+    :param commit_type: 由 PR 标题解析出的提交类型
+    :return: True 表示需要对提交历史做 breaking 兜底检测
+    """
+    return commit_type in (CommitType.FEAT, CommitType.PATCH)
+
+
 def parse_repo_remote(remote_url: str) -> tuple[str, str]:
     """从 git remote URL 解析 (owner, repo)。
 
@@ -361,8 +375,10 @@ def main() -> int:
         api = GitHubApi(token, owner, repo)
 
         # 版本语义兜底（BREAKING）：PR 标题漏标 `!` / BREAKING CHANGE 时，
-        # 从 dev→main 提交历史检测破坏性标记并升级为大版本（如三层重构应发 1.0.0 而非 0.2.0）
-        if commit_type is not CommitType.BREAKING:
+        # 从 dev→main 提交历史检测破坏性标记并升级为大版本（如三层重构应发 1.0.0 而非 0.2.0）。
+        # 仅对会递增版本的提交类型（feat / fix 等）检测；docs / chore（NO_CHANGE）与
+        # merge / revert（SKIP）跳过，避免 docs PR 合入被历史 breaking 提交误升级发版
+        if should_detect_breaking(commit_type):
             try:
                 pr_number = api.find_pull(base="main", head="dev")
                 if pr_number is not None and detect_breaking_in_pr(api.list_pull_commits(pr_number)):
