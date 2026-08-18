@@ -9,13 +9,13 @@
 """
 import pytest
 
-from web_infra.monitoring.pool_alert import PoolAlertConfig, PoolAlertEvaluator
+from web_infra.infra.monitoring.pool_alert import PoolAlertConfig, PoolAlertEvaluator
 
 
 @pytest.fixture
 def clock(monkeypatch):
     """可控单调时钟：驱动时间推进验证持续时长判定"""
-    import web_infra.monitoring.pool_alert as pa
+    import web_infra.infra.monitoring.pool_alert as pa
 
     now = [1000.0]
 

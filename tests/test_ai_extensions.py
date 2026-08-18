@@ -5,10 +5,10 @@ AI 扩展小项单元测试（SSE 错误分片 / E4-AI-006 / ChatRequest 超时�
 @Date: 2026/08/14 16:00
 @Description: 验证流内错误分片格式（AI 规范 §10）、E4-AI-006 注册（§13）与 TTFT/全量超时字段（§4.1）。
 """
-from web_infra.ai import ChatRequest
-from web_infra.error import AiErrorCode
-from web_infra.error.error_code_registry import ErrorCodeRegistry
-from web_infra.web import format_sse_error
+from web_infra.capabilities.ai import ChatRequest
+from web_infra.infra.error import AiErrorCode
+from web_infra.infra.error.error_code_registry import ErrorCodeRegistry
+from web_infra.infra.web import format_sse_error
 
 
 def test_format_sse_error_frame():

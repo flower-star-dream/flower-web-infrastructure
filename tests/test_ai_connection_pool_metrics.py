@@ -10,8 +10,8 @@ AI 连接池指标单元测试
 """
 import pytest
 
-from web_infra.ai import ConnectionPoolManager
-from web_infra.monitoring.ai_metrics import (
+from web_infra.capabilities.ai import ConnectionPoolManager
+from web_infra.infra.monitoring.ai_metrics import (
     AI_CONNECTION_POOL_ACTIVE,
     AI_CONNECTION_POOL_WAITING,
     record_ai_connection_pool_usage,

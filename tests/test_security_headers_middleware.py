@@ -17,8 +17,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.testclient import TestClient
 
 from web_infra import create_app
-from web_infra.config import ConfigError, DictConfigSource, Settings
-from web_infra.web import SecurityHeadersMiddleware, setup_cors
+from web_infra.infra.config import ConfigError, DictConfigSource, Settings
+from web_infra.infra.web import SecurityHeadersMiddleware, setup_cors
 
 
 def _build_app_with_headers() -> FastAPI:

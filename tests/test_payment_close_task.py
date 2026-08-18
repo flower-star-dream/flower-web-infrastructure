@@ -11,9 +11,9 @@ from decimal import Decimal
 
 import pytest
 
-from web_infra.payment import InMemoryPaymentOrderStore, PaymentLocalOrder
-from web_infra.payment.payment_close_task import close_expired_orders
-from web_infra.payment.payment_status import PaymentStatus
+from web_infra.capabilities.payment import InMemoryPaymentOrderStore, PaymentLocalOrder
+from web_infra.capabilities.payment.payment_close_task import close_expired_orders
+from web_infra.capabilities.payment.payment_status import PaymentStatus
 from tests.test_payment_channel_template import FakeChannel
 
 

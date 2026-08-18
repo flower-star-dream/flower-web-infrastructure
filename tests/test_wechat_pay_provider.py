@@ -14,15 +14,15 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from web_infra.error.biz_exception import BizException
-from web_infra.payment.payment_error_code import PaymentErrorCode
-from web_infra.payment.payment_scene import PaymentScene
-from web_infra.payment.payment_status import PaymentStatus
-from web_infra.payment.prepay_request import PaymentPrepayRequest
-from web_infra.payment.refund_request import PaymentRefundRequest
-from web_infra.payment.provider.wechat.wechat_pay_client import WeChatPayClient
-from web_infra.payment.payment_config import WechatPayConfig
-from web_infra.payment.provider.wechat.wechat_pay_provider import WeChatPayProvider
+from web_infra.infra.error.biz_exception import BizException
+from web_infra.capabilities.payment.payment_error_code import PaymentErrorCode
+from web_infra.capabilities.payment.payment_scene import PaymentScene
+from web_infra.capabilities.payment.payment_status import PaymentStatus
+from web_infra.capabilities.payment.prepay_request import PaymentPrepayRequest
+from web_infra.capabilities.payment.refund_request import PaymentRefundRequest
+from web_infra.capabilities.payment.provider.wechat.wechat_pay_client import WeChatPayClient
+from web_infra.capabilities.payment.payment_config import WechatPayConfig
+from web_infra.capabilities.payment.provider.wechat.wechat_pay_provider import WeChatPayProvider
 
 
 def _make_provider(handler, **config_overrides) -> WeChatPayProvider:

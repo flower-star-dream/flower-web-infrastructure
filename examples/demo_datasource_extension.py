@@ -21,7 +21,7 @@ from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator
 
 from web_infra import DatabaseRegistry, ExtensionPoint, ExtensionRegistry
-from web_infra.db.sqlite_session import SqliteSession
+from web_infra.capabilities.db.sqlite_session import SqliteSession
 
 #: 示例扩展点名（与 app.extensions.enabled 匹配）
 DEMO_DATASOURCE_EXTENSION = "demo_datasource"

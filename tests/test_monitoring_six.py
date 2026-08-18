@@ -18,12 +18,12 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-import web_infra.monitoring.runtime_metrics as runtime_metrics_module
-import web_infra.utils.token_counter as token_counter_module
-from web_infra.logging import JsonFormatter, configure_logging
-from web_infra.monitoring.cache_metrics import CacheMetrics
-from web_infra.monitoring.component_metrics_interface import ComponentMetricsCollector
-from web_infra.monitoring.runtime_metrics import ThreadPoolMetrics
+import web_infra.infra.monitoring.runtime_metrics as runtime_metrics_module
+import web_infra.infra.utils.token_counter as token_counter_module
+from web_infra.infra.logging import JsonFormatter, configure_logging
+from web_infra.infra.monitoring.cache_metrics import CacheMetrics
+from web_infra.infra.monitoring.component_metrics_interface import ComponentMetricsCollector
+from web_infra.infra.monitoring.runtime_metrics import ThreadPoolMetrics
 
 
 # ---------------------------------------------------------------------------

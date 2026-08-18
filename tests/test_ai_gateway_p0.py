@@ -14,7 +14,7 @@ import asyncio
 import httpx
 import pytest
 
-from web_infra.ai import (
+from web_infra.capabilities.ai import (
     ChatMessage,
     ChatRequest,
     ChatResponse,
@@ -30,9 +30,9 @@ from web_infra.ai import (
     RuleBasedContentGuard,
     Usage,
 )
-from web_infra.ai.model_gateway import ModelRouter, RouteEntry
-from web_infra.error import BizException
-from web_infra.error.ai_error_code import AiErrorCode
+from web_infra.capabilities.ai.model_gateway import ModelRouter, RouteEntry
+from web_infra.infra.error import BizException
+from web_infra.infra.error.ai_error_code import AiErrorCode
 
 API_BASE = "http://mock.test/v1"
 

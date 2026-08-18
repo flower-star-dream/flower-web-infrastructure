@@ -11,13 +11,13 @@ from decimal import Decimal
 
 import pytest
 
-from web_infra.payment import (
+from web_infra.capabilities.payment import (
     InMemoryPaymentFlowStore,
     PaymentFlowRecord,
     PaymentFlowStatus,
     reversal_flow,
 )
-from web_infra.payment.payment_flow_status import PaymentFlowEvent
+from web_infra.capabilities.payment.payment_flow_status import PaymentFlowEvent
 
 
 def _booked_flow(out_trade_no: str = "T1") -> PaymentFlowRecord:

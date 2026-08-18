@@ -10,7 +10,7 @@ import time
 
 import pytest
 
-from web_infra.resilience import DistributedLock
+from web_infra.infra.resilience import DistributedLock
 
 
 class _FakeRedis:

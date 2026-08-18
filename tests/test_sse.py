@@ -11,7 +11,7 @@ from typing import AsyncIterator
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from web_infra.web import format_sse, sse_response
+from web_infra.infra.web import format_sse, sse_response
 
 
 class _FakeRequest:

@@ -5,7 +5,7 @@
 @Date: 2026/08/14 10:00
 @Description: 验证 Result / PageResult 结构（规范 §4.7 / §12.3）。
 """
-from web_infra.result import Result, PageResult
+from web_infra.infra.result import Result, PageResult
 
 
 def test_result_success():

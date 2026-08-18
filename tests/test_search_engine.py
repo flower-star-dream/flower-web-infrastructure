@@ -12,9 +12,9 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from web_infra.context import RequestContext
-from web_infra.error import ErrorCodeRegistry
-from web_infra.search import (
+from web_infra.infra.context import RequestContext
+from web_infra.infra.error import ErrorCodeRegistry
+from web_infra.capabilities.search import (
     SearchConfig,
     SearchEngineRegistry,
     SearchErrorCode,
@@ -22,7 +22,7 @@ from web_infra.search import (
     SearchQuery,
     InMemorySearchEngine,
 )
-from web_infra.search.in_memory_search_engine import tokenize
+from web_infra.capabilities.search.in_memory_search_engine import tokenize
 
 
 @pytest.fixture

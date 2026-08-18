@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import sys
 
-import web_infra.constants as constants
-from web_infra.constants import (
+import web_infra.infra.constants as constants
+from web_infra.infra.constants import (
     AUTH_HEADER_TRACE_ID,
     AUTH_SCOPE_ADMIN,
     AUTH_SCOPE_READ,
@@ -38,8 +38,8 @@ def test_page_size_converged_to_single_authoritative_value():
     """分页默认值收敛：__init__.py 重导出与 ParamConstant 权威值一致且等于实际生效值 20"""
     assert ParamConstant.PARAM_COMMON_DEFAULT_PAGE_SIZE == 20
     assert constants.PARAM_COMMON_DEFAULT_PAGE_SIZE == ParamConstant.PARAM_COMMON_DEFAULT_PAGE_SIZE
-    # PageQuery 生效默认值（db/page_query.py 从 web_infra.constants 导入）
-    from web_infra.db.page_query import PageQuery
+    # PageQuery 生效默认值（db/page_query.py 从 web_infra.infra.constants 导入）
+    from web_infra.capabilities.db.page_query import PageQuery
 
     query = PageQuery()
     assert query.page_no == PARAM_COMMON_DEFAULT_PAGE_NO == 1
@@ -93,7 +93,7 @@ def test_infra_true_values_converged():
 
 def test_auth_token_access_ttl_minutes_removed():
     """语义冲突的 AUTH_TOKEN_ACCESS_TTL_MINUTES=15 已移除，统一为 AUTH_TOKEN_ACCESS_EXPIRE_MINUTES=120"""
-    assert not hasattr(sys.modules["web_infra.constants"], "AUTH_TOKEN_ACCESS_TTL_MINUTES")
+    assert not hasattr(sys.modules["web_infra.infra.constants"], "AUTH_TOKEN_ACCESS_TTL_MINUTES")
     assert not hasattr(AuthConstant, "AUTH_TOKEN_ACCESS_TTL_MINUTES")
     assert AUTH_TOKEN_ACCESS_EXPIRE_MINUTES == 120
 

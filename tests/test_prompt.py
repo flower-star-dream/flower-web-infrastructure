@@ -7,8 +7,8 @@
 """
 import pytest
 
-from web_infra.ai import PromptTemplate, PromptTemplateFiller, PromptTemplateStoreInterface
-from web_infra.ai.prompt import InMemoryPromptTemplateStore
+from web_infra.capabilities.ai import PromptTemplate, PromptTemplateFiller, PromptTemplateStoreInterface
+from web_infra.capabilities.ai.prompt import InMemoryPromptTemplateStore
 
 
 @pytest.mark.asyncio

@@ -11,7 +11,7 @@ import hashlib
 
 import pytest
 
-from web_infra.storage.upload import (
+from web_infra.capabilities.storage.upload import (
     FileTypeValidator,
     InMemoryUploadStore,
     LocalPartStorage,

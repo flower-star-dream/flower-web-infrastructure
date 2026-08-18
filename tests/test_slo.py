@@ -8,7 +8,7 @@ SLO 与错误预算单元测试
 """
 import pytest
 
-from web_infra.monitoring.slo import (
+from web_infra.infra.monitoring.slo import (
     DEFAULT_WINDOW_SECONDS,
     ErrorBudgetTracker,
     SloConfig,

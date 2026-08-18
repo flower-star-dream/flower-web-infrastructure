@@ -12,8 +12,8 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 
-from web_infra.cache import CacheBackendRegistry
-from web_infra.db.redis_config import RedisConfig
+from web_infra.capabilities.cache import CacheBackendRegistry
+from web_infra.capabilities.db.redis_config import RedisConfig
 
 
 def test_registry_concurrent_register_and_iterate():

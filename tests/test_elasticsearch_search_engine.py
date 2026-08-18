@@ -16,9 +16,9 @@ from typing import Any
 import pytest
 from elasticsearch import BadRequestError, NotFoundError
 
-from web_infra.error import BizException
-from web_infra.search import ElasticsearchSearchEngine, SearchErrorCode, SearchQuery
-from web_infra.search.search_hit import SearchHit
+from web_infra.infra.error import BizException
+from web_infra.capabilities.search import ElasticsearchSearchEngine, SearchErrorCode, SearchQuery
+from web_infra.capabilities.search.search_hit import SearchHit
 
 # 租户/索引隔离命名断言
 INDEX_NAME = "web_t1_products"
@@ -141,7 +141,7 @@ async def test_tenant_index_prefix():
 @pytest.mark.asyncio
 async def test_tenant_optional_reads_context():
     """tenant_id 可选：缺省从请求上下文读取 → 索引名 web_t1_products"""
-    from web_infra.context import RequestContext
+    from web_infra.infra.context import RequestContext
 
     client = _FakeAsyncClient()
     engine = _make_engine(client)

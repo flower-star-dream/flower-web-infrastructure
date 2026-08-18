@@ -7,7 +7,7 @@
 """
 import pytest
 
-from web_infra.ai import ContextWindowErrorParser, ContextTruncator, ContextWindowRetryPolicy
+from web_infra.capabilities.ai import ContextWindowErrorParser, ContextTruncator, ContextWindowRetryPolicy
 
 
 # ---------------------------------------------------------------------------

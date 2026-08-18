@@ -353,7 +353,7 @@ async with db.session() as session:
 **分页（规范 §12.3 / S10-1：禁止深分页，推荐游标分页）**
 
 ```python
-from web_infra.db.page_query import PageQuery, CursorPageQuery
+from web_infra.capabilities.db.page_query import PageQuery, CursorPageQuery
 
 # 普通分页：page_no × page_size 超过 10000 时框架直接抛 ValueError 拒绝（S10-1 禁止 LIMIT offset 深分页）
 query = PageQuery(page_no=1, page_size=20)
@@ -366,7 +366,7 @@ cursor_query = CursorPageQuery(cursor="20260815000001", page_size=20)
 **读写分离（规范 S10-2：读流量路由从库，写走主库）**
 
 ```python
-from web_infra.db import MySQLConfig, MySQLDatabase
+from web_infra.capabilities.db import MySQLConfig, MySQLDatabase
 
 config = MySQLConfig(
     url="mysql+aiomysql://user:pwd@主库:3306/app",
@@ -659,16 +659,16 @@ StateMachineRegistry.register_engine_factory(OrderStatus, OrderEvent, OrderEO, T
 
 ### 7.12 支付
 
-支付模块（`web_infra/payment`）按《Web 系统通用架构规范 · 支付扩展 v1.0》实现渠道接入与资金兜底。
+支付模块（`web_infra/capabilities/payment`）按《Web 系统通用架构规范 · 支付扩展 v1.0》实现渠道接入与资金兜底。
 
 > **可选能力**：支付不随 `web_infra` 顶层导出（`import web_infra` 不加载支付模块、不注册支付错误码），需显式
-> `from web_infra.payment import ...` 或经 `app.capabilities.enabled: [pay]` 主动引入；依赖链
+> `from web_infra.capabilities.payment import ...` 或经 `app.capabilities.enabled: [pay]` 主动引入；依赖链
 > 支付 → 鉴权 → 认证 → 用户系统（业务实现），启用按包含关系自动带上前置，见 [docs/使用说明.md 4.2](./docs/使用说明.md#42-能力依赖与装配)。
 
 **装配渠道（内存演示，注入骨架存储即获全套兜底）**：
 
 ```python
-from web_infra.payment import (
+from web_infra.capabilities.payment import (
     InMemoryPaymentFlowStore, InMemoryPaymentOrderStore,
     InMemoryPaymentGateway, PaymentGatewayRegistry,
 )
@@ -683,7 +683,7 @@ PaymentGatewayRegistry.register("memory", gateway)  # 生产替换为 WeChatPayP
 **下单 / 回调校验（骨架自动完成：下单幂等 / 金额 / attach / 状态机 / 流水落库）**：
 
 ```python
-from web_infra.payment import PaymentPrepayRequest, PaymentScene
+from web_infra.capabilities.payment import PaymentPrepayRequest, PaymentScene
 from decimal import Decimal
 
 resp = await gateway.prepay(PaymentPrepayRequest(
@@ -696,7 +696,7 @@ resp = await gateway.prepay(PaymentPrepayRequest(
 **对账 / 冲正 / 风控 / 审计（框架 SPI + 内存默认实现）**：
 
 ```python
-from web_infra.payment import (
+from web_infra.capabilities.payment import (
     ReconciliationService, InMemoryReconciliationAuditStore,
     PaymentRiskGuard, InMemoryLimitCounterStore, LimitRule,
 )

@@ -7,9 +7,9 @@
 """
 import pytest
 
-from web_infra.cache import TenantKeyBuilder
-from web_infra.context import RequestContext
-from web_infra.error import ParamException
+from web_infra.capabilities.cache import TenantKeyBuilder
+from web_infra.infra.context import RequestContext
+from web_infra.infra.error import ParamException
 
 
 def test_build_injects_tenant_from_context():

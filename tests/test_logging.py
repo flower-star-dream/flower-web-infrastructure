@@ -10,14 +10,14 @@ import logging
 
 import pytest
 
-from web_infra.logging import (
+from web_infra.infra.logging import (
     JsonFormatter,
     LogSinkRegistry,
     SensitiveDataFilter,
     configure_logging,
     get_logger,
 )
-from web_infra.logging.masking import mask
+from web_infra.infra.logging.masking import mask
 
 
 def test_get_logger_prefix():

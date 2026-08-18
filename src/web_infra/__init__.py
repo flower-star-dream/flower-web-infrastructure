@@ -9,7 +9,7 @@ Web 系统通用后端基础设施
               依赖解耦（2026-08-15）：db 相关依赖 sqlalchemy/redis/mongo 的名字惰性导出，
               最小安装（未装 sqlalchemy/redis/mongo）`import web_infra` 不触发导入。
               支付为可选能力（2026-08-17）：不随顶层导出，需要支付能力的系统显式
-              `from web_infra.payment import ...` 主动引入（部分系统无需支付功能）。
+              `from web_infra.capabilities.payment import ...` 主动引入（部分系统无需支付功能）。
               能力依赖模型（2026-08-17）：CapabilityRegistry 声明能力契约与依赖包含规则
               （用户系统 → 鉴权 → 支付，以此类推），启用能力按包含关系自动带上前置。
               统一扩展注册器（2026-08-18）：ExtensionRegistry 登记插件协议对象
@@ -18,6 +18,13 @@ Web 系统通用后端基础设施
               搜索引擎（2026-08-18）：SearchEngineInterface 全文检索 SPI（索引生命周期/写入/检索，
               默认内存实现，ES 生产实现经 es extra 延迟导入）；向量检索经 ElasticsearchVectorStore
               接入 VectorStoreInterface（dense_vector + kNN）。
+              三层结构（2026-08-18，破坏性整改）：web_infra 按职责分三层组织——
+              core/（内核：应用编排 Application/create_app 与扩展点 Capability/Extension）、
+              infra/（技术底座：result/error/constants/context/logging/resilience/monitoring/web/config
+              本地配置，被所有能力共用）、capabilities/（能力层：ai/cache/db/mq/storage/registry/security/
+              payment/search/state_machine/task/schedule/http/loadbalance 及 Nacos 配置中心接入）；
+              本包顶层导出保持不变（`from web_infra import Result, create_app` 等不受影响），
+              但子包路径已迁移至三层（如 `web_infra.payment` → `web_infra.capabilities.payment`）。
 """
 # .env 提前加载（2026-08-17）：Settings.default_source() 仅在 create_app() 调用时才加载项目根 .env，
 # 而 SnowflakeUtil / LocalObjectStorage / TokenCounter 等模块在包导入期读取环境变量
@@ -25,7 +32,7 @@ Web 系统通用后端基础设施
 # 若等到 create_app 才加载会导致这些值恒为默认（如雪花 ID 的 worker_id 恒为 0 并告警）。
 # 此处包导入即加载项目根 .env（已存在的进程/容器环境变量优先，不覆盖），
 # 保证模块级环境变量读取在包导入时能拿到 .env 中的值。
-from web_infra.config.config_utils import load_env_file  # noqa: E402
+from web_infra.infra.config.config_utils import load_env_file  # noqa: E402
 
 load_env_file()
 
@@ -33,7 +40,7 @@ from importlib import import_module
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from web_infra.db import (
+    from web_infra.capabilities.db import (
         Base,
         DatabaseManager,
         MongoDBConfig,
@@ -45,8 +52,8 @@ if TYPE_CHECKING:
         TenantQueryFilter,
     )
 
-from web_infra.result import Result, PageResult, PageData
-from web_infra.error import (
+from web_infra.infra.result import Result, PageResult, PageData
+from web_infra.infra.error import (
     ErrorCode,
     ErrorCodeRegistry,
     CommonErrorCode,
@@ -62,10 +69,10 @@ from web_infra.error import (
     AuthException,
     register_global_exception_handlers,
 )
-from web_infra.context import RequestContext, RequestContextSnapshot, generate_trace_id
-from web_infra.logging import LogSinkInterface, LogSinkRegistry, configure_logging, get_logger
-from web_infra.logging.masking import mask
-from web_infra.resilience import (
+from web_infra.infra.context import RequestContext, RequestContextSnapshot, generate_trace_id
+from web_infra.infra.logging import LogSinkInterface, LogSinkRegistry, configure_logging, get_logger
+from web_infra.infra.logging.masking import mask
+from web_infra.infra.resilience import (
     RetryConfig,
     retry,
     CircuitBreaker,
@@ -76,7 +83,7 @@ from web_infra.resilience import (
     TokenBucketRateLimiter,
     DistributedLock,
 )
-from web_infra.ai import (
+from web_infra.capabilities.ai import (
     ModelProviderInterface,
     ModelProviderRegistry,
     ChatRole,
@@ -130,7 +137,7 @@ from web_infra.ai import (
     ModelRouter,
     ModelGateway,
 )
-from web_infra.web import (
+from web_infra.infra.web import (
     RequestContextMiddleware,
     TraceIdMiddleware,
     BigIntJSONResponse,
@@ -149,7 +156,7 @@ from web_infra.web import (
     AuthMiddleware,
     RateLimitMiddleware,
 )
-from web_infra.search import (
+from web_infra.capabilities.search import (
     SearchEngineInterface,
     SearchQuery,
     SearchHit,
@@ -162,7 +169,7 @@ from web_infra.search import (
     SearchErrorCodeEnum,
     SearchEngineRegistry,
 )
-from web_infra.config import (
+from web_infra.infra.config import (
     ConfigSourceInterface,
     ConfigError,
     EnvConfigSource,
@@ -172,12 +179,14 @@ from web_infra.config import (
     CompositeConfigSource,
     Settings,
     BaseConfig,
+)
+from web_infra.capabilities.config import (
     ConfigClientInterface,
     NacosConfigClient,
     NacosConfigLoader,
     NacosProperties,
 )
-from web_infra.constants import (
+from web_infra.infra.constants import (
     AuthConstant,
     CacheKeyBuilder,
     InfraConstant,
@@ -185,23 +194,23 @@ from web_infra.constants import (
     SysConstant,
     BizConstant,
 )
-from web_infra.capability import (
+from web_infra.core.capability import (
     Capability,
     CapabilityError,
     CapabilityRegistry,
     CapabilityResolution,
     CapabilityValidation,
 )
-from web_infra.extension import (
+from web_infra.core.extension import (
     ExtensionPoint,
     ExtensionError,
     ExtensionRegistry,
     ExtensionResolution,
     ExtensionValidation,
 )
-from web_infra.cache import KeyBuilder, CacheBackendInterface, CacheConfig, MemoryCacheBackend, CacheBackendRegistry
-from web_infra.cache.tenant_key_builder import TenantKeyBuilder
-from web_infra.db import (
+from web_infra.capabilities.cache import KeyBuilder, CacheBackendInterface, CacheConfig, MemoryCacheBackend, CacheBackendRegistry
+from web_infra.capabilities.cache.tenant_key_builder import TenantKeyBuilder
+from web_infra.capabilities.db import (
     DatabaseConfig,
     PageQuery,
     SqliteSessionFactory,
@@ -220,7 +229,7 @@ from web_infra.db import (
     SessionScopeMixin,
     provide_db_session,
 )
-from web_infra.mq import (
+from web_infra.capabilities.mq import (
     MqConfig,
     RetryableError,
     NonRetryableError,
@@ -247,7 +256,7 @@ from web_infra.mq import (
     requeue_dlq_to_outbox,
     register_outbox_tasks,
 )
-from web_infra.storage import (
+from web_infra.capabilities.storage import (
     StorageConfig,
     ObjectStorageInterface,
     LocalObjectStorage,
@@ -263,8 +272,8 @@ from web_infra.storage import (
     MinioPartStorage,
     MultipartUploadService,
 )
-from web_infra.schedule import ScheduledTask, TaskScheduler
-from web_infra.registry import (
+from web_infra.capabilities.schedule import ScheduledTask, TaskScheduler
+from web_infra.capabilities.registry import (
     ServiceInstance,
     ServiceRegistryInterface,
     NacosDiscoveryClient,
@@ -272,9 +281,9 @@ from web_infra.registry import (
     InMemoryServiceRegistry,
     ServiceDiscoveryRegistry,
 )
-from web_infra.loadbalance import LoadBalancerInterface, RandomBalancer, RoundRobinBalancer, WeightedRoundRobinBalancer
-from web_infra.http import FeignClient, FeignClientConfig, build_feign_client, default_service_fallback
-from web_infra.security import (
+from web_infra.capabilities.loadbalance import LoadBalancerInterface, RandomBalancer, RoundRobinBalancer, WeightedRoundRobinBalancer
+from web_infra.capabilities.http import FeignClient, FeignClientConfig, build_feign_client, default_service_fallback
+from web_infra.capabilities.security import (
     JWTUtil,
     TokenVerifyStatus,
     PasswordEncoder,
@@ -308,8 +317,8 @@ from web_infra.security import (
     SocialLoginResult,
     SocialLoginService,
 )
-from web_infra.task import TaskStatus, TaskRecord, TaskRecordStoreInterface, InMemoryTaskRecordStore, TaskExecutor
-from web_infra.state_machine import (
+from web_infra.capabilities.task import TaskStatus, TaskRecord, TaskRecordStoreInterface, InMemoryTaskRecordStore, TaskExecutor
+from web_infra.capabilities.state_machine import (
     BaseState,
     BaseEvent,
     BaseStatus,
@@ -322,7 +331,7 @@ from web_infra.state_machine import (
     StateMachineRegistry,
     StateMachineErrorCode,
 )
-from web_infra.monitoring import (
+from web_infra.infra.monitoring import (
     PhaseTimer,
     init_ai_metrics,
     record_ai_call,
@@ -331,7 +340,7 @@ from web_infra.monitoring import (
     record_ai_tokens,
     record_ai_cost,
 )
-from web_infra.utils import (
+from web_infra.infra.utils import (
     DateUtil,
     TimezoneConfig,
     SnowflakeUtil,
@@ -343,7 +352,7 @@ from web_infra.utils import (
     count_tokens,
     PdfRenderer,
 )
-from web_infra.application import Application, create_app
+from web_infra.core.application import Application, create_app
 
 __version__ = "0.1.0"
 
@@ -451,7 +460,7 @@ __all__ = [
 ]
 
 # 惰性导出名集合（db 相关、依赖 sqlalchemy/redis/mongo；最小安装下 `import web_infra` 不触发，
-# 首次访问该名字时才从 web_infra.db 延迟导入，未安装对应依赖时抛 ImportError）
+# 首次访问该名字时才从 web_infra.capabilities.db 延迟导入，未安装对应依赖时抛 ImportError）
 _LAZY_DB_EXPORTS: frozenset[str] = frozenset({
     "Base",
     "MySQLConfig",
@@ -468,14 +477,14 @@ _LAZY_DB_EXPORTS: frozenset[str] = frozenset({
 
 
 def __getattr__(name: str) -> object:
-    """惰性导出 db 相关名字：首次访问时从 web_infra.db 导入并缓存到模块命名空间。
+    """惰性导出 db 相关名字：首次访问时从 web_infra.capabilities.db 导入并缓存到模块命名空间。
 
     :param name: 访问的属性名
-    :return: web_infra.db 中同名导出对象
+    :return: web_infra.capabilities.db 中同名导出对象
     :raises AttributeError: 未匹配的属性名
     """
     if name in _LAZY_DB_EXPORTS:
-        value = getattr(import_module("web_infra.db"), name)
+        value = getattr(import_module("web_infra.capabilities.db"), name)
         globals()[name] = value
         return value
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

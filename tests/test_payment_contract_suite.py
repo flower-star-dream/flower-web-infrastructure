@@ -11,7 +11,7 @@ from typing import Any, Mapping
 
 import pytest
 
-from web_infra.payment import (
+from web_infra.capabilities.payment import (
     PaymentCallback,
     PaymentChannelTemplate,
     PaymentOrder,
@@ -20,7 +20,7 @@ from web_infra.payment import (
     PaymentScene,
     PaymentStatus,
 )
-from web_infra.payment.testing import PaymentCallbackSimulator, PaymentChannelContract
+from web_infra.capabilities.payment.testing import PaymentCallbackSimulator, PaymentChannelContract
 
 
 class _ContractChannel(PaymentChannelTemplate):
@@ -48,7 +48,7 @@ class _ContractChannel(PaymentChannelTemplate):
         return PaymentCallback(event_type="TRANSACTION.SUCCESS", out_trade_no="x", amount=Decimal("0.01"))
 
     async def _do_refund(self, request: Any) -> Any:
-        from web_infra.payment import PaymentRefundResponse
+        from web_infra.capabilities.payment import PaymentRefundResponse
 
         return PaymentRefundResponse(out_refund_no=request.out_refund_no, refund_id="REF-1", refund_amount=request.refund_amount)
 

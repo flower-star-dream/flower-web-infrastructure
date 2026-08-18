@@ -16,16 +16,16 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from web_infra.constants.sys_constant import SysConstant
-from web_infra.context import RequestContext
-from web_infra.monitoring import metrics
-from web_infra.monitoring.metrics import (
+from web_infra.infra.constants.sys_constant import SysConstant
+from web_infra.infra.context import RequestContext
+from web_infra.infra.monitoring import metrics
+from web_infra.infra.monitoring.metrics import (
     MYSQL_POOL_ACQUIRE_SECONDS,
     MYSQL_POOL_WAITING_CONNECTIONS,
     SLOW_SQL_TOTAL,
 )
-from web_infra.monitoring.phase_timer import PhaseTimer
-from web_infra.monitoring.pool_metrics import (
+from web_infra.infra.monitoring.phase_timer import PhaseTimer
+from web_infra.infra.monitoring.pool_metrics import (
     MONGO_POOL_ACQUIRE_SECONDS,
     MONGO_POOL_WAITING_CONNECTIONS,
     REDIS_POOL_ACQUIRE_SECONDS,
@@ -35,9 +35,9 @@ from web_infra.monitoring.pool_metrics import (
     record_mysql_pool_metrics,
     record_redis_pool_acquire,
 )
-from web_infra.monitoring.slow_request_store import SlowRequestStore
-from web_infra.security import JWTUtil
-from web_infra.web import AuthMiddleware, LoggingMiddleware, TraceIdMiddleware
+from web_infra.infra.monitoring.slow_request_store import SlowRequestStore
+from web_infra.capabilities.security import JWTUtil
+from web_infra.infra.web import AuthMiddleware, LoggingMiddleware, TraceIdMiddleware
 
 _SECRET = "test-secret-for-monitoring-wiring-0123456789"
 
@@ -216,9 +216,9 @@ def test_record_slow_sql_updates_counter_and_cache():
 
 def test_metrics_html_slow_sql_help_mentions_severity(monkeypatch):
     """metrics_html 说明区补充慢 SQL 分级计数说明（空缓存文案）"""
-    from web_infra.monitoring.metrics_html import _render_slow_sql_detail
+    from web_infra.infra.monitoring.metrics_html import _render_slow_sql_detail
 
-    monkeypatch.setattr("web_infra.monitoring.metrics._SLOW_SQL_CACHE", [])
+    monkeypatch.setattr("web_infra.infra.monitoring.metrics._SLOW_SQL_CACHE", [])
     html = _render_slow_sql_detail()
     assert "slow_sql_total" in html
     assert "severity" in html

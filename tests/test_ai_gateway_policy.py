@@ -14,7 +14,7 @@ import asyncio
 
 import pytest
 
-from web_infra.ai import (
+from web_infra.capabilities.ai import (
     ChatMessage,
     ChatRequest,
     ChatResponse,
@@ -37,12 +37,12 @@ from web_infra.ai import (
     UsageRecord,
     UsageRecordStoreInterface,
 )
-from web_infra.ai.model_access_policy import ModelAccessPolicy
-from web_infra.ai.model_gateway import ModelRouter, RouteEntry
-from web_infra.context import RequestContext
-from web_infra.db.tenant_guard import NO_TENANT
-from web_infra.error import BizException, PermException
-from web_infra.error.ai_error_code import AiErrorCode
+from web_infra.capabilities.ai.model_access_policy import ModelAccessPolicy
+from web_infra.capabilities.ai.model_gateway import ModelRouter, RouteEntry
+from web_infra.infra.context import RequestContext
+from web_infra.capabilities.db.tenant_guard import NO_TENANT
+from web_infra.infra.error import BizException, PermException
+from web_infra.infra.error.ai_error_code import AiErrorCode
 
 
 # ---------------------------------------------------------------------------

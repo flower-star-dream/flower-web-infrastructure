@@ -21,15 +21,15 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from web_infra.application import create_app
-from web_infra.config import ConfigError
-from web_infra.db import (
+from web_infra.core.application import create_app
+from web_infra.infra.config import ConfigError
+from web_infra.capabilities.db import (
     MongoDatabaseFactoryInterface,
     MongoDatabaseRegistry,
     MongoSessionInterface,
 )
-from web_infra.db.beanie_mongo_session import BeanieMongoSession
-from web_infra.db.mongo_database import MongoDatabase
+from web_infra.capabilities.db.beanie_mongo_session import BeanieMongoSession
+from web_infra.capabilities.db.mongo_database import MongoDatabase
 
 
 @pytest.fixture

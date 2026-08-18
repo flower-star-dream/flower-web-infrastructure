@@ -250,7 +250,7 @@ from typing import Any, AsyncGenerator
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from web_infra.db import DatabaseRegistry
+from web_infra.capabilities.db import DatabaseRegistry
 
 
 class PgDatabase:
@@ -982,11 +982,11 @@ async with mongo.transaction() as session:
 ## 15. 支付模块（payment）
 
 > **可选能力（2026-08-17）**：支付不随 `web_infra` 顶层导出，`import web_infra` 不加载支付模块/不注册支付错误码；
-> 需要支付的系统显式 `from web_infra.payment import ...` 主动引入（如 `from web_infra.payment import PaymentGateway`）。
+> 需要支付的系统显式 `from web_infra.capabilities.payment import ...` 主动引入（如 `from web_infra.capabilities.payment import PaymentGateway`）。
 
 ### 15.1 PaymentGateway —— 支付网关统一抽象接口
 
-- 文件：`src/web_infra/payment/payment_gateway_interface.py`
+- 文件：`src/web_infra/capabilities/payment/payment_gateway_interface.py`
 - 定位：渠道统一抽象（下单/查单/关单/退款/查退款），业务代码只依赖本接口，金额统一 `Decimal`（元），渠道差异内部屏蔽。
 - 类型：`Protocol`（`@runtime_checkable`）
 
@@ -998,7 +998,7 @@ async with mongo.transaction() as session:
 | `async refund(request: PaymentRefundRequest) -> PaymentRefundResponse` | 申请退款（out_refund_no 幂等） |
 | `async query_refund(out_refund_no: str) -> PaymentRefundResponse \| None` | 查退款；不存在返回 None |
 
-- 默认实现：`InMemoryPaymentGateway`（单机/测试）；微信渠道：`WeChatPayProvider`（`web_infra.payment.provider.wechat`）。
+- 默认实现：`InMemoryPaymentGateway`（单机/测试）；微信渠道：`WeChatPayProvider`（`web_infra.capabilities.payment.provider.wechat`）。
 - 注册：`PaymentGatewayRegistry.register(name, gateway)`。
 - 微信平台证书：`platform_cert` 模式下可开启 `cert_auto_download`（配置 `app.payment.wechat.cert_auto_download: true`），
   应答验签遇未知证书序列号时自动调用 `GET /v3/certificates` 下载平台证书并缓存至 `platform_cert_dir`（默认关闭，首次可用
@@ -1016,13 +1016,13 @@ async with mongo.transaction() as session:
   关单前查单确认防已支付被关闭（§5.5）；回调金额/attach/状态机强校验（§4.3/§4.5）。
   注入 `flow_store`（支付流水）与 `order_store`（本地支付订单）后兜底全量生效；未注入降级为纯渠道调用（兼容 SPI 直用）。
   默认实现 `InMemoryPaymentGateway` 已骨架化（可注入存储，测试/单机即获全套兜底）；`WeChatPayProvider` 为微信骨架实现。
-- 契约测试与回调模拟器（2026-08-16 新增，规范 §3.3/§10.3）：`web_infra.payment.testing` 提供
+- 契约测试与回调模拟器（2026-08-16 新增，规范 §3.3/§10.3）：`web_infra.capabilities.payment.testing` 提供
   `PaymentChannelContract`（9 个资金场景契约用例，任意骨架实现 run_all() 校验）与 `PaymentCallbackSimulator`
   （支付/退款/金额不符/attach 不符回调报文构造，可注入签名钩子）。
 
 ### 15.2 PaymentCallbackVerifier —— 支付回调验签解密接口
 
-- 文件：`src/web_infra/payment/payment_callback_verifier_interface.py`
+- 文件：`src/web_infra/capabilities/payment/payment_callback_verifier_interface.py`
 - 定位：解析渠道回调 headers+body 为统一回调结构；验签/解密失败返回 None（回调入口回 401，渠道自动重试）。
 - 类型：`Protocol`（`@runtime_checkable`）
 
@@ -1035,7 +1035,7 @@ async with mongo.transaction() as session:
 
 ### 15.3 PaymentCallbackHandler —— 支付回调业务处理器接口
 
-- 文件：`src/web_infra/payment/payment_callback_handler_interface.py`
+- 文件：`src/web_infra/capabilities/payment/payment_callback_handler_interface.py`
 - 定位：业务实现处理支付成功/退款结果回调；回调幂等由业务保证。
 - 类型：`ABC`（业务必选，无默认实现）
 
@@ -1047,7 +1047,7 @@ async with mongo.transaction() as session:
 
 ### 15.4 对账机制（§6，2026-08-17 新增）
 
-- 文件：`src/web_infra/payment/reconciliation/`
+- 文件：`src/web_infra/capabilities/payment/reconciliation/`
 - 定位：对账是回调通道之外的第二道资金一致性防线（规范 §6）：渠道账单 vs 本地流水逐笔对齐。
 - 组件：
   - `BillRecord`：渠道账单统一交易明细（订单号 + 事件类型 + 金额 + 状态，对齐 §2.2）。
@@ -1059,25 +1059,25 @@ async with mongo.transaction() as session:
 
 ### 15.5 冲正（§7.5，2026-08-17 新增）
 
-- 文件：`src/web_infra/payment/payment_reversal.py`
+- 文件：`src/web_infra/capabilities/payment/payment_reversal.py`
 - 定位：对"不应发生或状态未知"的本地记账做反向调整；只适用支付后阶段，必须基于渠道权威状态。
 - `reversal_flow(flow_store, original_flow, ...)`：新增反向冲正流水（不可删原流水，原流水自动标记 REVERSED）+ 幂等（原流水号 + REVERSAL 唯一）+ 禁止冲正冲正流水 + 冲正事件钩子（下游业务补偿，失败不阻塞冲正流水）。
 
 ### 15.6 风控限额（§9，2026-08-17 新增）
 
-- 文件：`src/web_infra/payment/risk/`
+- 文件：`src/web_infra/capabilities/payment/risk/`
 - 定位：资金流出/流入受限额与频次约束（工程可配置约束）。
 - 组件：`PaymentLimitConfig`（渠道 → `LimitRule` 配置化）、`LimitCounterStore`（Decimal 精确累计 + 原子，SPI + InMemory；生产 Redis 跨实例）、`PaymentRiskGuard.check_prepay(...)`（单笔/日/月限额 E4-PAY-005、频次 E4-PAY-006、可疑拆分 E4-PAY-007）。
 
 ### 15.7 支付审计（§8.3，2026-08-17 新增）
 
-- 文件：`src/web_infra/payment/payment_audit_store.py`
+- 文件：`src/web_infra/capabilities/payment/payment_audit_store.py`
 - 定位：支付全链路审计（下单/回调/入账/退款/冲正/对账差异），只增不改，成功与失败同样留痕，携带 TraceId/订单号/渠道交易号；渠道原始报文（raw）仅落审计不落业务日志（§8.6）。
 - 接入：`PaymentAuditStoreInterface`（SPI + InMemory）；渠道骨架 final 入口（prepay/refund/close_order/handle_callback）构造时注入 `audit_store` 即自动埋点（未注入默认关闭）。
 
 ### 15.8 支付权限点（§8.4，2026-08-17 新增）
 
-- 文件：`src/web_infra/payment/payment_permission.py`
+- 文件：`src/web_infra/capabilities/payment/payment_permission.py`
 - 定位：`PaymentPermission` 常量（`AUTH_PERM_` 前缀）：下单/查单/关单/退款/冲正/对账/账单管理分离；退款/冲正/人工补记属高风险操作（独立权限点 + 审批流 + 全量审计），由业务接入框架 RBAC/审批组件按权限点拦截。
 
 ## 16. 日志模块（logging）
@@ -1120,7 +1120,7 @@ app:
 ```python
 # my_log_sink.py（create_app 前导入即注册，幂等）
 import logging
-from web_infra.logging import LogSinkRegistry
+from web_infra.infra.logging import LogSinkRegistry
 
 
 class HttpLogSink:  # LogSinkInterface 为 Protocol，结构子类型，方法签名匹配即可
@@ -1166,10 +1166,10 @@ app:
 
 ```python
 # my_provider.py
-from web_infra.ai.chat_request import ChatRequest
-from web_infra.ai.chat_response import ChatResponse
-from web_infra.ai.model_provider_interface import ModelProviderInterface
-from web_infra.ai.model_provider_registry import ModelProviderRegistry
+from web_infra.capabilities.ai.chat_request import ChatRequest
+from web_infra.capabilities.ai.chat_response import ChatResponse
+from web_infra.capabilities.ai.model_provider_interface import ModelProviderInterface
+from web_infra.capabilities.ai.model_provider_registry import ModelProviderRegistry
 
 
 class MyProvider(ModelProviderInterface):
@@ -1187,7 +1187,7 @@ ModelProviderRegistry.register(MyProvider())
 
 ```python
 # my_storage.py
-from web_infra.storage.object_storage_interface import ObjectStorageInterface
+from web_infra.capabilities.storage.object_storage_interface import ObjectStorageInterface
 
 
 class MyObjectStorage(ObjectStorageInterface):
@@ -1211,8 +1211,8 @@ class MyObjectStorage(ObjectStorageInterface):
 
 ```python
 # my_metrics_group.py
-from web_infra.monitoring.metric_group_provider_interface import MetricGroupProviderInterface
-from web_infra.monitoring.metric_group_provider_registry import MetricGroupProviderRegistry
+from web_infra.infra.monitoring.metric_group_provider_interface import MetricGroupProviderInterface
+from web_infra.infra.monitoring.metric_group_provider_registry import MetricGroupProviderRegistry
 
 
 class OrderMetricsGroup(MetricGroupProviderInterface):
@@ -1253,22 +1253,22 @@ MetricGroupProviderRegistry.register(OrderMetricsGroup())
 - 文件：`src/web_infra/capability/`（`Capability` / `CapabilityRegistry` / `CapabilityError` / `CapabilityResolution` / `CapabilityValidation`）
 - `Capability`（契约）：能力名 / 说明 / 随能力启用的框架模块（modules）/ 前置能力（requires，按包含关系自动启用）/ 业务契约（contract）。
 - 注册：`CapabilityRegistry.register(Capability(...))`（同名覆盖；前置允许后置注册，未知前置在解析/校验时拦截；不能依赖自身）。
-- 内置依赖图（导入 `web_infra.capability` 自动注册）：
+- 内置依赖图（导入 `web_infra.core.capability` 自动注册）：
 
 | 能力 | 框架模块 | 前置 | 说明 |
 | ---- | ---- | ---- | ---- |
 | `user` | 无（业务实现） | - | 用户系统：契约能力，业务层实现（如脚手架 user-service）；框架侧接入点 RequestContext / SocialBindingStore / OAuth2 |
-| `authn` | `web_infra.security` | `user` | 认证：确认『你是谁』——JWT 签发/校验、Token 存储、三方登录、OAuth2 登录（前置用户系统） |
-| `authz` | `web_infra.security` | `authn` | 鉴权：确认『你能做什么』——权限守卫/RBAC（PermissionGuard，前置认证） |
-| `pay` | `web_infra.payment` | `authz` | 支付：渠道 SPI + 回调验签/分发 + 骨架兜底 + 对账/冲正/风控（前置鉴权，传递依赖认证/用户） |
-| `ai` | `web_infra.ai` | - | AI 模型网关：供应商/模型路由/配额/检索/内容安全 |
-| `mq` | `web_infra.mq` | - | 消息队列：发布/幂等消费/事务发件箱 |
-| `storage` | `web_infra.storage` | - | 对象存储与分片上传 |
-| `registry` | `web_infra.registry` | - | 服务注册发现与负载均衡 |
-| `config` | `web_infra.config` | - | 配置（本地源 + Nacos 配置中心） |
-| `db` | `web_infra.db` | - | 数据访问（ORM 会话/读写分离/多租户过滤） |
-| `cache` | `web_infra.cache` | - | 缓存（内存/Redis） |
-| `search` | `web_infra.search` | - | 搜索引擎：全文检索 SPI（默认 memory，生产 ES）+ 向量 kNN（es extra，延迟导入） |
+| `authn` | `web_infra.capabilities.security` | `user` | 认证：确认『你是谁』——JWT 签发/校验、Token 存储、三方登录、OAuth2 登录（前置用户系统） |
+| `authz` | `web_infra.capabilities.security` | `authn` | 鉴权：确认『你能做什么』——权限守卫/RBAC（PermissionGuard，前置认证） |
+| `pay` | `web_infra.capabilities.payment` | `authz` | 支付：渠道 SPI + 回调验签/分发 + 骨架兜底 + 对账/冲正/风控（前置鉴权，传递依赖认证/用户） |
+| `ai` | `web_infra.capabilities.ai` | - | AI 模型网关：供应商/模型路由/配额/检索/内容安全 |
+| `mq` | `web_infra.capabilities.mq` | - | 消息队列：发布/幂等消费/事务发件箱 |
+| `storage` | `web_infra.capabilities.storage` | - | 对象存储与分片上传 |
+| `registry` | `web_infra.capabilities.registry` | - | 服务注册发现与负载均衡 |
+| `config` | `web_infra.infra.config` | - | 配置（本地源 + Nacos 配置中心） |
+| `db` | `web_infra.capabilities.db` | - | 数据访问（ORM 会话/读写分离/多租户过滤） |
+| `cache` | `web_infra.capabilities.cache` | - | 缓存（内存/Redis） |
+| `search` | `web_infra.capabilities.search` | - | 搜索引擎：全文检索 SPI（默认 memory，生产 ES）+ 向量 kNN（es extra，延迟导入） |
 
 ### 18.2 依赖解析（resolve）与装配校验（validate）
 
@@ -1282,7 +1282,7 @@ from web_infra import CapabilityRegistry
 
 resolution = CapabilityRegistry.resolve("pay")
 assert [c.name for c in resolution.chain] == ["user", "authn", "authz", "pay"]  # 启用支付自动带上前置（认证/鉴权均依赖用户）
-assert resolution.modules == ("web_infra.security", "web_infra.payment")
+assert resolution.modules == ("web_infra.capabilities.security", "web_infra.capabilities.payment")
 
 validation = CapabilityRegistry.validate(["pay"])
 assert validation.ok and validation.closure == frozenset({"user", "authn", "authz", "pay"})
@@ -1493,7 +1493,7 @@ app:
 - 配置（`application.default.yml` `app.search` 段 + `SearchConfig` 模型）：`enabled`（默认 false）、
   `type`（`memory` / `elasticsearch` / `custom`）、`index_prefix`（默认 `web`）、`elasticsearch.hosts/username/password/verify_certs/connect_timeout/read_timeout`
   （敏感项经 `APP_SEARCH_ELASTICSEARCH_*` 环境变量注入）。
-- 能力登记：`capability` 注册表内置 `search` 能力（无前置，`app.capabilities.enabled: ["search"]` 可声明启用，自动导入 `web_infra.search`）。
+- 能力登记：`capability` 注册表内置 `search` 能力（无前置，`app.capabilities.enabled: ["search"]` 可声明启用，自动导入 `web_infra.capabilities.search`）。
 
 ## 21. 维护指南
 
@@ -1503,5 +1503,5 @@ app:
 | 新增默认实现 | 提供默认实现类并在总览表登记；同步补充单元测试 |
 | 修改接口方法 | 同步修改全部实现类与本文档对应方法表 |
 | 涉及数据库存储实现 | 同步更新 `db/init/ddl/001-mq-init-ddl.sql` 及对应 DML |
-| 新增支付渠道 | 在 `src/web_infra/payment/provider/` 继承 `PaymentChannelTemplate`（§3.1 骨架）填充 `_do_*`/`_parse_callback`、声明 `capabilities` 并注册 `PaymentGatewayRegistry`；同步补充契约测试（§15.1/§15.4） |
+| 新增支付渠道 | 在 `src/web_infra/capabilities/payment/provider/` 继承 `PaymentChannelTemplate`（§3.1 骨架）填充 `_do_*`/`_parse_callback`、声明 `capabilities` 并注册 `PaymentGatewayRegistry`；同步补充契约测试（§15.1/§15.4） |
 | 新增搜索引擎实现 | 实现 `SearchEngineInterface`（§20.1）或 `VectorStoreInterface`，注册 `SearchEngineRegistry`；同步补充单元测试与 §2 总览表 |

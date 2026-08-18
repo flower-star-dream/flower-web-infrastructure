@@ -19,16 +19,16 @@ import pytest_asyncio
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from web_infra.ai import (
+from web_infra.capabilities.ai import (
     DictModelConfigStore,
     ModelConfig,
     ModelProviderFactory,
     ModelProviderRegistry,
     OpenAICompatibleProvider,
 )
-from web_infra.ai.sqlalchemy_model_config_store import SqlAlchemyModelConfigStore
-from web_infra.application import Application, create_app
-from web_infra.config import ConfigError
+from web_infra.capabilities.ai.sqlalchemy_model_config_store import SqlAlchemyModelConfigStore
+from web_infra.core.application import Application, create_app
+from web_infra.infra.config import ConfigError
 
 API_BASE = "http://mock.test/v1"
 
@@ -209,7 +209,7 @@ async def test_store_feeds_auto_registrar(db_store, clean_registry, monkeypatch)
     """数据库 Store 接入 ModelAutoRegistrar：register_from_store 全量注册供应商进 SPI 注册表"""
     await db_store.upsert(_config())
     monkeypatch.setenv("LLM_API_KEY", "sk-secret-from-env")
-    from web_infra.ai import ModelAutoRegistrar
+    from web_infra.capabilities.ai import ModelAutoRegistrar
 
     registered = await ModelAutoRegistrar().register_from_store(db_store)
     assert registered == ["mock-chat"]

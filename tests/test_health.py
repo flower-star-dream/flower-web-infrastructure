@@ -10,7 +10,7 @@
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from web_infra.web import register_health_endpoints
+from web_infra.infra.web import register_health_endpoints
 
 
 class _HealthyComponent:

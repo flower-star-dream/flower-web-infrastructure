@@ -9,8 +9,8 @@ from collections import Counter
 
 import pytest
 
-from web_infra.loadbalance import RandomBalancer, RoundRobinBalancer, WeightedRoundRobinBalancer
-from web_infra.registry import ServiceInstance
+from web_infra.capabilities.loadbalance import RandomBalancer, RoundRobinBalancer, WeightedRoundRobinBalancer
+from web_infra.capabilities.registry import ServiceInstance
 
 
 def test_round_robin_balancer():

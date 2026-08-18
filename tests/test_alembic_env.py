@@ -10,7 +10,7 @@ Alembic 迁移 .env 配置加载单元测试
 """
 import os
 
-from web_infra.config.config_utils import load_env_file
+from web_infra.infra.config.config_utils import load_env_file
 
 
 def _resolve_url() -> str | None:

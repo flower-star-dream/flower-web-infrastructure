@@ -12,8 +12,8 @@ import time
 
 import pytest
 
-from web_infra.task import InMemoryTaskRecordStore, TaskExecutor
-from web_infra.task.shared_thread_pool import (
+from web_infra.capabilities.task import InMemoryTaskRecordStore, TaskExecutor
+from web_infra.capabilities.task.shared_thread_pool import (
     RejectedExecutionError,
     get_shared_thread_pool,
     shutdown_shared_pool,

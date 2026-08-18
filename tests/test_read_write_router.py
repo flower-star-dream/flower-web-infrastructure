@@ -11,13 +11,13 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine as real_create_async_engine
 
-from web_infra.db.mysql_database import MySQLDatabase
-from web_infra.db.read_write_router import ReadWriteRouter
+from web_infra.capabilities.db.mysql_database import MySQLDatabase
+from web_infra.capabilities.db.read_write_router import ReadWriteRouter
 
 
 def _make_fake_create_async_engine(monkeypatch, created_urls):
     """将 MySQLConfig 的 create_async_engine 替换为 sqlite 内存引擎，记录传入的 url（不连真实 MySQL）"""
-    import web_infra.db.mysql_config as mc
+    import web_infra.capabilities.db.mysql_config as mc
 
     def _fake_create_async_engine(url, **kwargs):
         # 事件机制与方言无关：用 sqlite 内存引擎替代 MySQL（aiomysql 专属的 connect_args/池参数需剥离）
@@ -96,7 +96,7 @@ def test_router_invalid_operation():
 @pytest.mark.asyncio
 async def test_mysql_config_replica_names_from_urls(monkeypatch):
     """replica_names 按 replica_urls 数量生成 replica_0..N；未配置时为空"""
-    import web_infra.db.mysql_config as mc
+    import web_infra.capabilities.db.mysql_config as mc
 
     created_urls: list[str] = []
     _make_fake_create_async_engine(monkeypatch, created_urls)
@@ -119,7 +119,7 @@ async def test_mysql_config_replica_names_from_urls(monkeypatch):
 @pytest.mark.asyncio
 async def test_mysql_config_replica_session_lazy_creation(monkeypatch):
     """从库引擎懒加载：首次 get_replica_session 才创建，轮询选择从库"""
-    import web_infra.db.mysql_config as mc
+    import web_infra.capabilities.db.mysql_config as mc
 
     created_urls: list[str] = []
     _make_fake_create_async_engine(monkeypatch, created_urls)
@@ -148,7 +148,7 @@ async def test_mysql_config_replica_session_lazy_creation(monkeypatch):
 @pytest.mark.asyncio
 async def test_mysql_config_get_replica_session_fallback_to_primary(monkeypatch):
     """未配置从库时 get_replica_session 回退主库（仅创建主库引擎）"""
-    import web_infra.db.mysql_config as mc
+    import web_infra.capabilities.db.mysql_config as mc
 
     created_urls: list[str] = []
     _make_fake_create_async_engine(monkeypatch, created_urls)
@@ -166,7 +166,7 @@ async def test_mysql_config_get_replica_session_fallback_to_primary(monkeypatch)
 @pytest.mark.asyncio
 async def test_mysql_config_get_replica_session_unknown_name_fallback(monkeypatch):
     """指定不存在的从库名时回退主库（记 warning，不抛错）"""
-    import web_infra.db.mysql_config as mc
+    import web_infra.capabilities.db.mysql_config as mc
 
     created_urls: list[str] = []
     _make_fake_create_async_engine(monkeypatch, created_urls)
@@ -190,7 +190,7 @@ async def test_mysql_config_get_replica_session_unknown_name_fallback(monkeypatc
 @pytest.mark.asyncio
 async def test_mysql_database_orm_session_read_replica(monkeypatch):
     """read_replica=True 且配置从库：orm_session 绑定从库会话（懒加载从库引擎）"""
-    import web_infra.db.mysql_config as mc
+    import web_infra.capabilities.db.mysql_config as mc
 
     created_urls: list[str] = []
     _make_fake_create_async_engine(monkeypatch, created_urls)
@@ -211,7 +211,7 @@ async def test_mysql_database_orm_session_read_replica(monkeypatch):
 @pytest.mark.asyncio
 async def test_mysql_database_orm_session_write_primary(monkeypatch):
     """默认 orm_session（写路径）绑定主库引擎"""
-    import web_infra.db.mysql_config as mc
+    import web_infra.capabilities.db.mysql_config as mc
 
     created_urls: list[str] = []
     _make_fake_create_async_engine(monkeypatch, created_urls)
@@ -232,7 +232,7 @@ async def test_mysql_database_orm_session_write_primary(monkeypatch):
 @pytest.mark.asyncio
 async def test_mysql_database_orm_session_read_replica_fallback(monkeypatch):
     """未配置从库时 read_replica=True 回退主库（仅创建主库引擎）"""
-    import web_infra.db.mysql_config as mc
+    import web_infra.capabilities.db.mysql_config as mc
 
     created_urls: list[str] = []
     _make_fake_create_async_engine(monkeypatch, created_urls)
@@ -249,7 +249,7 @@ async def test_mysql_database_orm_session_read_replica_fallback(monkeypatch):
 @pytest.mark.asyncio
 async def test_mysql_database_close_releases_replicas(monkeypatch):
     """MySQLDatabase.close 级联释放从库引擎"""
-    import web_infra.db.mysql_config as mc
+    import web_infra.capabilities.db.mysql_config as mc
 
     created_urls: list[str] = []
     _make_fake_create_async_engine(monkeypatch, created_urls)

@@ -9,7 +9,7 @@ import asyncio
 
 import pytest
 
-from web_infra.cache import CacheConfig, MemoryCacheBackend
+from web_infra.capabilities.cache import CacheConfig, MemoryCacheBackend
 
 
 @pytest.mark.asyncio

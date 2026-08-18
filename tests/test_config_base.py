@@ -5,7 +5,7 @@
 @Date: 2026/08/14 10:00
 @Description: 验证 BaseConfig 的 YAML 多环境 profile 加载与占位符解析。
 """
-from web_infra.config import BaseConfig
+from web_infra.infra.config import BaseConfig
 
 
 def test_base_config_yaml_profile(tmp_path):

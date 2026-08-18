@@ -9,7 +9,7 @@
 """
 import pytest
 
-from web_infra.ai.model_config import ModelConfig
+from web_infra.capabilities.ai.model_config import ModelConfig
 
 
 def _config(api_key: str) -> ModelConfig:

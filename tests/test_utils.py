@@ -8,7 +8,7 @@
 import re
 from datetime import timezone
 
-from web_infra.utils import (
+from web_infra.infra.utils import (
     DateUtil,
     SnowflakeUtil,
     snowflake_id,
@@ -75,7 +75,7 @@ def test_snowflake_worker_id_lazy_from_env(monkeypatch):
     """
     import importlib
 
-    import web_infra.utils.snowflake_util as su
+    import web_infra.infra.utils.snowflake_util as su
 
     monkeypatch.setenv("SNOWFLAKE_WORKER_ID", "7")
     reloaded = importlib.reload(su)

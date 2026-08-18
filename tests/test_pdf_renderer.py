@@ -7,7 +7,7 @@ PDF 渲染导出组件单元测试
 """
 import pytest
 
-from web_infra.utils import PdfRenderer
+from web_infra.infra.utils import PdfRenderer
 
 
 class _FakePage:

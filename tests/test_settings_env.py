@@ -10,8 +10,8 @@ import logging
 
 import pytest
 
-from web_infra.config.dict_config_source import DictConfigSource
-from web_infra.config.settings import ENVIRONMENTS, Settings
+from web_infra.infra.config.dict_config_source import DictConfigSource
+from web_infra.infra.config.settings import ENVIRONMENTS, Settings
 
 
 def test_app_env_from_environment_variable(monkeypatch):
@@ -40,7 +40,7 @@ def test_env_var_priority_over_config(monkeypatch):
 def test_default_dev_with_warning(monkeypatch, caplog):
     """未显式指定 APP_ENV：默认 dev + warning 日志（规范 §19.3）"""
     monkeypatch.delenv("APP_ENV", raising=False)
-    with caplog.at_level(logging.WARNING, logger="web_infra.config.settings"):
+    with caplog.at_level(logging.WARNING, logger="web_infra.infra.config.settings"):
         s = Settings(DictConfigSource({}))
     assert s.app_env == "dev"
     assert s.is_production() is False
@@ -50,7 +50,7 @@ def test_default_dev_with_warning(monkeypatch, caplog):
 def test_invalid_env_falls_back_to_dev_with_warning(monkeypatch, caplog):
     """非法环境值：按 dev 兜底 + warning（文档说明：拒绝抛错或兜底二选一，此处选择兜底）"""
     monkeypatch.setenv("APP_ENV", "local")
-    with caplog.at_level(logging.WARNING, logger="web_infra.config.settings"):
+    with caplog.at_level(logging.WARNING, logger="web_infra.infra.config.settings"):
         s = Settings(DictConfigSource({}))
     assert s.app_env == "dev"
     assert any("APP_ENV" in r.getMessage() and "非法" in r.getMessage() for r in caplog.records)

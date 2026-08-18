@@ -6,8 +6,8 @@
 @Description: 验证 DefaultMetricGroupProvider（规范 S3-2 默认实现）：
               默认映射分组、自定义映射覆盖、未知前缀归 other，以及注册到 SPI 注册表后生效。
 """
-from web_infra.monitoring.default_metric_group_provider import DefaultMetricGroupProvider
-from web_infra.monitoring.metric_group_provider_registry import MetricGroupProviderRegistry
+from web_infra.infra.monitoring.default_metric_group_provider import DefaultMetricGroupProvider
+from web_infra.infra.monitoring.metric_group_provider_registry import MetricGroupProviderRegistry
 
 
 def test_default_map_groups_by_prefix():

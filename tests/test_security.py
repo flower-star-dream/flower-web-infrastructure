@@ -5,7 +5,7 @@
 @Date: 2026/08/14 10:00
 @Description: 验证密码加密与 PII 脱敏。
 """
-from web_infra.security import PasswordEncoder, PrivacyGuard
+from web_infra.capabilities.security import PasswordEncoder, PrivacyGuard
 
 
 def test_password_encode_and_verify():

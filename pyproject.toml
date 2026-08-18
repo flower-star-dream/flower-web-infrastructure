@@ -50,7 +50,7 @@ pdf = ["playwright>=1.40"]                             # PDF 渲染导出（规�
 es = ["elasticsearch-dsl>=8.0"]
 # 能力依赖链（可选能力，按需主动引入）：用户系统(user，业务实现) → 认证(authn) → 鉴权(authz) → 支付(pay)；
 # 依赖均为核心依赖（httpx/cryptography 等），extras 仅作能力声明与后续 SDK 挂载点；
-# 依赖包含规则由 web_infra.capability 能力注册表维护（启用 pay 自动带上前置 authz/authn/user），
+# 依赖包含规则由 web_infra.core.capability 能力注册表维护（启用 pay 自动带上前置 authz/authn/user），
 # 业务实现（如用户系统 user-service）由业务层提供
 user = []
 authn = []
@@ -100,7 +100,7 @@ all = [
     "redis>=5.0.0",
     "pymongo>=4.11.0",
     "beanie>=2.0.0",
-    # user/authn/authz/pay 为空 extra：能力声明，无额外依赖（能力依赖链由 web_infra.capability 维护）
+    # user/authn/authz/pay 为空 extra：能力声明，无额外依赖（能力依赖链由 web_infra.core.capability 维护）
     "user",
     "authn",
     "authz",
@@ -111,7 +111,7 @@ all = [
 where = ["src"]
 
 [tool.setuptools.package-data]
-web_infra = ["config/application.default.yml"]
+web_infra = ["infra/config/application.default.yml"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

@@ -8,9 +8,9 @@
 """
 import pytest
 
-from web_infra.cache import KeyBuilder
-from web_infra.context import RequestContext, generate_trace_id
-from web_infra.error import ParamException
+from web_infra.capabilities.cache import KeyBuilder
+from web_infra.infra.context import RequestContext, generate_trace_id
+from web_infra.infra.error import ParamException
 
 
 def test_key_builder_basic():

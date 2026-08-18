@@ -7,7 +7,7 @@
 """
 import pytest
 
-from web_infra.storage import LocalObjectStorage, StorageConfig
+from web_infra.capabilities.storage import LocalObjectStorage, StorageConfig
 
 
 @pytest.mark.asyncio

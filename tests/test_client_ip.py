@@ -13,10 +13,10 @@ import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
-from web_infra.monitoring import metrics
-from web_infra.utils.ip_address_util import IPAddressUtil
-from web_infra.web.client_ip import apply_real_client_ip, get_client_ip
-from web_infra.web.logging_middleware import LoggingMiddleware, disable_uvicorn_access_log, setup_uvicorn_access_log
+from web_infra.infra.monitoring import metrics
+from web_infra.infra.utils.ip_address_util import IPAddressUtil
+from web_infra.infra.web.client_ip import apply_real_client_ip, get_client_ip
+from web_infra.infra.web.logging_middleware import LoggingMiddleware, disable_uvicorn_access_log, setup_uvicorn_access_log
 
 
 @pytest.fixture(autouse=True)

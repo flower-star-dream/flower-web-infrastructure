@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from web_infra.utils.file_lock import FileLock
+from web_infra.infra.utils.file_lock import FileLock
 
 
 def _lock_path(tmp_path: Path) -> Path:

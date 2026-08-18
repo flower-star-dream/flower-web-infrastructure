@@ -9,11 +9,11 @@ JWT SPI 单元测试
 """
 import pytest
 
-from web_infra.security.env_jwt_key_provider import EnvJwtKeyProvider
-from web_infra.security.in_memory_jwt_token_store import InMemoryJwtTokenStore
-from web_infra.security.jwt_util import JWTUtil
-from web_infra.security.secure_config_loader import SecureConfigLoader
-from web_infra.security.token_verify_status_enum import TokenVerifyStatus
+from web_infra.capabilities.security.env_jwt_key_provider import EnvJwtKeyProvider
+from web_infra.capabilities.security.in_memory_jwt_token_store import InMemoryJwtTokenStore
+from web_infra.capabilities.security.jwt_util import JWTUtil
+from web_infra.capabilities.security.secure_config_loader import SecureConfigLoader
+from web_infra.capabilities.security.token_verify_status_enum import TokenVerifyStatus
 
 
 class _FakeRedis:

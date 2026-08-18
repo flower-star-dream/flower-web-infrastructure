@@ -9,7 +9,7 @@ import asyncio
 
 import pytest
 
-from web_infra.ai import ModelConfig, Usage, UsageAccounting, UsageRecord, UsageRecordStoreInterface
+from web_infra.capabilities.ai import ModelConfig, Usage, UsageAccounting, UsageRecord, UsageRecordStoreInterface
 
 
 def test_record_cost_calculation():

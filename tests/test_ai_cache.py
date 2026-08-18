@@ -7,7 +7,7 @@ AI 缓存组件单元测试
 """
 import pytest
 
-from web_infra.ai import AICache
+from web_infra.capabilities.ai import AICache
 
 
 @pytest.mark.asyncio

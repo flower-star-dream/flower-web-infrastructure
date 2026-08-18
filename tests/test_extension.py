@@ -11,8 +11,8 @@
 import pytest
 
 from web_infra import create_app
-from web_infra.config import ConfigError
-from web_infra.extension import (
+from web_infra.infra.config import ConfigError
+from web_infra.core.extension import (
     ExtensionError,
     ExtensionPoint,
     ExtensionRegistry,

@@ -31,7 +31,7 @@ _SECRET = "test-secret-for-application-0123456789"
 @pytest.fixture(autouse=True)
 def _jwt_secret(monkeypatch):
     """注入 JWT 测试密钥；测试后清理 JWTUtil 全局注入（cache.type=redis 用例会装配 Redis 配置，避免污染后续用例）"""
-    from web_infra.security import JWTUtil
+    from web_infra.capabilities.security import JWTUtil
 
     monkeypatch.setenv("JWT_SECRET_KEY", _SECRET)
     yield
@@ -77,8 +77,8 @@ def test_application_component_accessor():
 @pytest.mark.asyncio
 async def test_auth_payload_identity_not_overwritten():
     """统一鉴权启用后：业务获取的 user_id 来自 token payload，请求头 X-User-Id 不得覆盖（规范 §6.4）"""
-    from web_infra.context import RequestContext
-    from web_infra.security import JWTUtil
+    from web_infra.infra.context import RequestContext
+    from web_infra.capabilities.security import JWTUtil
 
     app = create_app(
         {
@@ -117,7 +117,7 @@ async def test_auth_payload_identity_not_overwritten():
 @pytest.mark.asyncio
 async def test_no_auth_request_header_passthrough():
     """未启用统一鉴权时：请求头 X-User-Id 透传到业务（规范 §6.5 服务调用链）"""
-    from web_infra.context import RequestContext
+    from web_infra.infra.context import RequestContext
 
     app = create_app({"app.name": "test-app"})
 
@@ -134,7 +134,7 @@ async def test_no_auth_request_header_passthrough():
 
 def test_application_tenant_enabled_installs_filter():
     """多租户启用后：数据库工厂自动装配租户过滤器（多租户规范 §2）"""
-    from web_infra.db import TenantQueryFilter
+    from web_infra.capabilities.db import TenantQueryFilter
 
     app = create_app({"app": {"tenant": {"enabled": True, "strict": True}}})
     db = app.state.components["db"]
@@ -146,9 +146,9 @@ def test_application_tenant_enabled_installs_filter():
 @pytest.mark.asyncio
 async def test_tenant_strict_rejects_session_without_context():
     """多租户 strict：无租户上下文创建会话抛 E2-PERM-000（多租户规范 §2 无上下文拒绝执行）"""
-    from web_infra.context import RequestContext
-    from web_infra.db import TenantQueryFilter
-    from web_infra.error import BizException
+    from web_infra.infra.context import RequestContext
+    from web_infra.capabilities.db import TenantQueryFilter
+    from web_infra.infra.error import BizException
 
     db = MySQLDatabase(MySQLConfig(settings=MySQLConnectionSettings(host="localhost")))
     db.install_tenant_filter(TenantQueryFilter(strict=True))
@@ -161,7 +161,7 @@ async def test_tenant_strict_rejects_session_without_context():
 @pytest.mark.asyncio
 async def test_tenant_header_injected_into_context():
     """请求头 X-Tenant-Id 注入租户上下文（多租户扩展 §1.2）"""
-    from web_infra.context import RequestContext
+    from web_infra.infra.context import RequestContext
 
     app = create_app({"app.name": "test-app"})
 

@@ -14,14 +14,14 @@ from typing import Any
 
 import pytest
 
-from web_infra.ai.chat_role_enum import ChatRole
-from web_infra.ai.finish_reason_enum import FinishReason
-from web_infra.ai.guard_action import GuardAction
-from web_infra.mq.outbox.outbox_status import OutboxStatus
-from web_infra.resilience.circuit_breaker_state_enum import CircuitBreakerState
-from web_infra.security.token_verify_status_enum import TokenVerifyStatus
-from web_infra.storage.upload.upload_status import UploadStatus
-from web_infra.task.task_status import TaskStatus
+from web_infra.capabilities.ai.chat_role_enum import ChatRole
+from web_infra.capabilities.ai.finish_reason_enum import FinishReason
+from web_infra.capabilities.ai.guard_action import GuardAction
+from web_infra.capabilities.mq.outbox.outbox_status import OutboxStatus
+from web_infra.infra.resilience.circuit_breaker_state_enum import CircuitBreakerState
+from web_infra.capabilities.security.token_verify_status_enum import TokenVerifyStatus
+from web_infra.capabilities.storage.upload.upload_status import UploadStatus
+from web_infra.capabilities.task.task_status import TaskStatus
 
 # (枚举类, 一个确定不属于任何成员值的未知 code)
 # 8 个枚举无共同基类（IntEnum / str Enum / 普通 Enum），统一以 Any 标注（迭代与成员属性访问均放行）

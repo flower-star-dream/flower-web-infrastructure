@@ -19,7 +19,7 @@ from examples.demo_datasource_extension import (
     register_demo_datasource_factory,
 )
 from web_infra import create_app
-from web_infra.db import DatabaseRegistry
+from web_infra.capabilities.db import DatabaseRegistry
 
 
 @pytest.fixture(autouse=True)

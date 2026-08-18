@@ -13,15 +13,15 @@ from pathlib import Path
 
 import pytest
 
-from web_infra.payment import (
+from web_infra.capabilities.payment import (
     InMemoryPaymentFlowStore,
     InMemoryReconciliationAuditStore,
     PaymentFlowRecord,
     PaymentFlowStatus,
     PaymentStatus,
 )
-from web_infra.payment.payment_flow_status import PaymentFlowEvent
-from web_infra.payment.reconciliation import (
+from web_infra.capabilities.payment.payment_flow_status import PaymentFlowEvent
+from web_infra.capabilities.payment.reconciliation import (
     BillFileManager,
     BillRecord,
     DifferenceType,
@@ -203,7 +203,7 @@ def test_bill_file_cleanup_expired(tmp_path: Path):
 
 def _channel_order(out_trade_no: str, status: PaymentStatus):
     """查单回调模拟（渠道权威状态）"""
-    from web_infra.payment import PaymentOrder
+    from web_infra.capabilities.payment import PaymentOrder
 
     return PaymentOrder(out_trade_no=out_trade_no, status=status, total_amount=Decimal("10.00"), payer_total=Decimal("10.00"))
 

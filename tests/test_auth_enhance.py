@@ -15,22 +15,22 @@ import jwt
 import pytest
 from pydantic import ValidationError
 
-from web_infra.constants import AuthConstant
-from web_infra.context import RequestContext
-from web_infra.db.page_query import PageQuery
-from web_infra.error import BizException, PermException
-from web_infra.http.feign_client import FeignClient, default_url_validator
-from web_infra.registry import InMemoryServiceRegistry, ServiceInstance
-from web_infra.security import (
+from web_infra.infra.constants import AuthConstant
+from web_infra.infra.context import RequestContext
+from web_infra.capabilities.db.page_query import PageQuery
+from web_infra.infra.error import BizException, PermException
+from web_infra.capabilities.http.feign_client import FeignClient, default_url_validator
+from web_infra.capabilities.registry import InMemoryServiceRegistry, ServiceInstance
+from web_infra.capabilities.security import (
     InMemoryOAuth2ClientRegistry,
     JWTUtil,
     OAuth2Client,
     OAuth2TokenService,
     TokenVerifyStatus,
 )
-from web_infra.security.data_permission import DataPermissionGuard
-from web_infra.security.secure_config_loader import SecureConfigLoader
-from web_infra.storage import LocalObjectStorage, StorageConfig
+from web_infra.capabilities.security.data_permission import DataPermissionGuard
+from web_infra.capabilities.security.secure_config_loader import SecureConfigLoader
+from web_infra.capabilities.storage import LocalObjectStorage, StorageConfig
 
 
 @pytest.fixture(autouse=True)

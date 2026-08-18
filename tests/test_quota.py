@@ -7,8 +7,8 @@
 """
 import pytest
 
-from web_infra.ai import QuotaConfig, QuotaManager
-from web_infra.error import BizException
+from web_infra.capabilities.ai import QuotaConfig, QuotaManager
+from web_infra.infra.error import BizException
 
 
 @pytest.mark.asyncio
@@ -46,7 +46,7 @@ async def test_cost_quota_exceeded():
 @pytest.mark.asyncio
 async def test_quota_window_reset():
     """窗口过期后配额重置（新窗口重新计数）"""
-    from web_infra.ai.quota.in_memory_quota_store import InMemoryQuotaStore
+    from web_infra.capabilities.ai.quota.in_memory_quota_store import InMemoryQuotaStore
 
     store = InMemoryQuotaStore()
     manager = QuotaManager(store=store, default_config=QuotaConfig(max_calls=1, window_seconds=3600))

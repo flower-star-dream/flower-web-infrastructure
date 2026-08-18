@@ -8,7 +8,7 @@
 """
 import pytest
 
-from web_infra.db import SqliteSessionFactory
+from web_infra.capabilities.db import SqliteSessionFactory
 
 
 @pytest.fixture()
@@ -79,7 +79,7 @@ class _FakeSession:
 @pytest.mark.asyncio
 async def test_session_scope_commit_and_close():
     """Mixin：正常退出自动 commit + close（无异常不 rollback）"""
-    from web_infra.db import SessionScopeMixin
+    from web_infra.capabilities.db import SessionScopeMixin
 
     class Factory(_FakeFactory, SessionScopeMixin):
         pass
@@ -93,7 +93,7 @@ async def test_session_scope_commit_and_close():
 @pytest.mark.asyncio
 async def test_session_scope_rollback_and_close():
     """Mixin：异常自动 rollback + close"""
-    from web_infra.db import SessionScopeMixin
+    from web_infra.capabilities.db import SessionScopeMixin
 
     class Factory(_FakeFactory, SessionScopeMixin):
         pass

@@ -8,8 +8,8 @@ OAuth2 令牌签发校验单元测试
 """
 import pytest
 
-from web_infra.error import BizException
-from web_infra.security import (
+from web_infra.infra.error import BizException
+from web_infra.capabilities.security import (
     InMemoryOAuth2ClientRegistry,
     OAuth2Client,
     OAuth2TokenService,

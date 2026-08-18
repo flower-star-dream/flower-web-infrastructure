@@ -9,7 +9,7 @@ import json
 
 import pytest
 
-from web_infra.config import (
+from web_infra.infra.config import (
     Settings,
     ConfigError,
     DictConfigSource,

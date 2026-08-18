@@ -11,7 +11,7 @@ from decimal import Decimal
 
 import pytest
 
-from web_infra.payment import (
+from web_infra.capabilities.payment import (
     InMemoryLimitCounterStore,
     InMemoryPaymentAuditStore,
     PaymentAuditRecord,
@@ -19,7 +19,7 @@ from web_infra.payment import (
     PaymentLimitConfig,
     PaymentRiskGuard,
 )
-from web_infra.payment.risk.payment_limit_config import LimitRule
+from web_infra.capabilities.payment.risk.payment_limit_config import LimitRule
 
 
 @pytest.fixture
@@ -113,7 +113,7 @@ async def test_audit_records_failure_too():
 
 def test_permission_points_defined():
     """权限点（§8.4）：高风险操作（退款/冲正/对账）独立权限点，AUTH_PERM_ 前缀"""
-    from web_infra.payment import PaymentPermission
+    from web_infra.capabilities.payment import PaymentPermission
 
     assert PaymentPermission.AUTH_PERM_PAY_REFUND.startswith("AUTH_PERM_")
     assert PaymentPermission.AUTH_PERM_PAY_REVERSAL.startswith("AUTH_PERM_")

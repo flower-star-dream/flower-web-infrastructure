@@ -8,9 +8,9 @@
 import pytest
 from pydantic import ValidationError
 
-from web_infra.config.dict_config_source import DictConfigSource
-from web_infra.config.settings import Settings
-from web_infra.payment.payment_config import PaymentConfig, WechatPayConfig
+from web_infra.infra.config.dict_config_source import DictConfigSource
+from web_infra.infra.config.settings import Settings
+from web_infra.capabilities.payment.payment_config import PaymentConfig, WechatPayConfig
 
 
 def test_wechat_config_defaults():

@@ -13,9 +13,9 @@ import asyncio
 
 import pytest
 
-from web_infra.mq import InMemoryMessageQueue, Message
-from web_infra.mq.message_queue_selector import HashMessageQueueSelector
-from web_infra.mq.rocketmq_publisher import _delay_level_for
+from web_infra.capabilities.mq import InMemoryMessageQueue, Message
+from web_infra.capabilities.mq.message_queue_selector import HashMessageQueueSelector
+from web_infra.capabilities.mq.rocketmq_publisher import _delay_level_for
 
 
 def _collect(target: list[Message]):

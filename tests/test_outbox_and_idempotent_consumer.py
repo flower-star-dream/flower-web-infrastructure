@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from web_infra.mq import (
+from web_infra.capabilities.mq import (
     IdempotentConsumer,
     InMemoryMessageIdempotencyStore,
     InMemoryOutboxStore,

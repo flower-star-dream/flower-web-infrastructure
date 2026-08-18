@@ -11,20 +11,20 @@ from types import new_class
 
 import pytest
 
-from web_infra.error.biz_exception import BizException
-from web_infra.error.error_code_registry import ErrorCodeRegistry
-from web_infra.state_machine.base_event import BaseEvent
-from web_infra.state_machine.base_state import BaseState
-from web_infra.state_machine.base_status import BaseStatus, BaseStatusRouter, StartStopEvent
-from web_infra.state_machine.state_machine import StateMachine
-from web_infra.state_machine.state_machine_engine import StateMachineEngine
-from web_infra.state_machine.state_machine_error import (
+from web_infra.infra.error.biz_exception import BizException
+from web_infra.infra.error.error_code_registry import ErrorCodeRegistry
+from web_infra.capabilities.state_machine.base_event import BaseEvent
+from web_infra.capabilities.state_machine.base_state import BaseState
+from web_infra.capabilities.state_machine.base_status import BaseStatus, BaseStatusRouter, StartStopEvent
+from web_infra.capabilities.state_machine.state_machine import StateMachine
+from web_infra.capabilities.state_machine.state_machine_engine import StateMachineEngine
+from web_infra.capabilities.state_machine.state_machine_error import (
     StateMachineErrorCode,
     StateMachineErrorCodeEnum,
 )
-from web_infra.state_machine.state_machine_registry import StateMachineRegistry
-from web_infra.state_machine.state_route_params import StateRouteParams
-from web_infra.state_machine.state_router import StateRouter
+from web_infra.capabilities.state_machine.state_machine_registry import StateMachineRegistry
+from web_infra.capabilities.state_machine.state_route_params import StateRouteParams
+from web_infra.capabilities.state_machine.state_router import StateRouter
 
 
 def test_state_machine_error_codes_registered():

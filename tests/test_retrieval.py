@@ -9,15 +9,15 @@
 """
 import pytest
 
-from web_infra.ai.retrieval import (
+from web_infra.capabilities.ai.retrieval import (
     MarkdownChunker,
     InMemoryVectorStore,
     Retriever,
     EmbeddingProviderInterface,
     RerankerInterface,
 )
-from web_infra.context import RequestContext
-from web_infra.db.tenant_guard import NO_TENANT
+from web_infra.infra.context import RequestContext
+from web_infra.capabilities.db.tenant_guard import NO_TENANT
 
 
 # ---------------------------------------------------------------------------

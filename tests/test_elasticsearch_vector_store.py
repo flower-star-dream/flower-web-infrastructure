@@ -14,8 +14,8 @@ from typing import Any
 
 import pytest
 
-from web_infra.ai.retrieval import ElasticsearchVectorStore
-from web_infra.ai.retrieval.vector_hit import VectorHit
+from web_infra.capabilities.ai.retrieval import ElasticsearchVectorStore
+from web_infra.capabilities.ai.retrieval.vector_hit import VectorHit
 
 VECTOR_INDEX = "web_t1_vector"
 PREFIX = "web"
@@ -89,7 +89,7 @@ def test_tenant_index_prefix():
 
 def test_tenant_optional_reads_context():
     """tenant_id 可选：缺省从请求上下文读取 → 索引名 web_t1_vector"""
-    from web_infra.context import RequestContext
+    from web_infra.infra.context import RequestContext
 
     client = _SyncFakeClient()
     store = _make_store(client)

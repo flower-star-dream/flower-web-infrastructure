@@ -39,13 +39,13 @@ def test_top_level_import_star():
 
 def test_submodule_import_without_es_extra():
     """未安装 es extra 时：顶层与 search 子模块导入不报错（延迟导入契约）"""
-    importlib.import_module("web_infra.search")
-    importlib.import_module("web_infra.search.elasticsearch_search_engine")
-    importlib.import_module("web_infra.ai.retrieval.elasticsearch_vector_store")
+    importlib.import_module("web_infra.capabilities.search")
+    importlib.import_module("web_infra.capabilities.search.elasticsearch_search_engine")
+    importlib.import_module("web_infra.capabilities.ai.retrieval.elasticsearch_vector_store")
 
 
 def test_ai_retrieval_exports_vector_store():
     """向量检索子模块导出 ES 向量实现（构造时才加载 es extra）"""
-    from web_infra.ai.retrieval import ElasticsearchVectorStore
+    from web_infra.capabilities.ai.retrieval import ElasticsearchVectorStore
 
     assert ElasticsearchVectorStore is not None
