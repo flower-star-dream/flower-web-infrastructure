@@ -49,8 +49,9 @@ jobs:
           python-version: "3.11"
           cache: pip
 
-      - name: 安装依赖（dev + mysql/redis/mongo 运行库）
-        run: pip install -e ".[dev,mysql,redis,mongo]"
+      - name: 安装依赖（dev + mysql/redis/mongo/es 运行库）
+        # es extra：Elasticsearch 搜索引擎与向量检索测试依赖（elasticsearch-dsl，延迟导入）
+        run: pip install -e ".[dev,mysql,redis,mongo,es]"
 
       - name: 静态类型检查（pyright）
         # 既有基线 16 个类型错误暂不阻塞（continue-on-error），新增代码由本地 pyright 门禁保证

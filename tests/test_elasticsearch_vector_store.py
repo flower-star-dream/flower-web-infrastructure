@@ -14,8 +14,10 @@ from typing import Any
 
 import pytest
 
-from web_infra.capabilities.ai.retrieval import ElasticsearchVectorStore
-from web_infra.capabilities.ai.retrieval.vector_hit import VectorHit
+pytest.importorskip("elasticsearch_dsl")
+
+from web_infra.capabilities.ai.retrieval import ElasticsearchVectorStore  # noqa: E402
+from web_infra.capabilities.ai.retrieval.vector_hit import VectorHit  # noqa: E402
 
 VECTOR_INDEX = "web_t1_vector"
 PREFIX = "web"
