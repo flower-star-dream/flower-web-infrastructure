@@ -43,6 +43,9 @@ class CpuSampler:
         """初始化采样器（无基线，首次采样建立基线）"""
         self._prev_total: float | None = None
         self._prev_busy: float | None = None
+        # 基线读写锁：sample() 可能被采样任务与 /capacity 补采并发调用，基线为
+        # 「读旧值 → 计算 → 写新值」非原子序列，需加锁防止并发下重复使用同一基线
+        self._lock = Lock()
 
     def sample(self) -> float | None:
         """采集当前 CPU 占用率（%）；首次调用/不可用返回 None。
@@ -58,12 +61,13 @@ class CpuSampler:
         if stats is None:
             return None
         total, busy = stats
-        if self._prev_total is None:
+        with self._lock:
+            if self._prev_total is None:
+                self._prev_total, self._prev_busy = total, busy
+                return None
+            delta_total = total - self._prev_total
+            delta_busy = busy - self._prev_busy
             self._prev_total, self._prev_busy = total, busy
-            return None
-        delta_total = total - self._prev_total
-        delta_busy = busy - self._prev_busy
-        self._prev_total, self._prev_busy = total, busy
         if delta_total <= 0:
             return None
         return round(delta_busy / delta_total * 100.0, 2)
@@ -179,9 +183,8 @@ class RuntimeSampler:
         """
         now = time.perf_counter()
         metrics = self._read_prometheus()
-        qps = self._diff_qps(metrics["requests_total"], now)
         snapshot = RuntimeSnapshot(
-            current_qps=qps,
+            current_qps=None,  # 差分在锁内计算后填充
             current_concurrency=metrics["in_flight"],
             current_cpu_percent=self._cpu.sample(),
             error_ratio=metrics["error_ratio"],
@@ -189,6 +192,18 @@ class RuntimeSampler:
             latency_p95=metrics["latency_p95"],
         )
         with self._lock:
+            # QPS 差分状态（_prev_counter/_prev_ts）与窗口写入同锁保护：
+            # 「读旧值 → 计算 → 写新值」非原子，并发 sample（采样任务 vs /capacity 补采）
+            # 需互斥，防止两个线程基于同一基线重复差分
+            qps = self._diff_qps_locked(metrics["requests_total"], now)
+            snapshot = RuntimeSnapshot(
+                current_qps=qps,
+                current_concurrency=snapshot.current_concurrency,
+                current_cpu_percent=snapshot.current_cpu_percent,
+                error_ratio=snapshot.error_ratio,
+                latency_p50=snapshot.latency_p50,
+                latency_p95=snapshot.latency_p95,
+            )
             self._samples.append(snapshot)
             # 单次采样快照的 sample_count = 窗口当前样本数（与 snapshot() 汇总口径一致）
             snapshot = RuntimeSnapshot(
@@ -284,11 +299,13 @@ class RuntimeSampler:
             "latency_p95": p95,
         }
 
-    def _diff_qps(self, current_total: float, now: float) -> float | None:
-        """QPS 差分：与上一次采样 Counter 差值 ÷ 真实时间戳差值（§6 快照差分语义）。
+    def _diff_qps_locked(self, current_total: float, now: float) -> float | None:
+        """QPS 差分（调用方须持有 self._lock）：与上一次采样 Counter 差值 ÷ 真实时间戳差值。
 
         首次采样（无基线）或时间差过小返回 None；时间差用 time.perf_counter() 实际差值
         （单调且高精度，规避 asyncio 调度抖动与 Windows monotonic 低精度导致的采样周期漂移）。
+        因读写 _prev_counter/_prev_ts 为「读旧值 → 计算 → 写新值」非原子序列，
+        必须在 self._lock 内调用（sample() 已持锁）。
         """
         if self._prev_counter is None or self._prev_ts is None:
             self._prev_counter, self._prev_ts = current_total, now

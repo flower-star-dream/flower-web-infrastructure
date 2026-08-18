@@ -51,9 +51,6 @@ from web_infra.capabilities.ai.quota import QuotaConfig, QuotaManager
 from web_infra.capabilities.mq.message_queue_registry import MessageQueueRegistry
 from web_infra.capabilities.storage.object_storage_registry import ObjectStorageRegistry
 from web_infra.capabilities.registry.service_discovery_registry import ServiceDiscoveryRegistry
-from web_infra.capabilities.capacity.assessor import CapacityAssessor
-from web_infra.capabilities.capacity.capacity_config import CapacityConfig, DiagnosticAccessConfig, RemoteProbeConfig
-from web_infra.capabilities.capacity.capacity_endpoint import register_capacity_endpoints
 from web_infra.infra.web.diagnostic_access import DiagnosticAccessGuard
 
 logger = logging.getLogger(__name__)
@@ -145,8 +142,9 @@ class Application:
         # 生命周期钩子（startup/shutdown）由 _lifespan 在应用启动/停机时按序编排
         self._extension_chain: list[str] = []
         self._extension_instances: dict[str, Any] = {}
-        # 容量评估与诊断端点访问控制（app.capacity.enabled 时装配，见 _setup_capacity）：
-        # 守卫在 _setup_capacity 构造、供 /capacity 与 /metrics（_setup_health）共用
+        # 容量评估（app.capacity.enabled 时装配，见 _setup_capacity）与诊断端点访问守卫：
+        # 守卫由 _setup_diagnostic_guard 独立构造（不依赖 capacity.enabled），
+        # 供 /capacity 与 /metrics（_setup_health）共用
         self._capacity_assessor: CapacityAssessor | None = None
         self._diagnostic_guard: DiagnosticAccessGuard | None = None
 
@@ -177,6 +175,7 @@ class Application:
         self._setup_extensions()
         self._setup_web()
         self._setup_tenant()
+        self._setup_diagnostic_guard()
         self._setup_capacity()
         self._setup_health()
         return self.app
@@ -352,19 +351,38 @@ class Application:
             access_guard=self._diagnostic_guard,
         )
 
+    def _setup_diagnostic_guard(self) -> None:
+        """诊断端点访问守卫装配（app.diagnostics.access 段，设计文档 §9）。
+
+        与容量评估解耦独立构造：/metrics（_setup_health）生产环境同样受 IP 白名单
+        保护，即使 app.capacity.enabled=false 也构造守卫（审查修复：原守卫在
+        _setup_capacity 内构造，capacity 未启用时 /metrics 无访问控制）。
+        守卫只依赖 infra.web（不触发 capabilities.capacity 加载，延迟导入不受影响）；
+        /capacity 与 /metrics 共用同一守卫实例，诊断端点访问策略保持一致。
+        """
+        self._diagnostic_guard = DiagnosticAccessGuard(
+            enabled=self.settings.get_bool("app.diagnostics.access.enabled", True),
+            allowed_cidrs=tuple(self.settings.get("app.diagnostics.access.allowed_cidrs") or ()),
+        )
+
     def _setup_capacity(self) -> None:
         """容量评估装配（app.capacity.enabled=true 时，设计文档 §8）：
 
         - 读取 app.capacity 配置段构造 CapacityAssessor（组合 StaticEstimator + RuntimeSampler
           + RemoteProbe），挂 app.state.capacity 供业务访问；
         - 注册 /capacity 端点（content-negotiation JSON/HTML），生产环境注入
-          DiagnosticAccessGuard（IP 白名单，app.diagnostics.access 段；与 /metrics 共用）；
-        - 构造守卫并存入 self._diagnostic_guard，供 _setup_health 的 /metrics 复用
-          （诊断端点生产访问控制统一，设计文档 §9）。
+          DiagnosticAccessGuard（IP 白名单，与 /metrics 共用同一守卫，由
+          _setup_diagnostic_guard 构造）；
+        - capacity 相关模块方法内延迟导入：未启用时应用不加载 capacity 包
+          （零配置零开销，与支付等可选能力一致）。
         未启用时零配置零开销：不构造评估器、不注册端点、不创建采样任务。
         """
         if not self.settings.get_bool("app.capacity.enabled"):
             return
+        from web_infra.capabilities.capacity.capacity_config import CapacityConfig, RemoteProbeConfig
+        from web_infra.capabilities.capacity.assessor import CapacityAssessor
+        from web_infra.capabilities.capacity.capacity_endpoint import register_capacity_endpoints
+
         capacity_config = self._build(
             CapacityConfig,
             "app.capacity",
@@ -389,17 +407,7 @@ class Application:
 
         capacity_config = replace(capacity_config, remote=remote_config, remote_targets=tuple(targets))
 
-        # 诊断端点访问守卫（生产 IP 白名单）先于端点注册构造：
-        # /capacity 与 /metrics（_setup_health 晚于本方法）共用同一守卫（设计文档 §9）
-        diag_config = DiagnosticAccessConfig(
-            enabled=self.settings.get_bool("app.diagnostics.access.enabled", True),
-            allowed_cidrs=tuple(self.settings.get("app.diagnostics.access.allowed_cidrs") or ()),
-        )
-        self._diagnostic_guard = DiagnosticAccessGuard(
-            enabled=diag_config.enabled,
-            allowed_cidrs=diag_config.allowed_cidrs,
-        )
-
+        # 守卫由 _setup_diagnostic_guard 独立构造（不依赖 capacity.enabled），此处直接复用
         self._capacity_assessor = CapacityAssessor(self.settings, capacity_config)
         register_capacity_endpoints(
             self.app,

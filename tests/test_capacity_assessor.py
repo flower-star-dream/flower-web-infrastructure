@@ -144,6 +144,24 @@ async def test_capacity_endpoint_guard_allowed():
     assert resp.status_code == 200
 
 
+@pytest.mark.asyncio
+async def test_capacity_endpoint_guard_instance_denied():
+    """/capacity 集成：注入守卫实例（DiagnosticAccessGuard 而非 lambda），生产环境
+    不可信来源 403（回归：实例无 __call__ 时端点内 access_guard(request) 抛 500）"""
+    from web_infra.infra.web import DiagnosticAccessGuard
+
+    app = FastAPI()
+    assessor = _assessor()
+    guard = DiagnosticAccessGuard(is_production=lambda: True)
+    register_capacity_endpoints(app, assessor, service_name="test", access_guard=guard)
+    # client 指定公网 IP：ASGITransport 默认回环会命中白名单放行，无法覆盖拒绝路径
+    transport = httpx.ASGITransport(app=app, client=("8.8.8.8", 50000))
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get("/capacity")
+    assert resp.status_code == 403
+    assert resp.json()["code"] == "E4-SYS-004"
+
+
 # ------------------------------------------------------------------
 # Application 装配
 # ------------------------------------------------------------------

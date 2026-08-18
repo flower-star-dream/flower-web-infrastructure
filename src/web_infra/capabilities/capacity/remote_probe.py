@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 
 import httpx
@@ -46,8 +47,11 @@ class RemoteProbe:
         """
         self._config = config
         self._transport = transport
-        # 每 target 的上次采样快照（counter, perf_counter 时间戳），供快照差分复用
+        # 每 target 的上次采样快照（counter, perf_counter 时间戳），供快照差分复用。
+        # 锁保护：evaluate 为 async，但单线程事件循环内 read-modify-write 也可能被
+        # 多线程调用（CLI 场景与运行实例并行），加锁保证差分基线一致性
         self._last_snapshot: dict[str, tuple[float, float]] = {}
+        self._snapshot_lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # 对外接口
@@ -101,8 +105,9 @@ class RemoteProbe:
         if not ok:
             return InstanceSnapshot(url=url, status=_STATUS_UNREACHABLE)
         now = time.perf_counter()
-        previous = self._last_snapshot.get(url)
-        self._last_snapshot[url] = (counter, now)
+        with self._snapshot_lock:
+            previous = self._last_snapshot.get(url)
+            self._last_snapshot[url] = (counter, now)
         if previous is None:
             return InstanceSnapshot(url=url, status=_STATUS_OK, qps=None)
         prev_counter, prev_ts = previous
@@ -128,6 +133,9 @@ class RemoteProbe:
     async def _fetch_counter(self, url: str) -> tuple[float | None, bool]:
         """拉取目标 /metrics 并解析 http_requests_total 总和。
 
+        响应体流式读取（httpx AsyncClient.stream）：边读边累计字节数，超过
+        max_response_bytes 立即中断（不先缓冲全量再检查，防超大响应占用内存）。
+
         :return: (counter 总和, 是否成功)；失败原因以异常向上抛（由调用方转为不可达标记）。
         """
         try:
@@ -137,20 +145,38 @@ class RemoteProbe:
                 write=self._config.write_timeout,
                 pool=self._config.pool_timeout,
             )
+
+            async def _collect() -> bytes:
+                """流式读取响应体（client.stream 返回异步上下文管理器，非 awaitable）。
+                边读边累计字节数，超过 max_response_bytes 立即中断（不先缓冲全量再检查，
+                防超大响应占用内存）。
+                """
+                async with client.stream("GET", url) as response:
+                    if response.status_code != 200:
+                        raise ValueError(f"返回 HTTP {response.status_code}，目标 /metrics 端点异常？")
+                    total_bytes = 0
+                    chunks: list[bytes] = []
+                    async for chunk in response.aiter_bytes():
+                        total_bytes += len(chunk)
+                        if total_bytes > self._config.max_response_bytes:
+                            raise ValueError(
+                                f"响应体超限（>{self._config.max_response_bytes} 字节），按解析失败处理"
+                            )
+                        chunks.append(chunk)
+                    return b"".join(chunks)
+
             async with httpx.AsyncClient(timeout=timeout, transport=self._transport) as client:
-                response = await asyncio.wait_for(client.get(url), timeout=self._config.timeout)
-        except httpx.TimeoutException:
+                # 总耗时上限覆盖整个请求（连接 + 读取），防极端卡死
+                body = await asyncio.wait_for(_collect(), timeout=self._config.timeout)
+        except (httpx.TimeoutException, asyncio.TimeoutError):
             raise ValueError("请求超时（连接/读取超时，网络可达性异常？）")
         except httpx.ConnectError:
             raise ValueError("连接失败（目标端口是否监听？）")
+        except ValueError:
+            raise
         except Exception as exc:  # 其他网络/解析前异常
             raise ValueError(f"请求异常：{exc}")
 
-        if response.status_code != 200:
-            raise ValueError(f"返回 HTTP {response.status_code}，目标 /metrics 端点异常？")
-        body = response.content
-        if len(body) > self._config.max_response_bytes:
-            raise ValueError(f"响应体超限（>{self._config.max_response_bytes} 字节），按解析失败处理")
         try:
             text = body.decode("utf-8", errors="replace")
         except Exception:

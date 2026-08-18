@@ -24,6 +24,17 @@ from web_infra.infra.web.client_ip import get_client_ip
 
 logger = logging.getLogger("web_infra.infra.web.diagnostic_access")
 
+# 默认内网白名单（设计文档 §9：精确 5 段，IPv4 映射 IPv6 经 _parse_ip 转回 IPv4 判断）。
+# 常量定义在守卫模块而非 capacity 模块：守卫由 Application 独立装配（_setup_diagnostic_guard，
+# 不依赖 app.capacity.enabled），避免 infra 层反向依赖可延迟加载的 capabilities 包。
+DEFAULT_ALLOWED_CIDRS = (
+    "127.0.0.0/8",
+    "::1/128",
+    "10.0.0.0/8",
+    "172.16.0.0/12",
+    "192.168.0.0/16",
+)
+
 
 class DiagnosticAccessGuard:
     """诊断端点访问守卫：生产环境 IP 白名单（fail-closed）"""
@@ -61,8 +72,6 @@ class DiagnosticAccessGuard:
         注意：与 IPAddressUtil 的私网全集（含 CGNAT/组播/保留段）不同，本守卫仅
         精确 5 段，避免把组播/保留段当可信来源放行。
         """
-        from web_infra.capabilities.capacity.capacity_config import DEFAULT_ALLOWED_CIDRS
-
         merged = list(DEFAULT_ALLOWED_CIDRS)
         for cidr in self._allowed_cidrs:
             if cidr not in merged:
@@ -95,6 +104,15 @@ class DiagnosticAccessGuard:
             return True
         logger.warning("diagnostic_access_denied ip=%s path=%s", ip, request.url.path)
         return False
+
+    def __call__(self, request: Request) -> bool:
+        """守卫实例可直接调用（委托 check，供端点以 Callable 参数注入）。
+
+        装配路径将守卫实例传入 register_capacity_endpoints / register_health_endpoints
+        的 access_guard 参数（Callable[[Request], bool]），端点内 `access_guard(request)`
+        即调用本方法；未实现 __call__ 时实例不可调用会抛 TypeError（安全控制失效）。
+        """
+        return self.check(request)
 
     # ------------------------------------------------------------------
     # 内部

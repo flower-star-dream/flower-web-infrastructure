@@ -12,16 +12,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from web_infra.infra.web.diagnostic_access import DEFAULT_ALLOWED_CIDRS
+
 # IO 密集单核并发系数默认值（§4.2：经验值，可运行时用「当前并发」反推校准）
 DEFAULT_IO_CONCURRENCY_FACTOR = 25
-# 默认内网白名单（§9：精确 5 段，IPv4 映射 IPv6 经 _parse_ip 转回 IPv4 判断）
-DEFAULT_ALLOWED_CIDRS = (
-    "127.0.0.0/8",
-    "::1/128",
-    "10.0.0.0/8",
-    "172.16.0.0/12",
-    "192.168.0.0/16",
-)
 
 
 @dataclass(frozen=True)

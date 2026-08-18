@@ -181,3 +181,51 @@ def test_metrics_endpoint_production_guard():
     # 守卫可直接判定（端点集成路径受 TestClient 直连方限制，核心判定已在单测覆盖）
     assert guard.check(_make_request("10.0.0.1")) is True
     assert guard.check(_make_request("8.8.8.8")) is False
+
+
+# ------------------------------------------------------------------
+# 守卫实例可调用（装配注入实例而非函数，回归修复）
+# ------------------------------------------------------------------
+
+def test_guard_instance_callable_delegates_check():
+    """守卫实例可直接调用（__call__ 委托 check）：结果与 check 一致（装配路径回归）"""
+    guard = _guard()
+    assert guard(_make_request("10.0.0.1")) is guard.check(_make_request("10.0.0.1")) is True
+    assert guard(_make_request("8.8.8.8")) is guard.check(_make_request("8.8.8.8")) is False
+    assert guard(_make_request(None)) is False  # fail-closed 经 __call__ 同样生效
+
+
+def test_metrics_endpoint_guard_instance_denied_403():
+    """/metrics 集成：注入守卫实例（而非 check 函数），生产环境不可信来源 403
+    （回归：实例无 __call__ 时端点内 access_guard(request) 抛 TypeError 500）"""
+    from fastapi.testclient import TestClient
+
+    app = FastAPI()
+    guard = _guard()  # production=True
+    register_health_endpoints(app, service_name="test", access_guard=guard)
+    with TestClient(app) as client:
+        resp = client.get("/metrics")
+    assert resp.status_code == 403
+    assert resp.json()["code"] == "E4-SYS-004"
+
+
+def test_app_metrics_guard_decoupled_from_capacity(monkeypatch):
+    """守卫解耦（修复）：app.capacity.enabled=false（默认）时 /metrics 仍注入守卫，
+    生产环境外部来源 403——守卫由 _setup_diagnostic_guard 独立装配，不依赖容量评估开关"""
+    from fastapi.testclient import TestClient
+
+    from web_infra import Application
+    from web_infra.infra.config.dict_config_source import DictConfigSource
+    from web_infra.infra.config.settings import Settings
+
+    # 守卫默认 is_production 读全局 Settings 单例：注入 prod 环境（隔离环境变量与缓存态）
+    monkeypatch.delenv("APP_ENV", raising=False)
+    monkeypatch.setattr(Settings, "instance", lambda: Settings(DictConfigSource({"app.env": "prod"})))
+
+    app_instance = Application({"app.name": "test"})  # app.capacity.enabled 默认 false
+    app = app_instance.build()
+    assert app_instance._diagnostic_guard is not None  # 独立装配，不依赖 capacity
+    with TestClient(app) as client:
+        resp = client.get("/metrics")
+    assert resp.status_code == 403
+    assert resp.json()["code"] == "E4-SYS-004"
