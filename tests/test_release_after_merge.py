@@ -28,6 +28,7 @@ from release_after_merge import (  # noqa: E402
     evaluate_check_runs,
     parse_repo_remote,
     release_version,
+    should_detect_breaking,
     wait_for_checks,
 )
 from version_bump import CommitType, parse_commit_type  # noqa: E402
@@ -126,6 +127,34 @@ class TestDetectBreakingInPr:
         # squash 合并后单条提交信息
         assert detect_breaking_in_pr(["feat: 合并多个功能"]) is False
         assert detect_breaking_in_pr(["feat!: 合并破坏性重构"]) is True
+
+
+class TestShouldDetectBreaking:
+    """breaking 兜底检测的适用范围（docs PR 不应被误升级发版）。"""
+
+    def test_feat_detects(self) -> None:
+        assert should_detect_breaking(CommitType.FEAT) is True
+
+    def test_patch_detects(self) -> None:
+        assert should_detect_breaking(CommitType.PATCH) is True
+
+    def test_docs_no_change_skips(self) -> None:
+        # docs/chore PR 不递增版本，跳过检测，避免被历史 breaking 提交误升级发大版本
+        assert should_detect_breaking(CommitType.NO_CHANGE) is False
+
+    def test_skip_skips(self) -> None:
+        # merge/revert PR 不递增版本，跳过检测
+        assert should_detect_breaking(CommitType.SKIP) is False
+
+    def test_breaking_skips(self) -> None:
+        # 标题已声明破坏性变更，无需再对提交历史兜底检测
+        assert should_detect_breaking(CommitType.BREAKING) is False
+
+    def test_docs_pr_title_not_upgraded(self) -> None:
+        # 回归：docs PR 合入（即使 dev 历史含 feat! 提交）不得升级为 BREAKING 发大版本
+        commit_type = parse_commit_type("docs: 完善并更新全量文档与CI配置")
+        assert should_detect_breaking(commit_type) is False
+        assert release_version("1.0.0", commit_type) is None
 
 
 class TestParseRepoRemote:
