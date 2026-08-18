@@ -70,7 +70,9 @@ def install(repo_root: Path) -> None:
 
     :param repo_root: 仓库根目录
     """
-    hook_path = _git_dir(repo_root) / _HOOK_NAME
+    # 钩子必须位于 <git-dir>/hooks/ 子目录（git 仅在 hooks/ 下查找并执行钩子，
+    # 2026-08-18 修复：此前直接写 <git-dir>/prepare-commit-msg 导致钩子从未触发）
+    hook_path = _git_dir(repo_root) / "hooks" / _HOOK_NAME
     if hook_path.exists() and _HOOK_MARKER not in hook_path.read_text(encoding="utf-8"):
         backup = hook_path.with_suffix(hook_path.suffix + ".bak")
         if backup.exists():
