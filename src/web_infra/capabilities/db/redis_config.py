@@ -86,6 +86,7 @@ class RedisConfig:
                         health_check_interval=self.health_check_interval,
                         retry_on_timeout=self.retry_on_timeout,
                     )
+        assert self._redis is not None  # 双重检查锁定后必非 None（返回类型收窄为 Redis）
         return self._redis
 
     async def connect(self) -> Redis:
@@ -105,7 +106,7 @@ class RedisConfig:
                 logger.error("redis_connection_failed host=%s port=%s error=%s", self.host, self.port, str(e))
                 raise
 
-            return self._redis
+            return redis
 
     async def close(self) -> None:
         """关闭 Redis 连接，释放连接池资源"""

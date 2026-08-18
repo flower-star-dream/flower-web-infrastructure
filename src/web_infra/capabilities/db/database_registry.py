@@ -84,7 +84,7 @@ def _sqlite_factory(params: dict[str, Any]) -> DatabaseFactoryInterface:
     """内置 sqlite：SQLite 同步会话工厂（轻量/测试场景）"""
     from web_infra.capabilities.db.sqlite_session_factory import SqliteSessionFactory
 
-    return SqliteSessionFactory(db_path=params.get("path") or ":memory:")
+    return SqliteSessionFactory(db_path=params.get("path") or ":memory:")  # type: ignore[return-value]  # sqlite 同步会话与异步 DatabaseFactoryInterface 契约并存（轻量/测试场景）
 
 
 # 内置数据库条目（模块导入即注册，幂等）

@@ -113,7 +113,7 @@ class ElasticsearchSearchEngine:
         tenant_id = self._resolve_tenant(tenant_id)
         name = self._index_name(tenant_id, index_name)
         try:
-            await self._client.indices.delete(index=name, ignore_status=[404])
+            await self._client.indices.delete(index=name, ignore_status=[404])  # type: ignore[call-arg]  # elasticsearch-py stub 未声明 ignore_status
         except NotFoundError:
             pass
         except Exception as exc:
@@ -193,7 +193,7 @@ class ElasticsearchSearchEngine:
     async def search(self, tenant_id: str | None, query: SearchQuery) -> list[SearchHit]:
         """关键词检索：multi_match 全字段匹配 → 相关性降序 → 分页 → 可选高亮"""
         from elasticsearch import NotFoundError
-        from elasticsearch_dsl import AsyncSearch, Q
+        from elasticsearch_dsl import AsyncSearch, Q  # type: ignore[attr-defined]  # 官方 SDK 无类型 stub，AsyncSearch/Q 符号延迟导入
 
         tenant_id = self._resolve_tenant(tenant_id)
         name = self._index_name(tenant_id, query.index_name)

@@ -78,7 +78,8 @@ class MongoDatabase:
         """
         await self._ensure_connected()
         client = self._config.client
-        async with await client.start_session() as mongo_session:
+        assert client is not None  # _ensure_connected 已确保建连
+        async with await client.start_session() as mongo_session:  # type: ignore[general-type-issues]  # pymongo stub 未标注 start_session 为协程（异步 API 实际可 await）
             async with mongo_session.start_transaction():
                 yield BeanieMongoSession(self._config, mongo_session)
 

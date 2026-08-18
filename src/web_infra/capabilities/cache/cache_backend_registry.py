@@ -79,7 +79,7 @@ def _memory_cache_factory(settings: Settings) -> CacheBackendInterface:
     from web_infra.capabilities.cache.cache_config import CacheConfig
     from web_infra.capabilities.cache.memory_cache_backend import MemoryCacheBackend
 
-    return MemoryCacheBackend(CacheConfig(max_size=settings.get_int("app.cache.max_size")))
+    return MemoryCacheBackend(CacheConfig(max_size=settings.get_int("app.cache.max_size") or 10000))
 
 
 def _redis_cache_factory(settings: Settings) -> CacheBackendInterface:

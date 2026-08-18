@@ -106,7 +106,7 @@ class ElasticsearchVectorStore(VectorStoreInterface):
 
     def search(self, tenant_id: str | None, query_vector: list[float], top_k: int) -> list[VectorHit]:
         """kNN 检索指定租户命名空间内 top_k 个命中（得分越大越相似，ES 8 原生 knn 查询）"""
-        from elasticsearch_dsl import Search
+        from elasticsearch_dsl import Search  # type: ignore[attr-defined]  # 官方 SDK 无类型 stub，Search 符号延迟导入
 
         tenant_id = self._resolve_tenant(tenant_id)
         name = self._ensure_index(tenant_id)
@@ -158,7 +158,7 @@ class ElasticsearchVectorStore(VectorStoreInterface):
         name = self._index_name(tenant_id)
         if not self._index_exists(name):
             return []
-        response = self._client.search(index=name, size=10000, _source=False, sort=[_ID_FIELD])
+        response = self._client.search(index=name, size=10000, _source=False, sort=[_ID_FIELD])  # type: ignore[call-arg]  # elasticsearch-py stub 未声明 _source 关键字参数
         return [hit["_id"] for hit in response.body.get("hits", {}).get("hits", [])]
 
     # ------------------------------------------------------------------
@@ -212,7 +212,7 @@ class ElasticsearchVectorStore(VectorStoreInterface):
                     }
                 },
                 settings={"number_of_shards": 1, "number_of_replicas": 0},
-                ignore_status=[400],  # resource_already_exists_exception 幂等忽略
+                ignore_status=[400],  # type: ignore[call-arg]  # elasticsearch-py stub 未声明 ignore_status；resource_already_exists_exception 幂等忽略
             )
         except Exception as exc:
             logger.warning("elasticsearch_ensure_index_failed index=%s error=%s", name, exc)

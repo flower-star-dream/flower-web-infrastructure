@@ -71,7 +71,7 @@ def _memory_registry_factory(settings: Settings) -> ServiceRegistryInterface:
     """内置 memory：内存服务注册发现（单机/测试场景）"""
     from web_infra.capabilities.registry.in_memory import InMemoryServiceRegistry
 
-    return InMemoryServiceRegistry(instance_expire_seconds=settings.get_int("app.registry.expire_seconds"))
+    return InMemoryServiceRegistry(instance_expire_seconds=settings.get_int("app.registry.expire_seconds") or 15)
 
 
 def _nacos_registry_factory(settings: Settings) -> ServiceRegistryInterface:

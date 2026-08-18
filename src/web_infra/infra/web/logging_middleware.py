@@ -162,13 +162,15 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         self.logger = get_logger(f"{service_name}.access")
         self.service_name = service_name
         # 标记应用已装配本中间件：Application 生命周期据此在启动阶段关闭 uvicorn 原生访问日志
-        if hasattr(app, "state"):
+        if isinstance(app, FastAPI):
             setattr(app.state, _MIDDLEWARE_STATE_MARK, True)
         # 启动事件：默认 lifespan（普通 FastAPI 应用）在 uvicorn 完成日志配置后执行，
         # 早于任何连接建立，原生访问日志全程不输出（Application 自定义 lifespan 场景见
         # application.py 生命周期内调用 setup_uvicorn_access_log）
-        if hasattr(app, "add_event_handler"):
-            app.add_event_handler("startup", disable_uvicorn_access_log)
+        if isinstance(app, FastAPI):
+            # FastAPI 0.141+ 不再暴露 add_event_handler（Starlette 1.6 移除），经 router 注册启动事件：
+            # 启动时关闭 uvicorn 原生访问日志（uvicorn 完成日志配置后执行，早于连接建立）
+            app.router.add_event_handler("startup", disable_uvicorn_access_log)
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         """处理请求生命周期：解析真实客户端 IP、注入 TraceId、记录唯一访问日志与 RED 指标"""
