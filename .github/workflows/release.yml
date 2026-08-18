@@ -7,7 +7,7 @@
 #               （推送 release/vX.Y.Z → 创建 PR 触发 CI → 检查通过后自动合并 → 清理分支），
 #               使自动发版提交在推送 main 前已跑过 CI，规避 main 分支保护的推送检查限制。
 #               合并发版 PR 后自动打 vX.Y.Z tag 并推送，触发 ci.yml 正式版镜像发布
-#               （SemVer + latest，见 ci.yml），发版一步到位，无需手动打 tag。
+#               （v<SemVer> + latest，见 ci.yml），发版一步到位，无需手动打 tag。
 #
 # Token 要求：必须使用【仓库 Secret RELEASE_PAT】（经典 PAT，勾选 repo scope，覆盖
 #   contents + pull_requests 写权限），不能只用默认 GITHUB_TOKEN：

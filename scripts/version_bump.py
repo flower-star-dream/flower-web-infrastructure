@@ -1,23 +1,23 @@
-"""自动版本管理脚本
+"""版本计算与同步核心库（release workflow 使用）
 
 @Author: 花海
 @Date: 2026/08/17 21:10
-@Description: prepare-commit-msg 钩子调用的版本自动递增核心脚本：
-              按 conventional commits 前缀推断提交类型（feat→小版本+1、fix 等→补丁+1、
-              docs/chore→不变、含 BREAKING CHANGE 或 !→大版本+1），同步更新
-              pyproject.toml 与 src/web_infra/__init__.py 两处版本号并 git add 纳入本次提交。
+@Description: release-only 版本机制（2026-08-18 整改）下的版本计算核心：
+              本地提交不再自动递增版本号（git 限制：pre-commit 拿不到提交消息无法按类型递增，
+              prepare-commit-msg/commit-msg 中修改 index 不进本次提交），版本递增统一由
+              dev→main 合入时的 release workflow 完成（scripts/release_after_merge.py 调用本模块）。
+              本模块提供：提交类型解析（parse_commit_type）、版本递增计算（release_version /
+              bump_version）、版本文件同步（write_version，同步 pyproject.toml /
+              src/web_infra/__init__.py / README / docs 版本引用）。
               版本号遵循语义化版本规范（SemVer，https://semver.org/lang/zh-CN/）：X.Y.Z 正式版，
-              预发布用连字符 -devN（同时兼容 PEP 440，pip 安装时归一化处理）。dev 分支打
-              预发布版本号（-devN，基础版本不动仅递增 dev 序号）；合入 main 后正式提交剥离
-              -devN 再按类型递增生成正式版。merge / revert / squash 提交跳过（无法解析前缀，避免误改版本）。
+              预发布用连字符 -devN（同时兼容 PEP 440，pip 安装时归一化处理）。
+              本地版本一致性校验与暂存见 scripts/version_check.py（pre-commit 钩子）。
 """
 
 from __future__ import annotations
 
-import os
 import re
 import subprocess
-import sys
 from enum import Enum
 from pathlib import Path
 
@@ -58,7 +58,7 @@ _DOC_VERSION_RULES: tuple[tuple[str, str], ...] = (
     ("README.md", r"version-v{v}(?=-blue)"),        # 徽章版本
     ("README.md", r"\| 当前版本 \| v{v}"),            # 项目信息表当前版本
     ("README.md", r"当前版本：\*\*v{v}\*\*"),         # §13 当前版本
-    ("docs/CI-CD.md", r"tag `v{v}` → 推送 `{v}`"),     # 镜像标签规范示例
+    ("docs/CI-CD.md", r"tag `v{v}` → 推送 `v{v}`"),    # 镜像标签规范示例（v 前缀，规范 §20.1.1）
     ("docs/使用说明.md", r"@v{v}"),                    # Git 依赖安装示例
 )
 
@@ -282,19 +282,6 @@ def write_version(repo_root: Path, old_version: str, new_version: str) -> None:
             readme_path.write_text(updated, encoding="utf-8")
 
 
-def read_commit_message(message_path: str) -> tuple[str, str]:
-    """读取提交信息文件，拆分为主题与正文。
-
-    :param message_path: 提交信息文件路径（prepare-commit-msg 的 $1，可能为相对路径）
-    :return: (subject, body)
-    """
-    with open(os.path.abspath(message_path), encoding="utf-8", errors="replace") as f:
-        lines = f.read().splitlines()
-    if not lines:
-        return "", ""
-    return lines[0], "\n".join(lines[1:])
-
-
 def git(args: list[str], repo_root: Path) -> str:
     """执行 git 命令并返回 stdout（去尾换行）。
 
@@ -308,42 +295,3 @@ def git(args: list[str], repo_root: Path) -> str:
     if result.returncode != 0:
         raise RuntimeError(f"git {' '.join(args)} 失败: {result.stderr.strip()}")
     return result.stdout.strip()
-
-
-def main() -> int:
-    """prepare-commit-msg 钩子入口：解析提交信息 → 计算新版本 → 写回并 git add。
-
-    :return: 退出码（0 正常；异常信息打印后仍返回 0，不阻塞提交）
-    """
-    repo_root = Path(__file__).resolve().parents[1]
-
-    try:
-        if len(sys.argv) < 2:
-            return 0
-        source = sys.argv[2] if len(sys.argv) > 2 else ""
-        subject, body = read_commit_message(sys.argv[1])
-        commit_type = parse_commit_type(subject, body, source)
-        if commit_type is CommitType.SKIP:
-            print("[version-bump] 跳过：merge/revert/squash 提交不更新版本")
-            return 0
-        if commit_type is CommitType.NO_CHANGE:
-            print("[version-bump] 跳过：docs/chore 提交不更新版本")
-            return 0
-
-        branch = git(["branch", "--show-current"], repo_root)
-        current = read_current_version(repo_root)
-        new_version = bump_version(current, commit_type, branch)
-        if new_version is None or new_version == current:
-            return 0
-
-        write_version(repo_root, current, new_version)
-        # 将版本文件纳入本次提交（prepare-commit-msg 阶段 git add 有效）
-        git(["add", *_VERSION_FILES], repo_root)
-        print(f"[version-bump] 版本号自动更新: {current} -> {new_version}（分支 {branch or 'HEAD'}）")
-    except Exception as exc:  # noqa: BLE001 - 钩子失败不阻塞提交，仅告警
-        print(f"[version-bump] 警告：自动版本更新失败（{exc}），本次提交保留现有版本号")
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())

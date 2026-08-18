@@ -6,16 +6,17 @@
 #               单元测试（pytest 硬性门禁）、Docker 基础镜像构建、镜像签名
 #               （整改 S20-4：cosign keyless（OIDC）签名，基于 GitHub Actions OIDC 身份，
 #               无需配置任何密钥；部署侧必须配套 cosign verify 校验后再拉取镜像）。
-#               dev 分支推送即执行完整验证（test + 镜像构建/漏洞扫描/冒烟，不推送镜像），
-#               保证 CI 通过后再提 PR；镜像推送（GHCR）：push main 推测试标签
-#               <分支名>-<时间戳>-<构建号> 并更新 latest（脚手架等下游 CI 拉取 latest 作为基础镜像）；
-#               版本 tag v* 推 SemVer + latest；PR 只构建/扫描/冒烟，不推送（详见 docs/CI-CD.md）。
+#               main / dev 分支推送即执行完整验证并推送测试标签
+#               <分支名>-<时间戳>-<构建号>（如 main-202608161030-42 / dev-202608161030-7）；
+#               main 分支额外打 v<pyproject版本> 标签（如 v1.0.0，与正式版共用、滚动覆盖）；
+#               版本 tag v* 推 v<SemVer> + latest
+#               （latest 仅随正式版更新，规范 §20.1.1）；PR 只构建/扫描/冒烟，不推送（详见 docs/CI-CD.md）。
 # =====================================================================
 name: CI
 
 on:
   push:
-    branches: [main, dev]  # dev 分支推送即验证：CI 通过后再提 PR（仅验证不推送镜像）
+    branches: [main, dev]  # main/dev 分支推送即完整验证并推送测试标签；PR 提交前先跑通 CI
     tags: ["v*"]          # 版本 tag 无条件触发：发布正式版镜像，不受 paths-ignore 影响
     paths-ignore:         # 仅文档/非代码变更不触发（不参与单元测试与镜像构建）
       - "*.md"
@@ -78,7 +79,7 @@ jobs:
 
       - name: 构建基础镜像
         # 整改 S20-3：:ci 仅为 CI 内部构建标签（不对外推送）；镜像推送标签规范见 docs/CI-CD.md：
-        # 测试版 <分支名>-<时间戳>-<构建号>、正式版 SemVer、latest 跟随最新 main 构建（正式版发布时覆盖为正式版）
+        # 测试版 <分支名>-<时间戳>-<构建号>（main 额外打 v<pyproject版本>）、正式版 v<SemVer>、latest 仅随正式版更新
         run: docker build -t flower-web-infrastructure:ci .
 
       - name: 镜像漏洞扫描（Trivy，高危/严重阻断上线）
@@ -116,31 +117,41 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 推送镜像 + 签名（main 分支：测试标签 + latest）
-        # 整改 S20-3 标签规范：测试版 <分支名>-<时间戳>-<构建号>（如 main-20260816103000-42）；
-        # latest 跟随最新 main 构建——脚手架等下游 CI 拉取 ghcr.io/flower-star-dream/flower-web-infrastructure:latest
-        # 作为业务镜像基础（见脚手架 ci.yml / docs/CI-CD.md），正式版 tag 时仍会覆盖为最新正式版。
+      - name: 推送镜像 + 签名（main/dev 分支：测试标签）
+        # 整改 S20-3 标签规范：测试版 <分支名>-<时间戳>-<构建号>（如 main-202608161030-42 / dev-202608161030-7）；
+        # 分支名取自 github.ref_name（当前分支），分支命名需规避 "/"（规范 §20.1.1：/ 转 -）；
+        # latest 仅随正式版 tag 更新（规范 §20.1.1），main/dev 测试构建均不推送 latest；
+        # 下游（脚手架等）固定以 SemVer/digest 拉取基础镜像（见脚手架 ci.yml / docs/CI-CD.md）。
+        # main 分支额外打 v<pyproject版本> 标签（如 v1.0.0，规范 §20.1.1 正式版示例 v1.2.3 的 v 前缀形式），
+        # 便于按版本号引用 main 最新构建；该标签与正式版 git tag 共用（main 构建滚动更新，正式版发布时覆盖为正式内容），
+        # 生产部署须固定 digest 拉取（规范 §20.2）。
         # 整改 S20-4 镜像签名（keyless/OIDC）：cosign 只能对已推送的仓库镜像签名——本地 :ci 标签无仓库前缀
-        # 会被解析到 Docker Hub 导致 401（此前报错），故先推送再签名；签名绑定镜像 digest，
-        # 同一 digest 的多个 tag（main-xxx / latest）分别签名。部署侧必须配套 cosign verify 校验（示例见 docs/CI-CD.md §8）。
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        # 会被解析到 Docker Hub 导致 401（此前报错），故先推送再签名；签名绑定镜像 digest。
+        # 部署侧必须配套 cosign verify 校验（示例见 docs/CI-CD.md §8）。
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
         run: |
           IMAGE=ghcr.io/${{ github.repository }}
-          TAG=main-$(date +%Y%m%d%H%M%S)-${{ github.run_number }}
+          TAG=${{ github.ref_name }}-$(date +%Y%m%d%H%M)-${{ github.run_number }}
           docker tag flower-web-infrastructure:ci $IMAGE:$TAG
           docker push $IMAGE:$TAG
-          docker tag flower-web-infrastructure:ci $IMAGE:latest
-          docker push $IMAGE:latest
           cosign sign --yes $IMAGE:$TAG
-          cosign sign --yes $IMAGE:latest
+          # main 分支额外打 v<pyproject版本> 标签（dev 分支不打，避免 dev 构建与 main 互相覆盖 v 标签）
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            VERSION=$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' pyproject.toml | head -1)
+            docker tag flower-web-infrastructure:ci $IMAGE:v$VERSION
+            docker push $IMAGE:v$VERSION
+            cosign sign --yes $IMAGE:v$VERSION
+          fi
 
       - name: 推送镜像 + 签名（版本 tag v*：SemVer + latest）
-        # 正式版：语义化版本（SemVer，与 pyproject.toml 版本号保持一致），同时更新 latest；
-        # 先推送后 keyless（OIDC）签名（同 main 分支，cosign 不能签名未推送的本地镜像）
+        # 正式版：语义化版本（带 v 前缀，规范 §20.1.1 示例 v1.2.3，与 git tag 同名如 v1.0.0），同时更新 latest；
+        # v<版本> 标签与 main 分支构建共用同一标签：main 构建滚动更新，正式版发布时覆盖为正式内容（滚动版本标签，
+        # 生产部署须固定 digest 拉取，规范 §20.2）；
+        # 先推送后 keyless（OIDC）签名（同分支推送，cosign 不能签名未推送的本地镜像）
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
           IMAGE=ghcr.io/${{ github.repository }}
-          VERSION=${GITHUB_REF#refs/tags/v}
+          VERSION=${GITHUB_REF#refs/tags/}   # 保留 v 前缀：refs/tags/v1.0.0 → v1.0.0
           docker tag flower-web-infrastructure:ci $IMAGE:$VERSION
           docker push $IMAGE:$VERSION
           docker tag flower-web-infrastructure:ci $IMAGE:latest
