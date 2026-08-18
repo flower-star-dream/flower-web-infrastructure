@@ -42,6 +42,11 @@ dependencies = [
     "cryptography>=3.0.0",
 ]
 
+# === 项目元信息：主页 / 源码仓库（与 README 徽章、CI、GHCR 地址一致）===
+[project.urls]
+Homepage = "https://github.com/flower-star-dream/flower-web-infrastructure"
+Repository = "https://github.com/flower-star-dream/flower-web-infrastructure"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",

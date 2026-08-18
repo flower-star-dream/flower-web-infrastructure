@@ -97,6 +97,7 @@ flower web 通用框架是一套**配置驱动**的后端基础设施库，面�
 | 消息队列    | RocketMQ（可选，延迟导入）、内存实现                       |
 | 对象存储    | MinIO（可选，延迟导入）、本地文件系统                      |
 | 注册发现    | Nacos（可选，延迟导入）、内存实现                          |
+| 搜索引擎    | Elasticsearch（可选，`es` extra，延迟导入）、内存实现       |
 | 观测        | Prometheus client、结构化日志（JSON / 文本 + 脱敏）        |
 | 质量        | pytest、pytest-asyncio、pyright（静态类型检查）            |
 | 交付        | Docker（基础镜像）、GitHub Actions（CI/CD）                |
@@ -111,7 +112,7 @@ python -m venv .venv
 .venv\Scripts\activate
 ```
 
-**最小安装（推荐，仅核心依赖）**——Web / 配置 / 日志 / 错误码 / 安全工具类（JWT、密码加密）/ 缓存（内存）/ 监控 / 韧性，`import web_infra` 与 `create_app()` 开箱即用；**不含** MySQL/Redis/Mongo 数据访问（代码延迟导入）及 MinIO / Nacos / RocketMQ / Alembic / RAG / PDF 等可选组件。数据库与缓存扩展能力需按需安装 extras（见下方"按需追加可选能力"）。**依赖链上的业务可选能力（用户系统 → 认证 → 鉴权 → 支付）默认全部关闭**（认证/鉴权与支付一样依赖用户系统，`app.capabilities.enabled` 默认空，见 [docs/使用说明.md](./docs/使用说明.md) 1.1/4.2 节）：
+**最小安装（推荐，仅核心依赖）**——Web / 配置 / 日志 / 错误码 / 安全工具类（JWT、密码加密）/ 缓存（内存）/ 监控 / 韧性，`import web_infra` 与 `create_app()` 开箱即用；**不含** MySQL/Redis/Mongo 数据访问（代码延迟导入）及 MinIO / Nacos / RocketMQ / Alembic / RAG / PDF / Elasticsearch 等可选组件。数据库与缓存扩展能力需按需安装 extras（见下方"按需追加可选能力"）。**依赖链上的业务可选能力（用户系统 → 认证 → 鉴权 → 支付）默认全部关闭**（认证/鉴权与支付一样依赖用户系统，`app.capabilities.enabled` 默认空，见 [docs/使用说明.md](./docs/使用说明.md) 1.1/4.2 节）：
 
 ```bash
 pip install flower-web-infrastructure
@@ -143,6 +144,7 @@ pip install "flower-web-infrastructure[migrate]"            # Alembic 迁移工�
 pip install "flower-web-infrastructure[nacos,rocketmq]"     # 配置中心 + RocketMQ
 pip install "flower-web-infrastructure[rag]"                # 向量检索（faiss + sentence-transformers）
 pip install "flower-web-infrastructure[pdf]"                # PDF 渲染导出（playwright）
+pip install "flower-web-infrastructure[es]"                 # Elasticsearch 搜索引擎（全文检索 + 向量 kNN）
 ```
 
 **本地开发安装**（框架与业务同机，editable 即时生效）：
@@ -151,7 +153,7 @@ pip install "flower-web-infrastructure[pdf]"                # PDF 渲染导出�
 pip install -e "f:\baseProject\flower-web-infrastructure[all]"
 ```
 
-可选能力依赖（延迟导入，不安装不影响核心功能）说明：Nacos（官方 nacos-sdk-python v2，gRPC 协议）与 RocketMQ 按需安装；RAG / PDF 为重量级可选能力。
+可选能力依赖（延迟导入，不安装不影响核心功能）说明：Nacos（官方 nacos-sdk-python v2，gRPC 协议）与 RocketMQ 按需安装；RAG / PDF 为重量级可选能力；Elasticsearch 搜索引擎（`es`）经 `elasticsearch-dsl` ORM 接入，见 [7.14 搜索引擎](#714-搜索引擎)。
 
 ## 5. 快速开始
 
