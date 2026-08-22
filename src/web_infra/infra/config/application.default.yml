@@ -79,6 +79,9 @@ app:
 
   # 缓存（CacheBackendRegistry 按 type 装配：内置 memory/redis，自定义经 register 注册后接入）
   cache:
+    # type 选择实现；框架内置 memory/redis 注册于框架命名空间（受保护，同名覆盖默认拒绝）。
+    # 用户业务实现通常经 CacheBackendRegistry.register 注册（默认命名空间 user），
+    # 同名注册即覆盖本次装配选择，但不会破坏框架内置默认实现本身。
     type: memory
     max_size: 10000
     redis:
@@ -109,6 +112,13 @@ app:
     #   port: 6379
     #   db: 0
 
+  # 进程内事件总线（默认关闭，见 web_infra.capabilities.event）：区别于 MQ（跨服务），服务内解耦；
+  # app.event.enabled=true 时装配 EventBus 并挂 app.state.event（业务 publish/publish_after_commit 发布），
+  # 监听器经 @event_listener 注册；fail_fast 控制单监听器异常是否阻断其余（默认 false=记录日志继续）。
+  event:
+    enabled: false             # 进程内事件总线默认不装配（默认关闭）；业务显式开启后才挂 app.state.event
+    fail_fast: false           # 单监听器异常是否阻断其余（false=记录日志继续分发）
+
   # 数据库（DatabaseFactoryInterface SPI，DatabaseRegistry 按 type 装配：内置 mysql/sqlite，
   # 自定义如 PostgreSQL 经 DatabaseRegistry.register 注册后接入；未注册的 type 启动期快速失败（ConfigError））。
   # 推荐以「命名数据源池」（app.db.datasources）为配置主体：default 指向默认数据源，业务 db 无参取它、
@@ -124,6 +134,9 @@ app:
     #     type: sqlite
     #     path: ":memory:"
     # ===== 旧形态单源（向后兼容，与 datasources 二选一） =====
+    # type 选择实现；框架内置 mysql/sqlite 注册于框架命名空间（受保护，同名覆盖默认拒绝）。
+    # 用户业务实现通常经 DatabaseRegistry.register 注册（默认命名空间 user），
+    # 同名注册即覆盖本次装配选择，但不会破坏框架内置默认实现本身。
     type: mysql
     # 混合多数据源（同一应用并存多种数据库，如 order→mysql、audit→pg）：每实例带 type 字段
     # （缺省 mysql），按 DatabaseRegistry 按名构建，装配为 DatabaseManager 按名/租户路由
@@ -223,6 +236,9 @@ app:
 
   # 对象存储（ObjectStorageRegistry 按 type 装配：内置 local/minio，自定义经 register 注册后接入）
   storage:
+    # type 选择实现；框架内置 local/minio 注册于框架命名空间（受保护，同名覆盖默认拒绝）。
+    # 用户业务实现通常经 ObjectStorageRegistry.register 注册（默认命名空间 user），
+    # 同名注册即覆盖本次装配选择，但不会破坏框架内置默认实现本身。
     type: local
     base_dir: ./data
     minio:
@@ -236,6 +252,9 @@ app:
 
   # 消息队列（MessageQueueRegistry 按 type 装配：内置 memory/rocketmq，自定义经 register 注册后接入）
   mq:
+    # type 选择实现；框架内置 memory/rocketmq 注册于框架命名空间（受保护，同名覆盖默认拒绝）。
+    # 用户业务实现通常经 MessageQueueRegistry.register 注册（默认命名空间 user），
+    # 同名注册即覆盖本次装配选择，但不会破坏框架内置默认实现本身。
     type: memory
     rocketmq:
       name_server: localhost:9876
@@ -277,6 +296,9 @@ app:
   # 默认不启用，需业务显式开启；索引真实命名 {index_prefix}_{tenant}_{index}，多租户前缀隔离）
   search:
     enabled: false
+    # type 选择实现；框架内置 memory/elasticsearch 注册于框架命名空间（受保护，同名覆盖默认拒绝）。
+    # 用户业务实现通常经 SearchEngineRegistry.register 注册（默认命名空间 user），
+    # 同名注册即覆盖本次装配选择，但不会破坏框架内置默认实现本身。
     type: memory            # 默认实现：memory（内存测试/小规模）| elasticsearch（生产推荐，需 es extra）
     index_prefix: web       # 真实索引名前缀（按部署环境可覆盖，如 app_search）
     elasticsearch:
@@ -325,6 +347,9 @@ app:
 
   # 服务注册发现（ServiceDiscoveryRegistry 按 type 装配：内置 memory/nacos，自定义经 register 注册后接入）
   registry:
+    # type 选择实现；框架内置 memory/nacos 注册于框架命名空间（受保护，同名覆盖默认拒绝）。
+    # 用户业务实现通常经 ServiceDiscoveryRegistry.register 注册（默认命名空间 user），
+    # 同名注册即覆盖本次装配选择，但不会破坏框架内置默认实现本身。
     type: memory
     expire_seconds: 15
     # Nacos 客户端配置（nacos-sdk-python v2：gRPC 协议，server_addresses 支持逗号分隔多地址）
