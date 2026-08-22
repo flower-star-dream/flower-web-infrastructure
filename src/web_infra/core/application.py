@@ -53,6 +53,7 @@ from web_infra.capabilities.ai.quota import QuotaConfig, QuotaManager
 from web_infra.capabilities.mq.message_queue_registry import MessageQueueRegistry
 from web_infra.capabilities.storage.object_storage_registry import ObjectStorageRegistry
 from web_infra.capabilities.registry.service_discovery_registry import ServiceDiscoveryRegistry
+from web_infra.capabilities.search.search_engine_registry import SearchEngineRegistry
 from web_infra.infra.web.diagnostic_access import DiagnosticAccessGuard
 from web_infra.infra.constants import CacheKeyBuilder
 from web_infra.infra.resilience.distributed_lock_registry import DistributedLockRegistry
@@ -275,8 +276,38 @@ class Application:
             ctx = {"settings": self.settings, "components": self._components}
             self.app.add_middleware(middleware_class, **build_options(options, ctx))
 
+    #: 核心 SPI 默认实现（关键功能不因扩展缺失而失效；已迁移到 SpiRegistry 基类的注册表才会被校验）
+    _CRITICAL_SPI_DEFAULTS: tuple[tuple[Any, tuple[str, ...]], ...] = (
+        (CacheBackendRegistry, ("memory", "redis")),
+        (DatabaseRegistry, ("mysql", "sqlite")),
+        (ObjectStorageRegistry, ("local", "minio")),
+        (MessageQueueRegistry, ("memory", "rocketmq")),
+        (ServiceDiscoveryRegistry, ("memory", "nacos")),
+        (SearchEngineRegistry, ("memory", "elasticsearch")),
+    )
+
+    def _verify_spi_integrity(self) -> None:
+        """启动时校验核心 SPI 默认实现完整性。
+
+        仅对已迁移到 SpiRegistry 基类（具备 registered_framework_names）的注册表校验：
+        框架命名空间内置默认存在，缺失则 ConfigError 快速失败（防用户覆盖框架核心实现导致
+        关键功能不可用，规范 §框架底层实现保护）。未迁移注册表静默跳过，迁移后自动纳入。
+        """
+        for registry, required in self._CRITICAL_SPI_DEFAULTS:
+            if not hasattr(registry, "registered_framework_names"):
+                continue  # 未迁移注册表（后续迁移后自动纳入校验）
+            present = set(registry.registered_framework_names())
+            missing = [name for name in required if name not in present]
+            if missing:
+                raise ConfigError(
+                    f"核心 SPI 默认实现缺失：{registry.__name__} 框架命名空间缺少 "
+                    f"{', '.join(missing)}（内置实现应随框架导入自动注册）",
+                    key="app.spi.integrity",
+                )
+
     def _setup_components(self) -> None:
         """按配置装配中间件组件，并注入 app.state 供业务代码访问"""
+        self._verify_spi_integrity()
         self._components["cache"] = self._build_cache()
         self._components["db"] = self._build_db()
         self._components["storage"] = self._build_storage()
