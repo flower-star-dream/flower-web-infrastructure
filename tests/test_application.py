@@ -225,14 +225,16 @@ def test_application_logging_unknown_sink_raises():
 # ---------------------------------------------------------------------------
 
 
-def test_application_event_component_disabled_by_default():
-    """app.event.enabled 缺省 false：不装配 event"""
+def test_application_event_always_assembled():
+    """事件总线作为核心能力：未配置 app.event.enabled 也始终装配"""
     app = create_app({"app.name": "test-app"})
-    assert not hasattr(app.state, "event")
+    from web_infra.capabilities.event import EventBus
+
+    assert isinstance(app.state.event, EventBus)
 
 
 def test_application_event_component_enabled():
-    """app.event.enabled=true：装配 EventBus 到 app.state.event"""
+    """app.event.enabled=true 兼容：依旧装配 EventBus 到 app.state.event"""
     app = create_app({"app.name": "test-app", "app.event.enabled": True})
     from web_infra.capabilities.event import EventBus
 
