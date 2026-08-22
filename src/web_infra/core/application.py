@@ -438,11 +438,15 @@ class Application:
 
     def _build_db(self) -> Any:
         """数据库组件（DatabaseFactoryInterface SPI，DatabaseRegistry 按名装配）：
-        - 单源：按 app.db.type 经注册表按名装配（内置 mysql/sqlite，自定义如 PostgreSQL 经 register 接入）；
-        - 混合多数据源（app.db.instances，每实例带 type 字段）：装配为 DatabaseManager 按名/租户路由，
-          支持 MySQL/PostgreSQL 等不同数据库并存；
-        - 多租户独立库（app.db.mysql.instances，向后兼容旧格式）：全 MySQL 多源同样走 DatabaseManager。
+        - 命名数据源池（app.db.datasources，推荐形态）：default 指向默认数据源，每实例带 type 字段，
+          装配为 DatabaseManager 按名/租户路由（业务 db 无参取 default、按名取 datasources.<name>）；
+        - 旧形态单源：按 app.db.type 经注册表按名装配（内置 mysql/sqlite，自定义经 register 接入）；
+        - 旧形态混合多数据源（app.db.instances，每实例带 type）与多租户独立库（app.db.mysql.instances）：
+          同样装配为 DatabaseManager（向后兼容）。
         未注册的 db.type 启动期快速失败（ConfigError，避免拼写错误/未注册类型静默回落 sqlite）。"""
+        datasources = self.settings.get("app.db.datasources")
+        if isinstance(datasources, dict) and datasources:
+            return self._build_named_datasources(datasources)
         instances = self.settings.get("app.db.instances")
         if isinstance(instances, dict) and instances:
             return self._build_multi_datasource(instances)
@@ -452,6 +456,41 @@ class Application:
         db_type = self.settings.get("app.db.type") or "mysql"
         params = self._db_params(db_type)
         return _resolve_registry(DatabaseRegistry, db_type, "app.db.type")(params)
+
+    def _build_named_datasources(self, datasources: dict[str, dict[str, Any]]) -> DatabaseManager:
+        """按命名数据源池装配 DatabaseManager：default 指向默认数据源，按名取各自连接。
+
+        每个数据源项除连接参数外可带 type（缺省 mysql）、isolation_level（透传给 MySQLConfig，
+        经 _mysql_factory 传给引擎级 create_async_engine）。default 指向的数据源名不存在时快速失败；
+        未配置 default 时，若仅一个数据源则自动取它，否则回落名 "default"（需存在名为 default 的数据源）。
+        """
+        explicit_default = self.settings.get("app.db.default")
+        connections: dict[str, Any] = {}
+        for name, params in datasources.items():
+            db_type = params.get("type") or "mysql"
+            instance_params = {
+                k: v for k, v in params.items()
+                if k not in ("type", "instances") and v is not None
+            }
+            factory = _resolve_registry(DatabaseRegistry, db_type, f"app.db.datasources.{name}")
+            connections[name] = factory({**instance_params, "datasource_name": name})
+        # 默认数据源解析：显式 default > 唯一数据源 > 名为 "default" 的数据源；否则快速失败
+        if explicit_default is not None:
+            default_name = explicit_default
+        elif len(connections) == 1:
+            default_name = next(iter(connections))
+        else:
+            default_name = "default"
+        if default_name not in connections:
+            raise ConfigError(
+                message=f"app.db.default 指向的数据源 {default_name} 未在 app.db.datasources 中定义",
+                key="app.db.default",
+            )
+        router = TenantDatabaseRouter(
+            mapping=self.settings.get("app.db.router.mapping") or {},
+            pattern=self.settings.get("app.db.router.pattern") or "tenant_{tenant_id}",
+        )
+        return DatabaseManager(connections, router, default_name=default_name)
 
     def _db_params(self, db_type: str) -> dict[str, Any]:
         """读取 app.db.<type> 段作为单源实例连接参数（非 None 字段；instances 多源由 _build_db 分支处理）"""

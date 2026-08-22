@@ -30,6 +30,11 @@ from web_infra.capabilities.db.mysql_config import MySQLConfig
 from web_infra.capabilities.db.read_write_router import ReadWriteRouter
 from web_infra.capabilities.db.session_scope_mixin import SessionScopeMixin
 from web_infra.capabilities.db.sqlalchemy_database_session import SqlAlchemyDatabaseSession
+from web_infra.capabilities.db.transaction_propagation import (
+    Propagation,
+    TransactionFrame,
+    TransactionPropagationError,
+)
 from web_infra.infra.logging import get_logger
 
 logger = get_logger("db.mysql")
@@ -79,6 +84,57 @@ class MySQLDatabase(SessionScopeMixin):
         session = await self._config.new_session()
         return SqlAlchemyDatabaseSession(session)
 
+    async def _new_session(self, isolation_level: str | None) -> Any:
+        """创建原生 AsyncSession（raw，含多租户校验）；会话级隔离级别在事务创建点生效。
+
+        注：MySQL 方言 set_isolation_level 内部会执行一次 COMMIT（SET SESSION 后紧跟 COMMIT，
+        见 sqlalchemy/dialects/mysql/base.py:2812），因此会话级隔离级别只能在"新建 owner 事务、
+        尚未执行任何 SQL（未触发 autobegin）"时调用；REQUIRED 复用外层时忽略隔离级别（_tx_scope
+        的 REQUIRED 分支不调用 new_session），避免把外层已执行操作意外提交。
+        """
+        wrapper = await self.create_session()  # 复用多租户 strict 校验与包装
+        raw = wrapper.native()
+        if isolation_level is not None:
+            # 会话级隔离级别：仅对当前连接的下一个事务生效，SQLAlchemy 归还连接时经方言复位
+            await raw.connection(execution_options={"isolation_level": isolation_level})
+        return raw
+
+    def _wrap(self, raw: Any) -> SqlAlchemyDatabaseSession:
+        """将原生 AsyncSession 包装为通用会话（复用外层时同样包装，保证文本 SQL 可用）"""
+        return SqlAlchemyDatabaseSession(raw)
+
+    async def _begin_savepoint(self, raw: Any) -> Any:
+        """开启 SAVEPOINT：SQLAlchemy begin_nested() 返回事务控制对象"""
+        return await raw.begin_nested()
+
+    async def _release_savepoint(self, frame: TransactionFrame) -> None:
+        """释放 SAVEPOINT（NESTED 正常退出）"""
+        await frame.savepoint_tx.commit()
+
+    async def _rollback_savepoint(self, frame: TransactionFrame) -> None:
+        """回滚到 SAVEPOINT（NESTED 异常退出）"""
+        await frame.savepoint_tx.rollback()
+
+    async def _finalize_commit(self, raw: Any, frame: TransactionFrame) -> None:
+        """owner 提交收尾：rollback-only 校验 + 提交 + 长事务审计（规范 §10.4）。
+
+        rollback-only 冲突时不在此处自行回滚，而是抛 TransactionPropagationError，
+        由 _tx_scope 的 except 分支统一回滚一次（避免重复 rollback）。
+        """
+        if frame.rollback_only:
+            raise TransactionPropagationError(
+                "事务传播冲突：内层事务失败，外层事务已标记 rollback-only，强制回滚"
+            )
+        await raw.commit()
+        elapsed = time.perf_counter() - frame.entered_at
+        if elapsed >= self._long_transaction_threshold_seconds:
+            datasource = getattr(self._config, "datasource_name", "default")
+            logger.warning(
+                "mysql_long_transaction datasource=%s duration=%.3fs threshold=%.1fs",
+                datasource, elapsed, self._long_transaction_threshold_seconds,
+            )
+            _record_long_transaction(datasource)
+
     @property
     def session_factory(self) -> Any:
         """SQLAlchemy 异步会话工厂（async_sessionmaker，供 MysqlOutboxStore 等组件装配；
@@ -92,49 +148,49 @@ class MySQLDatabase(SessionScopeMixin):
         self._config.install_tenant_filter(tenant_filter)
 
     @asynccontextmanager
-    async def orm_session(self, read_replica: bool = False) -> AsyncGenerator[AsyncSession, None]:
+    async def orm_session(
+        self,
+        read_replica: bool = False,
+        propagation: Propagation = Propagation.REQUIRED,
+        isolation_level: str | None = None,
+    ) -> AsyncGenerator[AsyncSession, None]:
         """SQLAlchemy ORM 会话上下文管理器（规范 §10.6：框架统一管理连接生命周期，禁止裸获取连接）。
 
-        进入创建原生 AsyncSession（支持 select(Model) 等 ORM 查询），
-        退出自动提交（异常自动回滚）并关闭；业务无需 try/finally。
-        read_replica=True 且配置了从库时，读流量路由到从库（规范 S10-2 读写分离）；
-        无从库时回退主库并记录 warning。
+        支持事务传播（propagation）与会话级隔离级别（isolation_level，仅建新事务时生效）；
+        进入创建原生 AsyncSession（支持 select(Model) 等 ORM 查询），退出自动提交（异常自动回滚）并关闭；
+        业务无需 try/finally。
+        read_replica=True 且配置了从库时读流量路由从库（规范 S10-2），无从库回退主库并 warning。
+        传播语义与长事务监控由 _tx_scope / _finalize_commit 编排。
         """
+
+        async def _new_orm_session(iso: str | None) -> AsyncSession:
+            session = await self._create_orm_session(read_replica)
+            if iso is not None:
+                await session.connection(execution_options={"isolation_level": iso})
+            return session
+
+        async with self._tx_scope(
+            propagation=propagation,
+            isolation_level=isolation_level,
+            new_session=_new_orm_session,
+            wrap=lambda raw: raw,  # ORM 入口产出即原生 AsyncSession
+        ) as session:
+            yield session
+
+    async def _create_orm_session(self, read_replica: bool) -> AsyncSession:
+        """创建 ORM 会话（含读写分离路由；无能力回退主库并告警）"""
         if read_replica:
             # 读写分离 S10-2：读流量优先路由从库（轮询），未配置/无可用从库时回退主库并告警
             # 注：getattr 兜底兼容无读写分离能力的配置实现（视为未配置从库）
             if not getattr(self._config, "replica_urls", None):
                 logger.warning("mysql_read_replica_not_configured_fallback_to_primary")
-                session = await self._config.new_session()
-            else:
-                replica_name = self._router.next_replica()
-                if replica_name is None:
-                    logger.warning("mysql_read_replica_not_available_fallback_to_primary")
-                    session = await self._config.new_session()
-                else:
-                    session = await self._config.get_replica_session(name=replica_name)
-        else:
-            session = await self._config.new_session()
-        # 规范 §10.4 长事务监控：进入上下文记录事务开始时间，退出（commit 路径）统计耗时
-        started = time.perf_counter()
-        try:
-            yield session
-            await session.commit()
-            elapsed = time.perf_counter() - started
-            if elapsed >= self._long_transaction_threshold_seconds:
-                # 长事务标记+审计（规范 §10.4）：超过阈值仅告警不阻断，
-                # 业务长事务走审批流程属业务义务，框架负责审计告警（日志含 datasource 与耗时）
-                datasource = getattr(self._config, "datasource_name", "default")
-                logger.warning(
-                    "mysql_long_transaction datasource=%s duration=%.3fs threshold=%.1fs",
-                    datasource, elapsed, self._long_transaction_threshold_seconds,
-                )
-                _record_long_transaction(datasource)
-        except Exception:
-            await session.rollback()
-            raise
-        finally:
-            await session.close()
+                return await self._config.new_session()
+            replica_name = self._router.next_replica()
+            if replica_name is None:
+                logger.warning("mysql_read_replica_not_available_fallback_to_primary")
+                return await self._config.new_session()
+            return await self._config.get_replica_session(name=replica_name)
+        return await self._config.new_session()
 
     async def close(self) -> None:
         """关闭连接池"""

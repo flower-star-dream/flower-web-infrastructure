@@ -33,6 +33,11 @@ from web_infra.capabilities.db.tenant_guard import TenantGuard
 from web_infra.capabilities.db.database_router import DatabaseRouterInterface, TenantDatabaseRouter
 from web_infra.capabilities.db.session_scope_mixin import SessionScopeMixin
 from web_infra.capabilities.db.session_dependency import provide_db_session
+from web_infra.capabilities.db.transaction_propagation import (
+    IsolationLevel,
+    Propagation,
+    TransactionPropagationError,
+)
 
 if TYPE_CHECKING:
     from web_infra.capabilities.db.mysql_base import Base
@@ -95,6 +100,10 @@ __all__ = [
     "MongoDatabaseRegistry",
     "SessionScopeMixin",
     "provide_db_session",
+    # 事务传播（无第三方依赖，可安全导入 *）
+    "Propagation",
+    "IsolationLevel",
+    "TransactionPropagationError",
     # MySQL 连接配置（仅依赖核心 pydantic，可安全导入 *）
     "MySQLConnectionSettings",
     # 会话工具

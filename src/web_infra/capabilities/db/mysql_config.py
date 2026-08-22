@@ -82,6 +82,7 @@ class MySQLConfig:
         replica_urls: list[str] | None = None,
         replica_username: str | None = None,
         replica_password: str | None = None,
+        isolation_level: str | None = None,
     ) -> None:
         """初始化 MySQL 配置（仅保存参数，不立即建连）"""
         if settings is not None:
@@ -134,6 +135,8 @@ class MySQLConfig:
         # 从库轮询路由（仅名称路由，线程安全）；从库名为 replica_0..N
         self._replica_router = ReadWriteRouter(primary_name=datasource_name)
         self._replica_router.register_replicas(self.replica_names())
+        # 引擎级隔离级别（IsolationLevel 常量；None/DEFAULT = 数据库默认 REPEATABLE READ，显式配置才变更）
+        self.isolation_level = isolation_level
 
     def install_tenant_filter(self, tenant_filter: Any) -> None:
         """注册租户条件过滤器：引擎初始化后自动挂载到 session_factory（多租户规范 §2）。
@@ -246,8 +249,7 @@ class MySQLConfig:
         # S14-3 池名与空闲回收：SQLAlchemy QueuePool 无独立池名参数，池名（=datasource_name）以
         # 日志/指标标签形式落地（慢 SQL/池指标/泄漏均带该标签）；pool_recycle 即 idle 空闲回收机制，
         # 连接空闲超过 pool_recycle 秒后归还时强制重建，防止 MySQL wait_timeout 断连
-        engine = create_async_engine(
-            self.url,
+        engine_kwargs = dict(
             pool_size=self.pool_size,
             max_overflow=self.max_overflow,
             pool_recycle=self.pool_recycle,
@@ -256,6 +258,11 @@ class MySQLConfig:
             pool_pre_ping=self.pool_pre_ping,
             connect_args=self.connect_args,
         )
+        if self.isolation_level is not None:
+            # 引擎级隔离级别：连接池每个连接在 checkout 时统一设置（SQLAlchemy 方言级支持）；
+            # None/DEFAULT 不注入，让数据库使用默认（REPEATABLE READ）
+            engine_kwargs["isolation_level"] = self.isolation_level
+        engine = create_async_engine(self.url, **engine_kwargs)
         self.engine = engine
         self.session_factory = async_sessionmaker(
             bind=engine,
@@ -367,8 +374,7 @@ class MySQLConfig:
         replica_url, connect_args = self._build_url(url, self.replica_username, self.replica_password)
         # 复用主库连接建立超时（规范 §14.1）；aiomysql 不支持 socket 读写超时，不注入
         connect_args["connect_timeout"] = self.connect_args.get("connect_timeout", 10)
-        engine = create_async_engine(
-            replica_url,
+        replica_kwargs = dict(
             pool_size=self.pool_size,
             max_overflow=self.max_overflow,
             pool_recycle=self.pool_recycle,
@@ -377,6 +383,10 @@ class MySQLConfig:
             pool_pre_ping=self.pool_pre_ping,
             connect_args=connect_args,
         )
+        if self.isolation_level is not None:
+            # 引擎级隔离级别与主库一致：None/DEFAULT 不注入，让数据库使用默认
+            replica_kwargs["isolation_level"] = self.isolation_level
+        engine = create_async_engine(replica_url, **replica_kwargs)
         self._replica_engines[name] = engine
         self._replica_session_factories[name] = async_sessionmaker(
             bind=engine,

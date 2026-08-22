@@ -1495,6 +1495,50 @@ app:
   （敏感项经 `APP_SEARCH_ELASTICSEARCH_*` 环境变量注入）。
 - 能力登记：`capability` 注册表内置 `search` 能力（无前置，`app.capabilities.enabled: ["search"]` 可声明启用，自动导入 `web_infra.capabilities.search`）。
 
+### 20.5 数据同步 SPI（search 模块，2026-08-22 落地）
+
+> 搜索引擎数据同步方案（CDC 默认 / 双写备选 / 自定义 SPI）：`web_infra.capabilities.search.sync` 提供
+> 「业务数据库 → ES」同步——**cdc**（MySQL binlog 旁路，默认）/ **dual_write**（事务内写 outbox）/
+> **空闲对账**（reconcile/rebuild 兜底）/ 自定义。位置：`src/web_infra/capabilities/search/sync/`。
+
+**三件套 SPI**：
+
+| SPI | 文件 | 方法 | 默认实现 |
+| ---- | ---- | ---- | ---- |
+| `CdcSourceInterface` | `cdc_source_interface.py` | `subscribe(handler)` / `start()` / `stop()` | `MysqlBinlogCdcSource`（`mysql-replication`，[cdc] extra 延迟导入） |
+| `CdcSyncTargetInterface` | `cdc_sync_target_interface.py` | `upsert(event)` / `delete(event)` / `start()` / `stop()` | `EsCdcSyncTarget`（包装 `SearchEngineInterface`） |
+| `CdcOffsetStoreInterface` | `cdc_offset_store_interface.py` | `save(key, position)` / `load(key)` | `RedisOffsetStore`（默认）/ `FileOffsetStore` / `MysqlOffsetStore` |
+
+- 统一事件模型 `CdcChangeEvent`（`cdc_change_event.py`）：`source/database/table/op/primary_key/before/after/position/ts`，
+  `op` 枚举 `CdcOp`（insert/update/delete），`document_id` 由主键按列序拼接（稳定幂等）。
+- 编排管道 `CdcSyncPipeline`（`cdc_sync_pipeline.py`）：订阅源事件 → 表白名单过滤 → 攒批（bulk_size/flush_interval）→
+  目标写入（exponential backoff 重试）→ 成功后推进全局流位点（At-least-once，目标幂等兜底）；失败超限暂停消费。
+- 装配注册表 `CdcSyncRegistry`（`cdc_sync_registry.py`）：`register_source/register_target/register_offset_store`，
+  内置 `redis`/`file` 位点条目，业务自定义实现 `register_*` 后按 `app.search.sync.source/target/offset_store` 接入，
+  未注册抛 KeyError（装配期转 ConfigError）。
+- 双写：`SearchSyncOutboxWriter`（本事务内写 outbox 记录）+ `SearchSyncOutboxConsumer`（复用 `IdempotentConsumer` 幂等消费，写目标）。
+- 空闲对账：`FullReconcileService`（`full_reconcile_service.py`）——`reconcile`（库 → ES 补齐）/ `rebuild`（重建 + alias 切换），
+  注入行读取器解耦；schedule 定时触发，空闲窗口外跳过。
+- 埋点：`SyncMetrics`（`search_sync_*`：事件/成功/失败/滞后/位点/对账差异），懒注册模式（随调用注册）。
+
+**错误码**（`search_sync_error_code.py`，模块导入即登记注册表）：
+
+| 错误码 | 语义 | HTTP | 可重试 |
+| ---- | ---- | ---- | ---- |
+| `E3-SRCH-010` | CDC 数据源读取失败（内部重连） | 502 | 是 |
+| `E3-SRCH-011` | 同步目标写入失败 | 502 | 是 |
+| `E4-SRCH-012` | 同步配置非法 | 422 | 否 |
+| `E4-SRCH-013` | 位点无效或丢失（需对账/重建） | 422 | 否 |
+
+**配置**（`application.default.yml` `app.search.sync` 段 + `CdcSyncConfig` 模型，默认关闭）：
+`enabled/type(cdc|dual_write|custom)/source(mysql)/target(es)/offset_store(redis|file|mysql)`、
+`cdc.mysql.host/port/username/password/database/server_id/tables/bulk_size/flush_interval_seconds/heartbeat_interval_seconds`、
+`retry.max_attempts/backoff_base_seconds/max_backoff_seconds`、`delete_strategy(soft|hard)`、
+`dual_write.topic/outbox.event_type`、`reconcile.enabled/mode/cron/window/batch_size/tables`、`mapping`（表 → 索引映射）。
+
+**部署前置**：MySQL `binlog_format=ROW`、`binlog_row_image=FULL`、8.0.14+ `binlog_row_metadata=FULL`；
+复制账号需 `REPLICATION SLAVE, REPLICATION CLIENT`；多实例 `server_id` 唯一 + Redis 分布式锁选主。
+
 ## 21. 维护指南
 
 | 场景 | 操作位置 |
@@ -1505,3 +1549,5 @@ app:
 | 涉及数据库存储实现 | 同步更新 `db/init/ddl/001-mq-init-ddl.sql` 及对应 DML |
 | 新增支付渠道 | 在 `src/web_infra/capabilities/payment/provider/` 继承 `PaymentChannelTemplate`（§3.1 骨架）填充 `_do_*`/`_parse_callback`、声明 `capabilities` 并注册 `PaymentGatewayRegistry`；同步补充契约测试（§15.1/§15.4） |
 | 新增搜索引擎实现 | 实现 `SearchEngineInterface`（§20.1）或 `VectorStoreInterface`，注册 `SearchEngineRegistry`；同步补充单元测试与 §2 总览表 |
+| 新增同步数据源/目标 | 实现 `CdcSourceInterface` / `CdcSyncTargetInterface`（§20.5），注册 `CdcSyncRegistry`；同步补充单元测试 |
+| 新增同步位点存储 | 实现 `CdcOffsetStoreInterface`（§20.5），注册 `CdcSyncRegistry.register_offset_store`；同步补充单元测试与位点表 DDL |

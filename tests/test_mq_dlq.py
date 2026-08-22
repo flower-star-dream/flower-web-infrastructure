@@ -421,6 +421,40 @@ async def test_mysql_outbox_store_cleanup_sent(mysql_store):
     assert await mysql_store.next_pending(10) == []
 
 
+@pytest.mark.asyncio
+async def test_outbox_append_reuses_propagation_transaction(tmp_path):
+    """Outbox append 复用业务传播事务：业务回滚则 Outbox 记录一并回滚（同事务同生共死）"""
+    from web_infra.capabilities.db import MySQLDatabase
+    from web_infra.capabilities.db.transaction_propagation import current_session
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path.as_posix()}/outbox.db")
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with factory() as session:
+        await session.execute(text(_CREATE_TABLE_SQL))
+        await session.commit()
+
+    class _Config:
+        async def new_session(self):
+            return factory()
+
+    db = MySQLDatabase(_Config())  # type: ignore[arg-type]
+    store = MysqlOutboxStore(factory)
+
+    with pytest.raises(RuntimeError):
+        async with db.orm_session():
+            # 不传 session：自动复用当前传播事务（同一事务）
+            await store.append(OutboxRecord(msg_id="m1", biz_id="b1", topic="order", payload={}))
+            assert current_session() is not None
+            raise RuntimeError("business boom")
+
+    # 业务回滚后 Outbox 记录不可见（同事务同生共死）
+    async with db.orm_session() as session:
+        count = (await session.execute(text("SELECT COUNT(*) FROM message_outbox"))).scalar_one()
+    assert count == 0
+
+    await engine.dispose()
+
+
 # ------------------------------------------------------------------
 # 整改 5：Outbox 定时任务装配（S21-2）
 # ------------------------------------------------------------------

@@ -74,10 +74,17 @@ def _mysql_factory(params: dict[str, Any]) -> DatabaseFactoryInterface:
     from web_infra.capabilities.db.mysql_database import MySQLDatabase
     from web_infra.capabilities.db.mysql_connection_settings import MySQLConnectionSettings
 
+    # isolation_level 不属于连接设置，单独透传给 MySQLConfig（None/DEFAULT 不注入，让数据库用默认）
+    isolation_level = params.get("isolation_level")
     settings = MySQLConnectionSettings(
-        **{k: v for k, v in params.items() if v is not None and k not in ("instances", "datasource_name")}
+        **{k: v for k, v in params.items() if v is not None and k not in ("instances", "datasource_name", "isolation_level")}
     )
-    return MySQLDatabase(MySQLConfig(settings=settings, datasource_name=params.get("datasource_name") or "default"))
+    config = MySQLConfig(
+        settings=settings,
+        datasource_name=params.get("datasource_name") or "default",
+        isolation_level=isolation_level,
+    )
+    return MySQLDatabase(config)
 
 
 def _sqlite_factory(params: dict[str, Any]) -> DatabaseFactoryInterface:

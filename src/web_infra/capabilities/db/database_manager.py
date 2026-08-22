@@ -22,6 +22,7 @@ from typing import Any, AsyncGenerator
 from web_infra.infra.context import RequestContext
 from web_infra.capabilities.db.database_router import DatabaseRouterInterface
 from web_infra.capabilities.db.database_session_interface import DatabaseSessionInterface
+from web_infra.capabilities.db.transaction_propagation import Propagation
 from web_infra.infra.error import PermException
 
 
@@ -135,25 +136,43 @@ class DatabaseManager:
         return list(self._router.registered_tenants()) if self._router is not None else []
 
     @asynccontextmanager
-    async def session(self, name: str | None = None) -> AsyncGenerator[DatabaseSessionInterface, None]:
-        """默认数据源会话上下文管理器：进入创建会话，退出自动提交（异常回滚）并关闭。
+    async def session(
+        self,
+        name: str | None = None,
+        propagation: Propagation = Propagation.REQUIRED,
+        isolation_level: str | None = None,
+    ) -> AsyncGenerator[DatabaseSessionInterface, None]:
+        """默认数据源会话上下文管理器（透传传播与隔离级别）。
 
         :param name: 数据源名（默认使用构造时 default_name）
+        :param propagation: 事务传播级别（默认 REQUIRED，复用外层事务）
+        :param isolation_level: 会话级隔离级别（仅建新事务时生效；SQLite 静默忽略）
         """
-        async with self.get(name).session() as session:
+        async with self.get(name).session(
+            propagation=propagation, isolation_level=isolation_level
+        ) as session:
             yield session
 
     @asynccontextmanager
-    async def orm_session(self, name: str | None = None) -> AsyncGenerator[Any, None]:
-        """默认数据源 SQLAlchemy ORM 会话上下文管理器（规范 §10.6：框架统一管理连接生命周期）。
+    async def orm_session(
+        self,
+        name: str | None = None,
+        propagation: Propagation = Propagation.REQUIRED,
+        isolation_level: str | None = None,
+    ) -> AsyncGenerator[Any, None]:
+        """默认数据源 SQLAlchemy ORM 会话上下文管理器（透传传播与隔离级别）。
 
         退出自动提交（异常自动回滚）并关闭；业务无需 try/finally。
         支持实现 orm_session 能力的数据源（如 MySQLDatabase 的原生 AsyncSession）；
         无该能力的数据源（如同步 SQLite）调用时抛 AttributeError。
 
         :param name: 数据源名（默认使用构造时 default_name）
+        :param propagation: 事务传播级别（默认 REQUIRED，复用外层事务）
+        :param isolation_level: 会话级隔离级别（仅建新事务时生效）
         """
-        async with self.get(name).orm_session() as session:
+        async with self.get(name).orm_session(
+            propagation=propagation, isolation_level=isolation_level
+        ) as session:
             yield session
 
     async def close(self) -> None:

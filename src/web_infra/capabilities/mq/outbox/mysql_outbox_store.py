@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 from web_infra.capabilities.mq.outbox.outbox_record import OutboxRecord
 from web_infra.capabilities.mq.outbox.outbox_status import OutboxStatus
 from web_infra.capabilities.mq.outbox.outbox_store_interface import OutboxStoreInterface
+from web_infra.capabilities.db.transaction_propagation import current_session
 
 # 表名与基础 DDL（db/init/ddl/001-mq-init-ddl.sql + V0.2.0 增量 next_retry_at 列）对齐
 _OUTBOX_TABLE = "message_outbox"
@@ -57,9 +58,18 @@ class MysqlOutboxStore(OutboxStoreInterface):
 
     @asynccontextmanager
     async def _session_scope(self, session: AsyncSession | None = None) -> AsyncGenerator[AsyncSession, None]:
-        """会话作用域：无外部会话时自建并提交/关闭；传入业务会话时不提交（由业务事务统一提交）"""
-        own = session is None
-        current = session or self._session_factory()
+        """会话作用域：优先复用调用方传入会话；其次复用当前传播事务会话（同事务写入）；
+        否则自建会话并提交/关闭。复用会话时不提交（由外层事务统一提交）。
+        """
+        current = session
+        own = current is None
+        if own:
+            # 复用传播栈中的业务事务会话（业务经 orm_session/session 进入传播后 append 同事务落库）
+            current = current_session()
+            own = current is None
+        if current is None:
+            current = self._session_factory()
+            own = True
         try:
             yield current
             if own:

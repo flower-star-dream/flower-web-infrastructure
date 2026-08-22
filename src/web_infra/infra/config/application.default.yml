@@ -97,9 +97,20 @@ app:
       retry_on_timeout: true
 
   # 数据库（DatabaseFactoryInterface SPI，DatabaseRegistry 按 type 装配：内置 mysql/sqlite，
-  # 自定义如 PostgreSQL 经 DatabaseRegistry.register 注册后按 app.db.type 接入；
-  # 未注册的 type 启动期快速失败（ConfigError））
+  # 自定义如 PostgreSQL 经 DatabaseRegistry.register 注册后接入；未注册的 type 启动期快速失败（ConfigError））。
+  # 推荐以「命名数据源池」（app.db.datasources）为配置主体：default 指向默认数据源，业务 db 无参取它、
+  # 按名取 datasources.<name>；每数据源自带 type 与连接参数。datasources 段非空时优先于下方旧单源形态。
   db:
+    # default: primary            # 默认数据源名（缺省：唯一数据源自动取它，否则回落名字段 default）
+    # datasources:                # 命名数据源池（推荐形态）
+    #   primary:
+    #     type: mysql
+    #     host: 127.0.0.1
+    #     ...                      # 连接参数同下方 mysql 段；可另加 isolation_level
+    #   audit:
+    #     type: sqlite
+    #     path: ":memory:"
+    # ===== 旧形态单源（向后兼容，与 datasources 二选一） =====
     type: mysql
     # 混合多数据源（同一应用并存多种数据库，如 order→mysql、audit→pg）：每实例带 type 字段
     # （缺省 mysql），按 DatabaseRegistry 按名构建，装配为 DatabaseManager 按名/租户路由
@@ -136,6 +147,10 @@ app:
       slow_sql_threshold_seconds: 0.2
       slow_sql_critical_seconds: 2.0
       leak_detection_threshold_seconds: 10.0
+      # 引擎级默认事务隔离级别（IsolationLevel：READ UNCOMMITTED / READ COMMITTED / REPEATABLE READ /
+      # SERIALIZABLE；缺省或 DEFAULT 不注入，让数据库使用默认=REPEATABLE READ；会话级可用
+      # orm_session(isolation_level=...) 覆盖。datasources 形态下配置在数据源项上）
+      # isolation_level: READ COMMITTED
       # 多数据源（多租户独立库/Schema 模式，特殊场景默认关闭：为空字典即单数据源）
       instances: {}
 
@@ -259,6 +274,41 @@ app:
       verify_certs: true      # TLS 证书校验（生产默认开启；测试环境可显式关闭）
       connect_timeout: 5
       read_timeout: 30
+    sync:                     # 数据同步（搜索引擎数据同步方案：cdc 默认 / dual_write 双写 / custom 自定义）
+      enabled: false          # 默认关闭，需业务显式开启
+      type: cdc               # cdc（默认）/ dual_write / custom
+      source: mysql           # 数据源：mysql（默认）/ 自定义注册表名
+      target: es              # 目标：es（默认）/ 自定义注册表名
+      offset_store: redis     # 位点存储：redis（默认）/ file / mysql
+      cdc:
+        mysql:
+          host: 127.0.0.1     # 缺省复用 app.db.mysql 连接参数（可覆盖）
+          port: 3306
+          username: ${APP_SEARCH_SYNC_CDC_MYSQL_USERNAME:}
+          password: ${APP_SEARCH_SYNC_CDC_MYSQL_PASSWORD:}
+          database: ""        # 监听库（空 = 全部库）
+          server_id: 10001    # 伪从库 server-id（多实例必须唯一）
+          tables: []          # 表监听白名单（空 = 全部）
+          bulk_size: 500      # 批量攒批条数（上限 1000）
+          flush_interval_seconds: 1.0   # 批量最大等待（秒）
+          heartbeat_interval_seconds: 30
+        retry:
+          max_attempts: 5     # 目标写入失败最大重试
+          backoff_base_seconds: 1.0
+          max_backoff_seconds: 60.0
+        delete_strategy: soft # soft（默认软删标记）/ hard（物理删除）
+      dual_write:
+        topic: web-search-sync-topic
+        outbox:
+          event_type: search-sync   # outbox 记录事件类型标记
+      reconcile:              # 空闲时段全量对账兜底（schedule 定时触发）
+        enabled: true
+        mode: reconcile       # reconcile（默认差异补齐）/ rebuild（重建+alias 切换）
+        cron: "0 3 * * *"     # 定时表达式
+        window: [2, 6]        # 空闲窗口（小时，窗口外触发跳过本周期）
+        batch_size: 1000
+        tables: []            # 空 = 复用 cdc 表映射/全量
+      mapping: {}             # 表 → 索引映射（如 t_order: {index: orders, fields: [...], exclude: [...]}）
 
   # 服务注册发现（ServiceDiscoveryRegistry 按 type 装配：内置 memory/nacos，自定义经 register 注册后接入）
   registry:

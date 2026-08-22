@@ -65,6 +65,9 @@ pdf = ["playwright>=1.40"]                             # PDF 渲染导出（规�
 # Elasticsearch 搜索引擎（搜索引擎接入计划 v0.2.0）：elasticsearch-dsl ORM（自动携带 elasticsearch-py），
 # 全文检索（SearchEngineInterface）与向量检索（ElasticsearchVectorStore，dense_vector + kNN）；延迟导入
 es = ["elasticsearch-dsl>=8.0"]
+# CDC 数据同步（搜索引擎数据同步方案）：mysql-replication（python-mysql-replication），
+# MySQL binlog 旁路消费（ROW 格式）→ ES 同步；延迟导入，未安装仅启用 cdc 同步时报错
+cdc = ["mysql-replication>=1.0.16"]
 # 能力依赖链（可选能力，按需主动引入）：用户系统(user，业务实现) → 认证(authn) → 鉴权(authz) → 支付(pay)；
 # 依赖均为核心依赖（httpx/cryptography 等），extras 仅作能力声明与后续 SDK 挂载点；
 # 依赖包含规则由 web_infra.core.capability 能力注册表维护（启用 pay 自动带上前置 authz/authn/user），
@@ -111,6 +114,7 @@ all = [
     "sentence-transformers>=3.0",
     "playwright>=1.40",
     "elasticsearch-dsl>=8.0",
+    "mysql-replication>=1.0.16",
     "sqlalchemy>=2.0.51",
     "aiomysql>=0.3.2",
     "aiosqlite>=0.19.0",

@@ -51,3 +51,7 @@ class SqlAlchemyDatabaseSession(DatabaseSessionInterface):
 
     async def close(self) -> None:
         await self._session.close()
+
+    def native(self) -> AsyncSession:
+        """返回底层 SQLAlchemy AsyncSession（供传播栈解包复用外层会话）"""
+        return self._session

@@ -9,6 +9,8 @@
               默认内存实现保证脚手架派生项目无外部依赖即可运行、单测不触网。
               向量检索经 web_infra.capabilities.ai.retrieval.elasticsearch_vector_store 接入
               VectorStoreInterface（dense_vector + kNN）。
+              数据同步（搜索引擎数据同步方案，2026-08-22）：新增 sync 子包（CDC/双写/对账），
+              经 web_infra.capabilities.search.sync 主动引入（不随顶层强制加载）。
 """
 from web_infra.capabilities.search.elasticsearch_search_engine import ElasticsearchSearchEngine
 from web_infra.capabilities.search.in_memory_search_engine import InMemorySearchEngine
@@ -19,6 +21,7 @@ from web_infra.capabilities.search.search_engine_registry import SearchEngineFac
 from web_infra.capabilities.search.search_error_code import SearchErrorCode, SearchErrorCodeEnum
 from web_infra.capabilities.search.search_hit import SearchHit
 from web_infra.capabilities.search.search_query import SearchQuery
+from web_infra.capabilities.search import sync as sync
 
 __all__ = [
     "SearchEngineInterface",
@@ -33,4 +36,5 @@ __all__ = [
     "SearchErrorCodeEnum",
     "SearchEngineFactory",
     "SearchEngineRegistry",
+    "sync",
 ]

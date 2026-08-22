@@ -169,6 +169,25 @@ from web_infra.capabilities.search import (
     SearchErrorCodeEnum,
     SearchEngineRegistry,
 )
+from web_infra.capabilities.search.sync import (
+    CdcChangeEvent,
+    CdcOp,
+    CdcSourceInterface,
+    CdcSyncTargetInterface,
+    CdcOffsetStoreInterface,
+    EsCdcSyncTarget,
+    CdcSyncPipeline,
+    CdcSyncRegistry,
+    CdcSyncConfig,
+    MysqlBinlogCdcSource,
+    SearchSyncOutboxWriter,
+    SearchSyncOutboxConsumer,
+    FullReconcileService,
+    SearchSyncConstant,
+    SearchSyncErrorCode,
+    SearchSyncErrorCodeEnum,
+    SyncMetrics,
+)
 from web_infra.infra.config import (
     ConfigSourceInterface,
     ConfigError,
@@ -394,6 +413,12 @@ __all__ = [
     "SearchEngineInterface", "SearchQuery", "SearchHit", "InMemorySearchEngine",
     "ElasticsearchSearchEngine", "SearchConfig", "ElasticsearchSearchConfig",
     "SearchConstant", "SearchErrorCode", "SearchErrorCodeEnum", "SearchEngineRegistry",
+    # 搜索引擎数据同步（CDC/双写/对账，搜索引擎数据同步方案）
+    "CdcChangeEvent", "CdcOp", "CdcSourceInterface", "CdcSyncTargetInterface",
+    "CdcOffsetStoreInterface", "EsCdcSyncTarget", "CdcSyncPipeline", "CdcSyncRegistry",
+    "CdcSyncConfig", "MysqlBinlogCdcSource", "SearchSyncOutboxWriter", "SearchSyncOutboxConsumer",
+    "FullReconcileService", "SearchSyncConstant", "SearchSyncErrorCode",
+    "SearchSyncErrorCodeEnum", "SyncMetrics",
     # 配置
     "ConfigSourceInterface", "ConfigError", "EnvConfigSource", "DictConfigSource", "JsonFileConfigSource",
     "YamlConfigSource", "CompositeConfigSource", "Settings", "BaseConfig", "ConfigClientInterface",
