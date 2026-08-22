@@ -90,3 +90,27 @@ class ApplicationStoppedEvent(ApplicationEvent):
     """
 
     event_name = "application_stopped"
+
+
+class HttpRequestStartedEvent(ApplicationEvent):
+    """HTTP 请求开始事件类
+
+    @Author: 花海
+    @Date: 2026/08/22 18:00
+    @Description: 请求处理开始时发布（解析真实客户端 IP 与 TraceId 后、call_next 调用前）。
+                  payload 透传（含 trace_id/method/path/query/client_ip），供监听器感知请求进入。
+    """
+
+    event_name = "http_request_started"
+
+
+class HttpRequestCompletedEvent(ApplicationEvent):
+    """HTTP 请求完成事件类
+
+    @Author: 花海
+    @Date: 2026/08/22 18:00
+    @Description: 请求处理结束（成功或异常）时在 finally 统一发布，携带耗时/状态码/是否出错。
+                  payload 透传（含 trace_id/method/path/status_code/duration_ms/is_error）。
+    """
+
+    event_name = "http_request_completed"

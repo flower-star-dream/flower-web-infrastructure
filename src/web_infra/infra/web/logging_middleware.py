@@ -30,6 +30,7 @@ from web_infra.infra.monitoring.metrics import HTTP_REQUESTS_IN_FLIGHT, SLOW_REQ
 from web_infra.infra.monitoring.phase_timer import PhaseTimer
 from web_infra.infra.monitoring.slow_request_store import SlowRequestStore
 from web_infra.infra.web.client_ip import apply_real_client_ip, get_client_ip
+from web_infra.capabilities.event.event import HttpRequestCompletedEvent, HttpRequestStartedEvent
 
 # TraceId 请求头名（统一管理于 web_infra.infra.constants）
 TRACE_ID_HEADER = AUTH_HEADER_TRACE_ID
@@ -192,6 +193,28 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         metric_path = _PATH_ID_SEGMENT_RE.sub("/{id}", path)
         HTTP_REQUESTS_IN_FLIGHT.labels(service=self.service_name).inc()
 
+        # 请求状态标记：成功分支写入 response 状态码；异常分支置 500；finally 统一取用
+        status_code: int | None = None
+        is_error = False
+
+        # 发布 HTTP 请求开始事件（事件总线始终装配，判 None 防御；发布失败不影响请求结果）
+        event_bus = getattr(request.app.state, "event", None)
+        if event_bus is not None:
+            try:
+                await event_bus.publish(
+                    HttpRequestStartedEvent(
+                        payload={
+                            "trace_id": trace_id,
+                            "method": method,
+                            "path": path,
+                            "query": str(request.url.query),
+                            "client_ip": real_ip,
+                        }
+                    )
+                )
+            except Exception:  # noqa: BLE001 - 发布器 fail_fast 默认 False 不抛，极端情况兜底忽略
+                pass
+
         try:
             try:
                 response = await call_next(request)
@@ -200,10 +223,13 @@ class LoggingMiddleware(BaseHTTPMiddleware):
                 phase_timer.mark_total()
                 record_http_request(method, metric_path, duration_ms / 1000.0, 500, is_error=True, service=self.service_name)
                 self.logger.error("request_exception trace_id=%s path=%s error=%s", trace_id, path, str(exc))
+                status_code = 500
+                is_error = True
                 raise
 
             duration_ms = (time.perf_counter() - start_time) * 1000
             status_code = response.status_code
+            is_error = status_code >= HttpStatusConstant.HTTP_SERVER_ERROR_MIN
             response.headers[TRACE_ID_HEADER] = trace_id
             phase_timer.mark_total()
             phase_timer.record_metrics(service=self.service_name)
@@ -244,6 +270,28 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         finally:
             HTTP_REQUESTS_IN_FLIGHT.labels(service=self.service_name).dec()
             PhaseTimer.clear()
+
+            # 发布 HTTP 请求完成事件（成功/异常统一；判 None 防御且发布失败不影响请求结果与指标）
+            event_bus = getattr(request.app.state, "event", None)
+            if event_bus is not None:
+                try:
+                    if status_code is None:
+                        status_code = 500
+                        is_error = True
+                    await event_bus.publish(
+                        HttpRequestCompletedEvent(
+                            payload={
+                                "trace_id": trace_id,
+                                "method": method,
+                                "path": path,
+                                "status_code": status_code,
+                                "duration_ms": (time.perf_counter() - start_time) * 1000,
+                                "is_error": is_error,
+                            }
+                        )
+                    )
+                except Exception:  # noqa: BLE001 - 发布器 fail_fast 默认 False 不抛，极端情况兜底忽略
+                    pass
 
 
 def setup_logging_middleware(app: FastAPI, service_name: str = "app") -> None:

@@ -281,3 +281,55 @@ async def test_event_bus_fail_fast_rethrows():
     with pytest.raises(RuntimeError, match="listener failed"):
         await bus.publish(OrderCreatedEvent(payload={}))
     _clear()
+
+
+# ------------------------------------------------------------------
+# HTTP 请求生命周期事件（request_started / request_completed）
+# ------------------------------------------------------------------
+def test_http_request_lifecycle_events_order():
+    """HTTP 请求生命周期事件：request_started 先发布、request_completed 后发布；completed 携带 status_code/duration_ms/trace_id"""
+    from fastapi.testclient import TestClient
+
+    from web_infra import create_app, setup_logging_middleware
+
+    EventListenerRegistry.clear()
+    received: list[tuple[str, ApplicationEvent]] = []
+
+    @event_listener("http_request_started")
+    def on_started(event):
+        received.append(("started", event))
+
+    @event_listener("http_request_completed")
+    def on_completed(event):
+        received.append(("completed", event))
+
+    app = create_app({"app.name": "test-app"})
+    setup_logging_middleware(app)
+
+    @app.get("/ping")
+    async def ping():
+        return {"status": "ok"}
+
+    with TestClient(app) as client:
+        resp = client.get("/ping")
+        assert resp.status_code == 200
+
+    # 按下发顺序：request_started 先、request_completed 后
+    assert [name for name, _ in received] == ["started", "completed"]
+
+    started_ev = received[0][1]
+    completed_ev = received[1][1]
+
+    # started payload：trace_id 非空，含 method/path/client_ip/query
+    assert started_ev.payload["trace_id"]
+    assert started_ev.payload["method"] == "GET"
+    assert started_ev.payload["path"] == "/ping"
+    assert "client_ip" in started_ev.payload
+
+    # completed payload：trace_id 非空，status_code/duration_ms/is_error
+    assert completed_ev.payload["trace_id"]
+    assert completed_ev.payload["status_code"] == 200
+    assert isinstance(completed_ev.payload["duration_ms"], (int, float))
+    assert completed_ev.payload["is_error"] is False
+
+    EventListenerRegistry.clear()

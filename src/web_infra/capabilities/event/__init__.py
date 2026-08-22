@@ -27,6 +27,8 @@ __all__ = [
     "ApplicationReadyEvent",
     "ApplicationStoppingEvent",
     "ApplicationStoppedEvent",
+    "HttpRequestStartedEvent",
+    "HttpRequestCompletedEvent",
     "EventListener",
     "EventListenerRegistry",
     "event_listener",
