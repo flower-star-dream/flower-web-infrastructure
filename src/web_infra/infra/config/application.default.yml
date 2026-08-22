@@ -77,11 +77,23 @@ app:
     enabled: false
     strict: true
 
-  # 缓存（CacheBackendRegistry 按 type 装配：内置 memory/redis，自定义经 register 注册后接入）
+  # 缓存（CacheBackendRegistry 按 type 装配：内置 memory/redis，自定义经 register 注册后接入；
+  # 亦支持「实例引用（type: ref:<实例名>）」与「运行时切换（Registry.activate）」）
   cache:
     # type 选择实现；框架内置 memory/redis 注册于框架命名空间（受保护，同名覆盖默认拒绝）。
     # 用户业务实现通常经 CacheBackendRegistry.register 注册（默认命名空间 user），
     # 同名注册即覆盖本次装配选择，但不会破坏框架内置默认实现本身。
+    # ===== 实例引用（ref:） =====
+    # 代码侧先注册命名实例：CacheBackendRegistry.register_instance("mycache", my_backend)；
+    # 然后把 type 配为 ref:mycache，装配时经 resolve('ref:mycache') 直接复用该实例（不重复实例化）。
+    # 实例同名可在 framework / user 命名空间各注册一份（代码共享、实例隔离）。
+    # type: ref:mycache
+    # ===== 运行时切换（不重启更换实现）=====
+    # CacheBackendRegistry.activate("memory", "user:mycache") -> 后续纯名解析 memory 命中新实现；
+    # CacheBackendRegistry.deactivate("memory") -> 恢复默认解析。
+    # 显式 "framework:memory" 恒为框架实现（绕过切换）；user 命名空间默认胜出。
+    # ===== 策略组合器回退 =====
+    # 组合工厂：CacheBackendRegistry.fallback("primary", "memory") —— 主策略失效自动回退 memory。
     type: memory
     max_size: 10000
     redis:
@@ -137,6 +149,7 @@ app:
     # type 选择实现；框架内置 mysql/sqlite 注册于框架命名空间（受保护，同名覆盖默认拒绝）。
     # 用户业务实现通常经 DatabaseRegistry.register 注册（默认命名空间 user），
     # 同名注册即覆盖本次装配选择，但不会破坏框架内置默认实现本身。
+    # 亦支持 type: ref:<实例名> 实例引用与运行时切换（详见 app.cache 注释样例）。
     type: mysql
     # 混合多数据源（同一应用并存多种数据库，如 order→mysql、audit→pg）：每实例带 type 字段
     # （缺省 mysql），按 DatabaseRegistry 按名构建，装配为 DatabaseManager 按名/租户路由
@@ -239,6 +252,7 @@ app:
     # type 选择实现；框架内置 local/minio 注册于框架命名空间（受保护，同名覆盖默认拒绝）。
     # 用户业务实现通常经 ObjectStorageRegistry.register 注册（默认命名空间 user），
     # 同名注册即覆盖本次装配选择，但不会破坏框架内置默认实现本身。
+    # 亦支持 type: ref:<实例名> 实例引用与运行时切换（详见 app.cache 注释样例）。
     type: local
     base_dir: ./data
     minio:
@@ -255,6 +269,7 @@ app:
     # type 选择实现；框架内置 memory/rocketmq 注册于框架命名空间（受保护，同名覆盖默认拒绝）。
     # 用户业务实现通常经 MessageQueueRegistry.register 注册（默认命名空间 user），
     # 同名注册即覆盖本次装配选择，但不会破坏框架内置默认实现本身。
+    # 亦支持 type: ref:<实例名> 实例引用与运行时切换（详见 app.cache 注释样例）。
     type: memory
     rocketmq:
       name_server: localhost:9876
@@ -299,6 +314,7 @@ app:
     # type 选择实现；框架内置 memory/elasticsearch 注册于框架命名空间（受保护，同名覆盖默认拒绝）。
     # 用户业务实现通常经 SearchEngineRegistry.register 注册（默认命名空间 user），
     # 同名注册即覆盖本次装配选择，但不会破坏框架内置默认实现本身。
+    # 亦支持 type: ref:<实例名> 实例引用与运行时切换（详见 app.cache 注释样例）。
     type: memory            # 默认实现：memory（内存测试/小规模）| elasticsearch（生产推荐，需 es extra）
     index_prefix: web       # 真实索引名前缀（按部署环境可覆盖，如 app_search）
     elasticsearch:
@@ -350,6 +366,7 @@ app:
     # type 选择实现；框架内置 memory/nacos 注册于框架命名空间（受保护，同名覆盖默认拒绝）。
     # 用户业务实现通常经 ServiceDiscoveryRegistry.register 注册（默认命名空间 user），
     # 同名注册即覆盖本次装配选择，但不会破坏框架内置默认实现本身。
+    # 亦支持 type: ref:<实例名> 实例引用与运行时切换（详见 app.cache 注释样例）。
     type: memory
     expire_seconds: 15
     # Nacos 客户端配置（nacos-sdk-python v2：gRPC 协议，server_addresses 支持逗号分隔多地址）
