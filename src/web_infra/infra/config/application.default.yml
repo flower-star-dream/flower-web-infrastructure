@@ -124,10 +124,14 @@ app:
     #   port: 6379
     #   db: 0
 
-  # 进程内事件总线（核心能力，始终装配，见 web_infra.capabilities.event）：区别于 MQ（跨服务），服务内解耦；
-  # 无论配置如何均装配 EventBus 并挂 app.state.event（业务 publish/publish_after_commit 发布），
-  # 监听器经 @event_listener 注册；fail_fast 控制单监听器异常是否阻断其余（默认 false=记录日志继续）。
-  # 框架启动/停机生命周期事件（starting/ready/stopping/stopped）在 _lifespan 对应时点自动发布。
+  # 进程内事件总线（核心能力，始终装配，见 web_infra.capabilities.event）：区别于 MQ（跨服务），服务内解耦。
+  # 事件总线为框架核心能力，无论配置如何均装配 EventBus 并挂 app.state.event（无 enabled 门控，
+  # 业务直接 app.state.event.publish / publish_after_commit 发布），监听器经 @event_listener 注册；
+  # fail_fast 控制单监听器异常是否阻断其余（默认 false=记录日志继续分发）。
+  # 框架会自动发布生命周期（starting/ready/stopping/stopped，在 _lifespan 对应时点）、
+  # HTTP 请求（http_request_started/completed，由 LoggingMiddleware 发布）与认证
+  # （auth_token_issued/revoked、auth_login_success/failed，由 JWTUtil/SocialLoginService 发布）事件，
+  # 详见 docs/02-开发者指南/25-事件总线.md。
   event:
     fail_fast: false           # 单监听器异常是否阻断其余（false=记录日志继续分发）
 
