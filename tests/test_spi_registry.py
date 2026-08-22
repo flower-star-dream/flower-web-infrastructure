@@ -12,9 +12,11 @@ from web_infra.core.spi import SpiRegistry
 
 @pytest.fixture(autouse=True)
 def _clean_registry():
-    """每用例后清空命名空间，防止脏状态污染"""
+    """每用例后清空命名空间/实例/运行时切换存储，防止脏状态污染"""
     yield
     SpiRegistry._store().clear()
+    SpiRegistry._inst_store().clear()
+    SpiRegistry._active_store().clear()
 
 
 def test_register_and_get_plain_name():
@@ -115,3 +117,108 @@ def test_registered_framework_names():
     """registered_framework_names 列框架命名空间实现（完整性命校验用）"""
     SpiRegistry.register("memory", lambda: "fw", namespace=SpiRegistry.FRAMEWORK_NAMESPACE)
     assert SpiRegistry.registered_framework_names() == ["memory"]
+
+
+# ---------------------------------------------------------------------------
+# 阶段 B：实例侧 + 运行时切换 + 统一解析入口 + 策略组合器回退
+# ---------------------------------------------------------------------------
+
+
+def test_instance_dual_namespace_isolated():
+    """双实例隔离：frameework 与 user 同名各自注册不同实例，互不影响"""
+    SpiRegistry.register_instance("memory", "fw-instance", namespace=SpiRegistry.FRAMEWORK_NAMESPACE)
+    SpiRegistry.register_instance("memory", "user-instance")
+    assert SpiRegistry.get_instance("framework:memory") == "fw-instance"
+    assert SpiRegistry.get_instance("user:memory") == "user-instance"
+    # 默认解析 user 优先
+    assert SpiRegistry.get_instance("memory") == "user-instance"
+    # 跨命名空间去重清单与 framework 清单
+    assert SpiRegistry.registered_instance_names() == ["memory"]
+    assert SpiRegistry.registered_framework_instance_names() == ["memory"]
+
+
+def test_register_instance_duplicate_rejected_without_overwrite():
+    """实例同名且未 overwrite 拒绝；overwrite=True 允许覆盖"""
+    SpiRegistry.register_instance("memory", "a")
+    with pytest.raises(ValueError):
+        SpiRegistry.register_instance("memory", "b")
+    assert SpiRegistry.get_instance("memory") == "a"
+    SpiRegistry.register_instance("memory", "b", overwrite=True)
+    assert SpiRegistry.get_instance("memory") == "b"
+
+
+def test_unregister_instance_removes_across_namespaces():
+    """unregister_instance 跨命名空间移除；'ns:name' 限定单命名空间"""
+    SpiRegistry.register_instance("memory", "fw", namespace=SpiRegistry.FRAMEWORK_NAMESPACE)
+    SpiRegistry.register_instance("memory", "user")
+    SpiRegistry.unregister_instance("memory")
+    with pytest.raises(KeyError):
+        SpiRegistry.get_instance("memory")
+    SpiRegistry.register_instance("memory", "fw", namespace=SpiRegistry.FRAMEWORK_NAMESPACE)
+    SpiRegistry.register_instance("memory", "user")
+    SpiRegistry.unregister_instance("framework:memory")
+    assert SpiRegistry.get_instance("memory") == "user"
+
+
+def test_resolve_ref_returns_instance_and_plain_uses_factory():
+    """统一解析入口：'ref:' 前缀返回已注册实例；纯名走工厂实例化"""
+    SpiRegistry.register_instance("myinst", "the-instance")
+    assert SpiRegistry.resolve("ref:myinst") == "the-instance"
+    SpiRegistry.register("memory", lambda x, y=0: (x, y))
+    assert SpiRegistry.resolve("memory", 1, y=2) == (1, 2)
+
+
+def test_runtime_switch_affects_get_instance():
+    """运行时切换：activate 重定向解析；deactivate 恢复默认；显式 'ns:name' 绕过激活"""
+    SpiRegistry.register_instance("memory", "A", namespace=SpiRegistry.FRAMEWORK_NAMESPACE)
+    SpiRegistry.register_instance("memory", "B")
+    # 默认 user 优先 → B；显式 framework → A
+    assert SpiRegistry.get_instance("memory") == "B"
+    assert SpiRegistry.get_instance("framework:memory") == "A"
+    # 切换到 framework 实现 A
+    SpiRegistry.activate("memory", "framework:memory")
+    assert "memory" in SpiRegistry.active_names()
+    assert SpiRegistry.get_instance("memory") == "A"
+    # 显式 'framework:memory' 绕过激活 → 仍 A
+    assert SpiRegistry.get_instance("framework:memory") == "A"
+    # 再切回 user 实现 B
+    SpiRegistry.activate("memory", "user:memory")
+    assert SpiRegistry.get_instance("memory") == "B"
+    # deactivate 恢复默认解析（user 优先 → B）
+    SpiRegistry.deactivate("memory")
+    assert SpiRegistry.active_names() == []
+    assert SpiRegistry.get_instance("memory") == "B"
+
+
+def test_runtime_switch_affects_get_factory():
+    """运行时切换同样作用于 get 工厂解析"""
+    SpiRegistry.register("memory", lambda: "fw", namespace=SpiRegistry.FRAMEWORK_NAMESPACE)
+    SpiRegistry.register("memory", lambda: "user")
+    assert SpiRegistry.get("memory")() == "user"
+    SpiRegistry.activate("memory", "framework:memory")
+    assert SpiRegistry.get("memory")() == "fw"
+    SpiRegistry.deactivate("memory")
+    assert SpiRegistry.get("memory")() == "user"
+
+
+def test_fallback_uses_primary_when_no_error():
+    """策略组合器：primary 工厂正常时直接返回其结果"""
+    SpiRegistry.register("primary", lambda: "primary-ok")
+    SpiRegistry.register("fallback", lambda: "fallback-ok")
+    assert SpiRegistry.fallback("primary", "fallback")() == "primary-ok"
+
+
+def test_fallback_switches_when_primary_raises():
+    """策略组合器：primary 工厂抛错时回退 fallback 工厂正常返回"""
+    def bad_factory():
+        raise RuntimeError("boom")
+
+    SpiRegistry.register("primary", bad_factory)
+    SpiRegistry.register("fallback", lambda: "fallback-ok")
+    assert SpiRegistry.fallback("primary", "fallback")() == "fallback-ok"
+
+
+def test_get_instance_unregistered_raises_key_error():
+    """未注册实例抛 KeyError"""
+    with pytest.raises(KeyError):
+        SpiRegistry.get_instance("nope")
