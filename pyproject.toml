@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "flower-web-infrastructure"
-version = "1.0.2"
+version = "1.0.3"
 description = "Web 系统通用后端基础设施（单体 / 微服务通用基础依赖）"
 readme = "README.md"
 requires-python = ">=3.10"
