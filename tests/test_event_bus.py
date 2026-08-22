@@ -333,3 +333,175 @@ def test_http_request_lifecycle_events_order():
     assert completed_ev.payload["is_error"] is False
 
     EventListenerRegistry.clear()
+
+
+# ------------------------------------------------------------------
+# 认证核心能力事件：token 签发/撤销、登录成功/失败（经模块级总线持有器 publish_event）
+# ------------------------------------------------------------------
+@pytest.fixture(autouse=True)
+def _event_bus_holder_cleanup():
+    """每个用例后清空模块级总线持有器与监听器注册表，避免跨用例污染。"""
+    yield
+    from web_infra.capabilities.event import clear_current_event_bus
+
+    from web_infra.capabilities.event.listener_registry import _clear
+
+    clear_current_event_bus()
+    _clear()
+
+
+def _configure_jwt(monkeypatch, secret: str) -> None:
+    """注入 JWT 测试密钥并回落默认内存实现（JWTUtil.configure(None,None) 走内存 store + 环境变量密钥）。"""
+    from web_infra.capabilities.security import JWTUtil
+
+    monkeypatch.setenv("JWT_SECRET_KEY", secret)
+    monkeypatch.setenv("JWT_EXPIRE_MINUTES", "120")
+    JWTUtil.configure(None, None)
+    JWTUtil.set_redis_config(None)
+
+
+@pytest.mark.asyncio
+async def test_auth_token_issued_event_published(monkeypatch):
+    """token 签发成功后发布 auth_token_issued：payload 含 user_id/username/jti/login_type"""
+    from web_infra.capabilities.event import EventBus, clear_current_event_bus, set_current_event_bus
+    from web_infra.capabilities.event.listener_registry import _clear
+    from web_infra.capabilities.security import JWTUtil
+
+    _configure_jwt(monkeypatch, "test-secret-for-event-bus-issued-0123456789abcdef")
+    _clear()
+
+    received: list = []
+    bus = EventBus()
+    set_current_event_bus(bus)
+
+    @event_listener("auth_token_issued", async_mode=True)
+    async def _on_issued(event):
+        received.append(event)
+
+    token = await JWTUtil.generate_token(user_id="u1", username="a", extra_claims={"login_type": "social"})
+    assert token
+    assert len(received) == 1
+    ev = received[0]
+    assert ev.event_name == "auth_token_issued"
+    assert ev.payload["user_id"] == "u1"
+    assert ev.payload["username"] == "a"
+    assert ev.payload["login_type"] == "social"
+    assert ev.payload["jti"]
+    clear_current_event_bus()
+
+
+@pytest.mark.asyncio
+async def test_auth_token_revoked_event_published(monkeypatch):
+    """token 撤销成功（revoke 返回 True）后发布 auth_token_revoked：payload 含 user_id/jti"""
+    from web_infra.capabilities.event import EventBus, clear_current_event_bus, set_current_event_bus
+    from web_infra.capabilities.event.listener_registry import _clear
+    from web_infra.capabilities.security import JWTUtil
+
+    _configure_jwt(monkeypatch, "test-secret-for-event-bus-revoke-0123456789abcdef")
+    _clear()
+
+    received: list = []
+    bus = EventBus()
+    set_current_event_bus(bus)
+
+    @event_listener("auth_token_revoked")
+    def _on_revoked(event):
+        received.append(event)
+
+    token = await JWTUtil.generate_token(user_id="u1", username="a")
+    revoked = await JWTUtil.invalidate_token(token)
+    assert revoked is True
+    assert len(received) == 1
+    ev = received[0]
+    assert ev.event_name == "auth_token_revoked"
+    assert ev.payload["user_id"] == "u1"
+    assert ev.payload["jti"]
+    clear_current_event_bus()
+
+
+@pytest.mark.asyncio
+async def test_auth_login_success_event_published(monkeypatch):
+    """三方登录绑定成功并签发 JWT 后发布 auth_login_success：payload 含 provider/user_id/openid"""
+    from datetime import datetime, timezone
+
+    from web_infra.capabilities.event import EventBus, clear_current_event_bus, set_current_event_bus
+    from web_infra.capabilities.event.listener_registry import _clear
+    from web_infra.capabilities.security.social import (
+        DemoSocialPlatform,
+        InMemorySocialBindingStore,
+        SocialBinding,
+        SocialLoginService,
+        SocialPlatformRegistry,
+    )
+
+    _configure_jwt(monkeypatch, "test-secret-for-event-bus-login-0123456789abcdef")
+    _clear()
+
+    received: list = []
+    bus = EventBus()
+    set_current_event_bus(bus)
+
+    @event_listener("auth_login_success")
+    def _on_login_success(event):
+        received.append(event)
+
+    registry = SocialPlatformRegistry()
+    registry.register(DemoSocialPlatform())
+    binding_store = InMemorySocialBindingStore()
+    await binding_store.bind(SocialBinding("demo", "demo-openid-demo-st-9", "u-local", datetime.now(timezone.utc)))
+    service = SocialLoginService(registry, binding_store)
+    result = await service.login("demo", "demo-st-9", "https://cb.example.com/cb")
+
+    assert result.bound is True
+    assert len(received) == 1
+    ev = received[0]
+    assert ev.event_name == "auth_login_success"
+    assert ev.payload["provider"] == "demo"
+    assert ev.payload["user_id"] == "u-local"
+    assert ev.payload["openid"] == "demo-openid-demo-st-9"
+    clear_current_event_bus()
+
+
+@pytest.mark.asyncio
+async def test_auth_login_failed_event_published(monkeypatch):
+    """三方登录整体抛异常时发布 auth_login_failed 且原异常仍抛出：payload 含 provider/reason"""
+    from web_infra.capabilities.event import EventBus, clear_current_event_bus, set_current_event_bus
+    from web_infra.capabilities.event.listener_registry import _clear
+    from web_infra.capabilities.security.social import (
+        InMemorySocialBindingStore,
+        SocialLoginService,
+        SocialPlatformRegistry,
+    )
+
+    _configure_jwt(monkeypatch, "test-secret-for-event-bus-login-fail-01234567")
+    _clear()
+
+    received: list = []
+    bus = EventBus()
+    set_current_event_bus(bus)
+
+    @event_listener("auth_login_failed")
+    def _on_login_failed(event):
+        received.append(event)
+
+    class _FailingPlatform:
+        provider = "fail"
+
+        async def build_authorize_url(self, state, redirect_uri):
+            return ""
+
+        async def exchange_token(self, code, redirect_uri):
+            raise RuntimeError("platform token exchange failed")
+
+    registry = SocialPlatformRegistry()
+    registry.register(_FailingPlatform())
+    service = SocialLoginService(registry, InMemorySocialBindingStore())
+    with pytest.raises(RuntimeError, match="platform token exchange failed"):
+        await service.login("fail", "code-1", "https://cb.example.com/cb")
+
+    assert len(received) == 1
+    ev = received[0]
+    assert ev.event_name == "auth_login_failed"
+    assert ev.payload["provider"] == "fail"
+    assert "platform token exchange failed" in ev.payload["reason"]
+    clear_current_event_bus()

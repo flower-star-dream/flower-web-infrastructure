@@ -5,6 +5,8 @@
 @Date: 2026/08/22 17:00
 @Description: EventBus 统一入口：组合 EventPublisher，提供 publish 与 publish_after_commit（事务提交后
               事件）两个发布方法。装配到 app.state.event；默认 app.event.fail_fast=false。
+              另提供模块级总线持有器（_current_event_bus）与发布入口 publish_event：
+              供无 app 引用的框架组件（如 JWTUtil、SocialLoginService 类级/普通组件）发布事件。
 """
 from __future__ import annotations
 
@@ -43,3 +45,39 @@ class EventBus:
             await self._publisher.publish(event)
 
         register_listener(_cb)
+
+
+# ------------------------------------------------------------------
+# 模块级总线持有器：供无 app 引用的框架组件发布事件（事件总线核心化）
+# ------------------------------------------------------------------
+_current_event_bus: EventBus | None = None
+
+
+def set_current_event_bus(bus: EventBus | None) -> None:
+    """设置模块级事件总线持有器（供无 app 引用的框架组件发布事件）。
+
+    :param bus: 当前事件总线（None 表示不装配，发布侧 no-op）
+    """
+    global _current_event_bus
+    _current_event_bus = bus
+
+
+def get_current_event_bus() -> EventBus | None:
+    """获取模块级事件总线持有器（未设置返回 None，发布侧 no-op）。"""
+    return _current_event_bus
+
+
+def clear_current_event_bus() -> None:
+    """清空模块级事件总线持有器（应用停机后调用，避免悬挂引用残留）。"""
+    global _current_event_bus
+    _current_event_bus = None
+
+
+async def publish_event(event: ApplicationEvent) -> None:
+    """发布事件（无 app 引用的框架组件发布入口）：总线为 None 时 no-op，否则转发到总线。
+
+    :param event: 事件对象
+    """
+    bus = _current_event_bus
+    if bus is not None:
+        await bus.publish(event)

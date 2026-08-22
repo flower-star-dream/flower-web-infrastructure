@@ -12,6 +12,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from web_infra.infra.error import BizException, CommonErrorCode
+from web_infra.capabilities.event import (
+    AuthLoginFailedEvent,
+    AuthLoginSuccessEvent,
+    publish_event,
+)
 from web_infra.capabilities.security.jwt_util import JWTUtil
 from web_infra.capabilities.security.social.social_binding_store import SocialBinding, SocialBindingStore
 from web_infra.capabilities.security.social.social_login_result import SocialLoginResult
@@ -46,20 +51,35 @@ class SocialLoginService:
         未绑定：require_bound=False（默认）返回 bound=False 待绑定信号，由业务决定自动注册或引导绑定；
                 require_bound=True 时抛 E2-AUTH-007。
         """
-        platform = self._require_platform(provider)
-        token = await platform.exchange_token(code, redirect_uri)
-        user_info = await platform.fetch_userinfo(token)
-        binding = await self._binding_store.find_by_platform(provider, user_info.openid)
-        if binding is not None:
-            access_token = await JWTUtil.generate_token(
-                user_id=binding.user_id,
-                username=user_info.nickname or user_info.openid,
-                extra_claims={"login_type": "social"},
-            )
-            return SocialLoginResult(access_token=access_token, user_id=binding.user_id, user_info=user_info, bound=True)
-        if require_bound:
-            raise CommonErrorCode.AUTH_SOCIAL_NOT_BOUND.to_exception(message=f"三方账号未绑定: {provider}/{user_info.openid}")
-        return SocialLoginResult(access_token=None, user_id=None, user_info=user_info, bound=False)
+        try:
+            platform = self._require_platform(provider)
+            token = await platform.exchange_token(code, redirect_uri)
+            user_info = await platform.fetch_userinfo(token)
+            binding = await self._binding_store.find_by_platform(provider, user_info.openid)
+            if binding is not None:
+                access_token = await JWTUtil.generate_token(
+                    user_id=binding.user_id,
+                    username=user_info.nickname or user_info.openid,
+                    extra_claims={"login_type": "social"},
+                )
+                # 绑定成功并签发自有 JWT：发布登录成功事件（无 app 引用，经模块级总线持有器）
+                await publish_event(
+                    AuthLoginSuccessEvent(
+                        payload={
+                            "provider": provider,
+                            "user_id": binding.user_id,
+                            "openid": user_info.openid,
+                        }
+                    )
+                )
+                return SocialLoginResult(access_token=access_token, user_id=binding.user_id, user_info=user_info, bound=True)
+            if require_bound:
+                raise CommonErrorCode.AUTH_SOCIAL_NOT_BOUND.to_exception(message=f"三方账号未绑定: {provider}/{user_info.openid}")
+            return SocialLoginResult(access_token=None, user_id=None, user_info=user_info, bound=False)
+        except Exception as exc:  # noqa: BLE001 - 登录整体失败统一次处理并保留原异常语义
+            # 登录整体失败：发布登录失败事件，再原样抛出（keep 原错误码/语义不变）
+            await publish_event(AuthLoginFailedEvent(payload={"provider": provider, "reason": str(exc)}))
+            raise
 
     async def bind(self, provider: str, code: str, redirect_uri: str, user_id: str) -> SocialBinding:
         """已登录用户绑定三方账号：拉取 userinfo → 已被其他用户绑定抛 E2-AUTH-008 → 落库（同用户幂等）。

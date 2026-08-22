@@ -43,6 +43,8 @@ from web_infra.capabilities.event import (
     ApplicationReadyEvent,
     ApplicationStoppingEvent,
     ApplicationStoppedEvent,
+    clear_current_event_bus,
+    set_current_event_bus,
 )
 from web_infra.capabilities.db import (
     SqliteSessionFactory,
@@ -380,6 +382,9 @@ class Application:
             fail_fast=self.settings.get_bool("app.event.fail_fast", False),
         )
         self.app.state.event = event_bus
+        # 事件总线核心化：同步注册到模块级持有器，供无 app 引用的框架组件（JWTUtil、
+        # SocialLoginService 等）经 publish_event 发布事件；停机时由 _lifespan 清空。
+        set_current_event_bus(event_bus)
 
     def _setup_extensions(self) -> None:
         """扩展点装配（app.extensions.enabled，统一扩展注册器 ExtensionRegistry）。
@@ -844,6 +849,8 @@ class Application:
         await shutdown_all_watchdogs()
         await self._shutdown()
         await self._publish_lifecycle(ApplicationStoppedEvent(payload={"settings": self.settings, "app": self.app}))
+        # 应用完全停机后清空模块级总线持有器，避免悬挂引用残留
+        clear_current_event_bus()
 
     async def _run_extension_startups(self) -> None:
         """扩展点启动钩子：按拓扑序（前置先启动）执行各扩展点 startup(build 产物)（同步/异步皆可）。

@@ -114,3 +114,51 @@ class HttpRequestCompletedEvent(ApplicationEvent):
     """
 
     event_name = "http_request_completed"
+
+
+class AuthTokenIssuedEvent(ApplicationEvent):
+    """认证 Token 签发事件类
+
+    @Author: 花海
+    @Date: 2026/08/22 20:00
+    @Description: JWT 签发成功时发布（JWTUtil.generate_token），payload 携带 user_id/username/jti/login_type，
+                  供监听器感知新凭证签发（如审计、设备凭证复用统计）。
+    """
+
+    event_name = "auth_token_issued"
+
+
+class AuthTokenRevokedEvent(ApplicationEvent):
+    """认证 Token 撤销事件类
+
+    @Author: 花海
+    @Date: 2026/08/22 20:00
+    @Description: 指定 token 登出/撤销成功时发布（JWTUtil.invalidate_token 的 revoke 返回 True），
+                  payload 携带 user_id/jti，供监听器感知凭证失效（如审计、下线通知）。
+    """
+
+    event_name = "auth_token_revoked"
+
+
+class AuthLoginSuccessEvent(ApplicationEvent):
+    """三方登录成功事件类
+
+    @Author: 花海
+    @Date: 2026/08/22 20:00
+    @Description: 三方登录绑定成功并签发自有 JWT 后发布（SocialLoginService.login 的已绑定分支），
+                  payload 携带 provider/user_id/openid，供监听器感知用户登录成功（如登录流水、风控）。
+    """
+
+    event_name = "auth_login_success"
+
+
+class AuthLoginFailedEvent(ApplicationEvent):
+    """三方登录失败事件类
+
+    @Author: 花海
+    @Date: 2026/08/22 20:00
+    @Description: 三方登录整体抛异常时发布（SocialLoginService.login 的 try/except），
+                  payload 携带 provider/reason，供监听器感知登录失败（如风控、告警统计）。
+    """
+
+    event_name = "auth_login_failed"

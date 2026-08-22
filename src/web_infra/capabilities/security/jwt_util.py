@@ -27,6 +27,11 @@ import jwt
 from web_infra.infra.constants.auth_constant import AuthConstant
 from web_infra.capabilities.db.redis_config import RedisConfig
 from web_infra.infra.logging import get_logger
+from web_infra.capabilities.event import (
+    AuthTokenIssuedEvent,
+    AuthTokenRevokedEvent,
+    publish_event,
+)
 from web_infra.capabilities.security.env_jwt_key_provider import EnvJwtKeyProvider
 from web_infra.capabilities.security.in_memory_jwt_token_store import InMemoryJwtTokenStore
 from web_infra.capabilities.security.jwt_key_provider_interface import JwtKeyProvider
@@ -167,6 +172,17 @@ class JWTUtil:
             algorithm=key_provider.algorithm(),
             headers={"kid": cls.JWT_KID},
         )
+        # 签发成功：发布 token 签发事件（无 app 引用，经模块级总线持有器）
+        await publish_event(
+            AuthTokenIssuedEvent(
+                payload={
+                    "user_id": user_id,
+                    "username": username,
+                    "jti": jti,
+                    "login_type": (extra_claims or {}).get("login_type"),
+                }
+            )
+        )
         return token
 
     @classmethod
@@ -286,7 +302,11 @@ class JWTUtil:
         jti = payload.get("jti")
         if not user_id or not jti:
             return False
-        return await cls._get_token_store().revoke(user_id, jti)
+        revoked = await cls._get_token_store().revoke(user_id, jti)
+        # 撤销成功：发布 token 撤销事件（无 app 引用，经模块级总线持有器）
+        if revoked:
+            await publish_event(AuthTokenRevokedEvent(payload={"user_id": user_id, "jti": jti}))
+        return revoked
 
     @classmethod
     async def get_user_id(cls, token: str) -> Optional[str]:
