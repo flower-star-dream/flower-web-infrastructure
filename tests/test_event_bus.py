@@ -13,6 +13,22 @@ from web_infra.capabilities.event.event import ApplicationEvent
 from web_infra.capabilities.event.event_bus import EventBus
 from web_infra.capabilities.event.listener_decorator import event_listener
 from web_infra.capabilities.event.listener_registry import EventListenerRegistry
+from web_infra.infra.monitoring import metrics
+
+
+@pytest.fixture(autouse=True)
+def _clean_red_metrics():
+    """清理经 LoggingMiddleware 写入的 RED 指标样本（http_requests_total 等）。
+
+    全局 prometheus 指标跨测试累积，本文件按字母序先于 test_health 运行，
+    若不清理会使 test_health 的「无请求样本不渲染 HTTP RED 分组」断言被顺序污染。
+    """
+    yield
+    metrics.HTTP_REQUESTS_TOTAL.clear()
+    metrics.HTTP_REQUEST_ERRORS_TOTAL.clear()
+    metrics.HTTP_REQUEST_DURATION_SECONDS.clear()
+    metrics.REQUEST_PHASE_DURATION_SECONDS.clear()
+    metrics.HTTP_REQUESTS_IN_FLIGHT.clear()
 
 
 class OrderCreatedEvent(ApplicationEvent):
