@@ -42,3 +42,51 @@ class ApplicationEvent:
     def resolve_event_name(cls) -> str:
         """解析事件名：显式声明优先，否则由类名推导。"""
         return cls.event_name or _default_event_name(cls.__name__)
+
+
+class ApplicationStartingEvent(ApplicationEvent):
+    """应用启动事件类
+
+    @Author: 花海
+    @Date: 2026/08/22 17:30
+    @Description: 框架启动阶段最前发布（清理上下文/uvicorn 访问日志之后、扩展 startup 之前），
+                  供监听器在业务扩展点启动前感知应用开始启动。payload 透传（如 settings/app）。
+    """
+
+    event_name = "application_starting"
+
+
+class ApplicationReadyEvent(ApplicationEvent):
+    """应用就绪事件类
+
+    @Author: 花海
+    @Date: 2026/08/22 17:30
+    @Description: 全部启动完成（容量采样启动后、yield 接受请求前）发布，表示应用已就绪可对外服务。
+                  供监听器做就绪后的初始化/预热。payload 透传（如 settings/app）。
+    """
+
+    event_name = "application_ready"
+
+
+class ApplicationStoppingEvent(ApplicationEvent):
+    """应用停机中事件类
+
+    @Author: 花海
+    @Date: 2026/08/22 17:30
+    @Description: yield 恢复后（收到停机信号）、开始释放资源前发布。供监听器在资源释放前做收尾。
+                  payload 透传（如 settings/app）。
+    """
+
+    event_name = "application_stopping"
+
+
+class ApplicationStoppedEvent(ApplicationEvent):
+    """应用已停机事件类
+
+    @Author: 花海
+    @Date: 2026/08/22 17:30
+    @Description: _shutdown() 完成后（最末尾）发布，表示应用已完全停机。供监听器做最终清理/审计。
+                  payload 透传（如 settings/app）。
+    """
+
+    event_name = "application_stopped"

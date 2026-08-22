@@ -220,3 +220,64 @@ def test_top_level_exports():
     assert web_infra.web_test_context is not None
     assert web_infra.Aspect is not None
     assert web_infra.Pointcut is not None
+
+
+# ------------------------------------------------------------------
+# 事件总线核心化（始终装配）与框架启动/停机生命周期事件
+# ------------------------------------------------------------------
+def test_application_event_always_assembled():
+    """事件总线作为核心能力：create_app 后始终装配 EventBus 到 app.state.event（无需 app.event.enabled）"""
+    from web_infra import create_app
+
+    app = create_app({"app.name": "test-app"})
+    assert isinstance(app.state.event, EventBus)
+
+
+def test_application_lifecycle_events_order():
+    """生命周期事件顺序：starting -> ready -> stopping -> stopped（TestClient 上下文触发完整 lifespan）"""
+    from fastapi.testclient import TestClient
+
+    from web_infra import create_app
+
+    EventListenerRegistry.clear()
+    events: list[str] = []
+
+    @event_listener("application_starting")
+    def on_starting(event):
+        events.append("application_starting")
+
+    @event_listener("application_ready")
+    def on_ready(event):
+        events.append("application_ready")
+
+    @event_listener("application_stopping")
+    def on_stopping(event):
+        events.append("application_stopping")
+
+    @event_listener("application_stopped")
+    def on_stopped(event):
+        events.append("application_stopped")
+
+    app = create_app({"app.name": "test-app"})
+    with TestClient(app) as client:
+        pass
+
+    assert events == ["application_starting", "application_ready", "application_stopping", "application_stopped"]
+    EventListenerRegistry.clear()
+
+
+@pytest.mark.asyncio
+async def test_event_bus_fail_fast_rethrows():
+    """fail_fast=True：监听器异常向上抛（不静默隔离）"""
+    from web_infra.capabilities.event.listener_registry import _clear
+
+    _clear()
+
+    @event_listener("order.created")
+    def boom(event):
+        raise RuntimeError("listener failed")
+
+    bus = EventBus(fail_fast=True)
+    with pytest.raises(RuntimeError, match="listener failed"):
+        await bus.publish(OrderCreatedEvent(payload={}))
+    _clear()

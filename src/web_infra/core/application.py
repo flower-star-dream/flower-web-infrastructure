@@ -38,6 +38,12 @@ from web_infra.infra.web.rate_limit_middleware import RateLimitMiddleware
 from web_infra.infra.web.security_headers_middleware import SecurityHeadersMiddleware
 from web_infra.capabilities.cache.cache_backend_registry import CacheBackendRegistry
 from web_infra.capabilities.event.event_bus import EventBus
+from web_infra.capabilities.event import (
+    ApplicationStartingEvent,
+    ApplicationReadyEvent,
+    ApplicationStoppingEvent,
+    ApplicationStoppedEvent,
+)
 from web_infra.capabilities.db import (
     SqliteSessionFactory,
     TenantQueryFilter,
@@ -363,14 +369,13 @@ class Application:
             setattr(self.app.state, "distributed_lock", self._components["distributed_lock"])
 
     def _setup_event(self) -> None:
-        """事件总线装配（app.event.enabled=true 时）：进程内解耦，区别于 MQ（跨服务）。
+        """事件总线装配（核心能力，始终装配）：进程内解耦，区别于 MQ（跨服务）。
 
-        默认关闭（yml app.event.enabled=false）；fail_fast 由配置控制（单监听器异常是否阻断其余，
-        默认 false=记录日志继续）。enabled 时挂 app.state.event 供业务发布事件；
-        未启用时零装配零开销。监听器异步与否由 @event_listener(async_mode=...) 决定，装配层不感知。
+        事件总线作为框架核心能力，无论配置如何均挂 app.state.event 供业务发布事件（始终装配，零门控）；
+        fail_fast 由配置控制（单监听器异常是否阻断其余，默认 false=记录日志继续）。
+        监听器异步与否由 @event_listener(async_mode=...) 决定，装配层不感知。
+        生命周期事件（ApplicationStarting/Ready/Stopping/Stopped）在 _lifespan 对应时点发布。
         """
-        if not self.settings.get_bool("app.event.enabled"):
-            return
         event_bus = EventBus(
             fail_fast=self.settings.get_bool("app.event.fail_fast", False),
         )
@@ -804,18 +809,33 @@ class Application:
     # 内部：生命周期（优雅停机，规范 §19.6）
     # ------------------------------------------------------------------
 
+    async def _publish_lifecycle(self, event: Any) -> None:
+        """发布生命周期事件（启动/停机各阶段）：取 app.state.event 总线，非 None 则发布。
+
+        事件总线始终装配，此处的判空仅为防御性保险（极端情况下总线被外部置空时不阻断生命周期）；
+        监听器未注册时发布为 no-op（publish 遍历匹配无命中即返回）。
+        """
+        bus = getattr(self.app.state, "event", None)
+        if bus is not None:
+            await bus.publish(event)
+
     @asynccontextmanager
     async def _lifespan(self, app: FastAPI) -> AsyncGenerator[None, None]:
-        """应用生命周期：启动前清理上下文、模型配置来源自动注册、接管 uvicorn 访问日志；停机时释放可关闭组件"""
+        """应用生命周期：启动前清理上下文、模型配置来源自动注册、接管 uvicorn 访问日志；停机时释放可关闭组件。
+        生命周期事件在对应时点发布：starting（清理后/扩展启动前）-> ready（全部启动完成/接受请求前）
+        -> stopping（收到停机信号/释放资源前）-> stopped（_shutdown 完成后）。"""
         RequestContext.clear()
         # 装配了访问日志中间件时，启动阶段关闭 uvicorn 原生访问日志（由中间件输出唯一访问日志，避免重复）。
         # 自定义 lifespan 下 Starlette 不会执行 router 的 on_startup 事件，故在此显式调用
         # （uvicorn Config 日志配置早于 lifespan 启动，此处执行时机在接受连接之前，原生日志全程不输出）。
         setup_uvicorn_access_log(self.app)
+        await self._publish_lifecycle(ApplicationStartingEvent(payload={"settings": self.settings, "app": self.app}))
         await self._register_ai_models_from_store()
         await self._run_extension_startups()
         await self._start_capacity_sampler()
+        await self._publish_lifecycle(ApplicationReadyEvent(payload={"settings": self.settings, "app": self.app}))
         yield
+        await self._publish_lifecycle(ApplicationStoppingEvent(payload={"settings": self.settings, "app": self.app}))
         await self._stop_capacity_sampler()
         await self._run_extension_shutdowns()
         # 清理残留的分布式锁看门狗任务（避免孤儿续期 / Task was destroyed 警告）
@@ -823,6 +843,7 @@ class Application:
 
         await shutdown_all_watchdogs()
         await self._shutdown()
+        await self._publish_lifecycle(ApplicationStoppedEvent(payload={"settings": self.settings, "app": self.app}))
 
     async def _run_extension_startups(self) -> None:
         """扩展点启动钩子：按拓扑序（前置先启动）执行各扩展点 startup(build 产物)（同步/异步皆可）。

@@ -124,11 +124,11 @@ app:
     #   port: 6379
     #   db: 0
 
-  # 进程内事件总线（默认关闭，见 web_infra.capabilities.event）：区别于 MQ（跨服务），服务内解耦；
-  # app.event.enabled=true 时装配 EventBus 并挂 app.state.event（业务 publish/publish_after_commit 发布），
+  # 进程内事件总线（核心能力，始终装配，见 web_infra.capabilities.event）：区别于 MQ（跨服务），服务内解耦；
+  # 无论配置如何均装配 EventBus 并挂 app.state.event（业务 publish/publish_after_commit 发布），
   # 监听器经 @event_listener 注册；fail_fast 控制单监听器异常是否阻断其余（默认 false=记录日志继续）。
+  # 框架启动/停机生命周期事件（starting/ready/stopping/stopped）在 _lifespan 对应时点自动发布。
   event:
-    enabled: false             # 进程内事件总线默认不装配（默认关闭）；业务显式开启后才挂 app.state.event
     fail_fast: false           # 单监听器异常是否阻断其余（false=记录日志继续分发）
 
   # 数据库（DatabaseFactoryInterface SPI，DatabaseRegistry 按 type 装配：内置 mysql/sqlite，
