@@ -10,10 +10,10 @@
 """
 from __future__ import annotations
 
-from threading import Lock
-from typing import Callable, ClassVar
+from typing import Callable
 
 from web_infra.capabilities.cache.cache_backend_interface import CacheBackendInterface
+from web_infra.core.spi import SpiRegistry
 from web_infra.infra.config import Settings
 
 #: 缓存后端工厂签名：入参装配配置（Settings），返回缓存后端实现
@@ -27,51 +27,13 @@ _REDIS_CONFIG_FIELDS = (
 )
 
 
-class CacheBackendRegistry:
-    """缓存后端注册表（类级注册，全局装配；同名覆盖）"""
-
-    _factories: ClassVar[dict[str, CacheBackendFactory]] = {}
-    _lock = Lock()
-
-    @classmethod
-    def register(cls, name: str, factory: CacheBackendFactory) -> None:
-        """注册缓存后端工厂（同名覆盖）。
-
-        :param name: type 名（与 yml app.cache.type 匹配）
-        :param factory: 工厂，入参 Settings，返回 CacheBackendInterface 实现
-        """
-        with cls._lock:
-            cls._factories[name] = factory
-
-    @classmethod
-    def unregister(cls, name: str) -> None:
-        """注销后端（不存在时静默）"""
-        with cls._lock:
-            cls._factories.pop(name, None)
-
-    @classmethod
-    def get(cls, name: str) -> CacheBackendFactory:
-        """按名查询工厂；未注册抛 KeyError（装配期由 create_app 捕获转 ConfigError）"""
-        with cls._lock:
-            factory = cls._factories.get(name)
-        if factory is None:
-            raise KeyError(name)
-        return factory
+class CacheBackendRegistry(SpiRegistry):
+    """缓存后端注册表（SpiRegistry 基类：命名空间隔离 + 内置默认保护；同名覆盖默认拒绝）"""
 
     @classmethod
     def create(cls, name: str, settings: Settings) -> CacheBackendInterface:
         """按名实例化缓存后端；未注册抛 KeyError"""
-        with cls._lock:
-            factory = cls._factories.get(name)
-        if factory is None:
-            raise KeyError(name)
-        return factory(settings)
-
-    @classmethod
-    def registered_names(cls) -> list[str]:
-        """已注册后端名清单"""
-        with cls._lock:
-            return list(cls._factories)
+        return cls.get(name)(settings)
 
 
 def _memory_cache_factory(settings: Settings) -> CacheBackendInterface:
@@ -99,6 +61,6 @@ def _redis_cache_factory(settings: Settings) -> CacheBackendInterface:
     return RedisCacheBackend(config=config)
 
 
-# 内置后端条目（模块导入即注册，幂等）
-CacheBackendRegistry.register("memory", _memory_cache_factory)
-CacheBackendRegistry.register("redis", _redis_cache_factory)
+# 内置后端条目（模块导入即注册，幂等；落框架命名空间，受保护）
+CacheBackendRegistry.register("memory", _memory_cache_factory, namespace=CacheBackendRegistry.FRAMEWORK_NAMESPACE)
+CacheBackendRegistry.register("redis", _redis_cache_factory, namespace=CacheBackendRegistry.FRAMEWORK_NAMESPACE)

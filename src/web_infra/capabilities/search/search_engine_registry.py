@@ -12,61 +12,23 @@
 """
 from __future__ import annotations
 
-from threading import Lock
-from typing import Callable, ClassVar
+from typing import Callable
 
-from web_infra.infra.config import Settings
 from web_infra.capabilities.search.search_engine_interface import SearchEngineInterface
+from web_infra.core.spi import SpiRegistry
+from web_infra.infra.config import Settings
 
 #: 搜索引擎工厂签名：入参装配配置（Settings），返回搜索引擎实现
 SearchEngineFactory = Callable[[Settings], SearchEngineInterface]
 
 
-class SearchEngineRegistry:
-    """搜索引擎注册表（类级注册，全局装配；同名覆盖）"""
-
-    _factories: ClassVar[dict[str, SearchEngineFactory]] = {}
-    _lock = Lock()
-
-    @classmethod
-    def register(cls, name: str, factory: SearchEngineFactory) -> None:
-        """注册搜索引擎工厂（同名覆盖）。
-
-        :param name: type 名（与 yml app.search.type 匹配）
-        :param factory: 工厂，入参 Settings，返回 SearchEngineInterface 实现
-        """
-        with cls._lock:
-            cls._factories[name] = factory
-
-    @classmethod
-    def unregister(cls, name: str) -> None:
-        """注销后端（不存在时静默）"""
-        with cls._lock:
-            cls._factories.pop(name, None)
-
-    @classmethod
-    def get(cls, name: str) -> SearchEngineFactory:
-        """按名查询工厂；未注册抛 KeyError（装配期由调用方捕获转 ConfigError）"""
-        with cls._lock:
-            factory = cls._factories.get(name)
-        if factory is None:
-            raise KeyError(name)
-        return factory
+class SearchEngineRegistry(SpiRegistry):
+    """搜索引擎注册表（SpiRegistry 基类：命名空间隔离 + 内置默认保护；同名覆盖默认拒绝）"""
 
     @classmethod
     def create(cls, name: str, settings: Settings) -> SearchEngineInterface:
         """按名实例化搜索引擎；未注册抛 KeyError"""
-        with cls._lock:
-            factory = cls._factories.get(name)
-        if factory is None:
-            raise KeyError(name)
-        return factory(settings)
-
-    @classmethod
-    def registered_names(cls) -> list[str]:
-        """已注册后端名清单"""
-        with cls._lock:
-            return list(cls._factories)
+        return cls.get(name)(settings)
 
 
 def _memory_search_factory(settings: Settings) -> SearchEngineInterface:
@@ -94,6 +56,6 @@ def _elasticsearch_search_factory(settings: Settings) -> SearchEngineInterface:
     )
 
 
-# 内置后端条目（模块导入即注册，幂等）
-SearchEngineRegistry.register("memory", _memory_search_factory)
-SearchEngineRegistry.register("elasticsearch", _elasticsearch_search_factory)
+# 内置后端条目（模块导入即注册，幂等；落框架命名空间，受保护）
+SearchEngineRegistry.register("memory", _memory_search_factory, namespace=SearchEngineRegistry.FRAMEWORK_NAMESPACE)
+SearchEngineRegistry.register("elasticsearch", _elasticsearch_search_factory, namespace=SearchEngineRegistry.FRAMEWORK_NAMESPACE)

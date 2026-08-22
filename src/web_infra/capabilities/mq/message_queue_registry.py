@@ -10,61 +10,23 @@
 """
 from __future__ import annotations
 
-from threading import Lock
-from typing import Callable, ClassVar
+from typing import Callable
 
-from web_infra.infra.config import Settings
 from web_infra.capabilities.mq.message_publisher_interface import MessagePublisherInterface
+from web_infra.core.spi import SpiRegistry
+from web_infra.infra.config import Settings
 
 #: 消息队列工厂签名：入参装配配置（Settings），返回消息发布器实现
 MessageQueueFactory = Callable[[Settings], MessagePublisherInterface]
 
 
-class MessageQueueRegistry:
-    """消息队列注册表（类级注册，全局装配；同名覆盖）"""
-
-    _factories: ClassVar[dict[str, MessageQueueFactory]] = {}
-    _lock = Lock()
-
-    @classmethod
-    def register(cls, name: str, factory: MessageQueueFactory) -> None:
-        """注册队列后端工厂（同名覆盖）。
-
-        :param name: type 名（与 yml app.mq.type 匹配）
-        :param factory: 工厂，入参 Settings，返回 MessagePublisherInterface 实现
-        """
-        with cls._lock:
-            cls._factories[name] = factory
-
-    @classmethod
-    def unregister(cls, name: str) -> None:
-        """注销后端（不存在时静默）"""
-        with cls._lock:
-            cls._factories.pop(name, None)
-
-    @classmethod
-    def get(cls, name: str) -> MessageQueueFactory:
-        """按名查询工厂；未注册抛 KeyError（装配期由 create_app 捕获转 ConfigError）"""
-        with cls._lock:
-            factory = cls._factories.get(name)
-        if factory is None:
-            raise KeyError(name)
-        return factory
+class MessageQueueRegistry(SpiRegistry):
+    """消息队列注册表（SpiRegistry 基类：命名空间隔离 + 内置默认保护；同名覆盖默认拒绝）"""
 
     @classmethod
     def create(cls, name: str, settings: Settings) -> MessagePublisherInterface:
         """按名实例化队列后端；未注册抛 KeyError"""
-        with cls._lock:
-            factory = cls._factories.get(name)
-        if factory is None:
-            raise KeyError(name)
-        return factory(settings)
-
-    @classmethod
-    def registered_names(cls) -> list[str]:
-        """已注册后端名清单"""
-        with cls._lock:
-            return list(cls._factories)
+        return cls.get(name)(settings)
 
 
 def _memory_mq_factory(settings: Settings) -> MessagePublisherInterface:
@@ -89,6 +51,6 @@ def _rocketmq_factory(settings: Settings) -> MessagePublisherInterface:
     return RocketMqPublisher(config)
 
 
-# 内置后端条目（模块导入即注册，幂等）
-MessageQueueRegistry.register("memory", _memory_mq_factory)
-MessageQueueRegistry.register("rocketmq", _rocketmq_factory)
+# 内置后端条目（模块导入即注册，幂等；落框架命名空间，受保护）
+MessageQueueRegistry.register("memory", _memory_mq_factory, namespace=MessageQueueRegistry.FRAMEWORK_NAMESPACE)
+MessageQueueRegistry.register("rocketmq", _rocketmq_factory, namespace=MessageQueueRegistry.FRAMEWORK_NAMESPACE)

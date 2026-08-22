@@ -11,61 +11,23 @@
 """
 from __future__ import annotations
 
-from threading import Lock
-from typing import Any, Callable, ClassVar
+from typing import Any, Callable
 
 from web_infra.capabilities.db.database_factory_interface import DatabaseFactoryInterface
+from web_infra.core.spi import SpiRegistry
 
 #: 数据库工厂签名：入参实例连接参数（单源取 app.db.<type> 段，混合多源取 app.db.instances 实例项），
 #: 返回数据库工厂实现（DatabaseFactoryInterface，可含 session_factory/orm_session 等扩展能力）
 DatabaseFactory = Callable[[dict[str, Any]], DatabaseFactoryInterface]
 
 
-class DatabaseRegistry:
-    """数据库注册表（类级注册，全局装配；同名覆盖）"""
-
-    _factories: ClassVar[dict[str, DatabaseFactory]] = {}
-    _lock = Lock()
-
-    @classmethod
-    def register(cls, name: str, factory: DatabaseFactory) -> None:
-        """注册数据库工厂（同名覆盖）。
-
-        :param name: type 名（与 yml app.db.type 或 app.db.instances 实例 type 匹配）
-        :param factory: 工厂，入参实例连接参数 dict，返回 DatabaseFactoryInterface 实现
-        """
-        with cls._lock:
-            cls._factories[name] = factory
-
-    @classmethod
-    def unregister(cls, name: str) -> None:
-        """注销数据库（不存在时静默）"""
-        with cls._lock:
-            cls._factories.pop(name, None)
-
-    @classmethod
-    def get(cls, name: str) -> DatabaseFactory:
-        """按名查询工厂；未注册抛 KeyError（装配期由 create_app 捕获转 ConfigError）"""
-        with cls._lock:
-            factory = cls._factories.get(name)
-        if factory is None:
-            raise KeyError(name)
-        return factory
+class DatabaseRegistry(SpiRegistry):
+    """数据库注册表（SpiRegistry 基类：命名空间隔离 + 内置默认保护；同名覆盖默认拒绝）"""
 
     @classmethod
     def create(cls, name: str, params: dict[str, Any]) -> DatabaseFactoryInterface:
         """按名实例化数据库；未注册抛 KeyError"""
-        with cls._lock:
-            factory = cls._factories.get(name)
-        if factory is None:
-            raise KeyError(name)
-        return factory(params)
-
-    @classmethod
-    def registered_names(cls) -> list[str]:
-        """已注册数据库名清单"""
-        with cls._lock:
-            return list(cls._factories)
+        return cls.get(name)(params)
 
 
 def _mysql_factory(params: dict[str, Any]) -> DatabaseFactoryInterface:
@@ -94,6 +56,6 @@ def _sqlite_factory(params: dict[str, Any]) -> DatabaseFactoryInterface:
     return SqliteSessionFactory(db_path=params.get("path") or ":memory:")  # type: ignore[return-value]  # sqlite 同步会话与异步 DatabaseFactoryInterface 契约并存（轻量/测试场景）
 
 
-# 内置数据库条目（模块导入即注册，幂等）
-DatabaseRegistry.register("mysql", _mysql_factory)
-DatabaseRegistry.register("sqlite", _sqlite_factory)
+# 内置数据库条目（模块导入即注册，幂等；落框架命名空间，受保护）
+DatabaseRegistry.register("mysql", _mysql_factory, namespace=DatabaseRegistry.FRAMEWORK_NAMESPACE)
+DatabaseRegistry.register("sqlite", _sqlite_factory, namespace=DatabaseRegistry.FRAMEWORK_NAMESPACE)

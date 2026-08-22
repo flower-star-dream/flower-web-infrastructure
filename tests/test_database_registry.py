@@ -48,10 +48,12 @@ class _FakePgDatabase:
 @pytest.fixture
 def clean_registry():
     """测试后清理全局数据库注册表（保留内置条目）"""
-    before = dict(DatabaseRegistry._factories)
+    before = {ns: dict(m) for ns, m in DatabaseRegistry._store().items()}
     yield
-    DatabaseRegistry._factories.clear()
-    DatabaseRegistry._factories.update(before)
+    DatabaseRegistry._store().clear()
+    for ns, mapping in before.items():
+        for name, (priority, factory) in mapping.items():
+            DatabaseRegistry.register(name, factory, namespace=ns, priority=priority, overwrite=True)
 
 
 # ------------------------------------------------------------------
@@ -67,7 +69,7 @@ def test_builtin_entries_registered(clean_registry):
 def test_register_overwrite_and_unregister(clean_registry):
     """同名覆盖 + 注销（不存在时静默），未注册 get 抛 KeyError"""
     DatabaseRegistry.register("pg", lambda p: _FakePgDatabase({"v": 1}))
-    DatabaseRegistry.register("pg", lambda p: _FakePgDatabase({"v": 2}))
+    DatabaseRegistry.register("pg", lambda p: _FakePgDatabase({"v": 2}), overwrite=True)
     assert DatabaseRegistry.create("pg", {}).params["v"] == 2
 
     DatabaseRegistry.unregister("pg")
