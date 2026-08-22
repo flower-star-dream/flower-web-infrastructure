@@ -24,6 +24,7 @@ from fastapi import FastAPI
 from web_infra.infra.config import ConfigError, CompositeConfigSource, DictConfigSource, Settings
 from web_infra.core.capability import CapabilityRegistry
 from web_infra.core.extension import ExtensionRegistry
+from web_infra.core.aop import bind_components
 from web_infra.infra.context import RequestContext
 from web_infra.infra.error import register_global_exception_handlers
 from web_infra.infra.logging import configure_logging
@@ -36,6 +37,7 @@ from web_infra.infra.web.redis_idempotency_store import RedisIdempotencyStore
 from web_infra.infra.web.rate_limit_middleware import RateLimitMiddleware
 from web_infra.infra.web.security_headers_middleware import SecurityHeadersMiddleware
 from web_infra.capabilities.cache.cache_backend_registry import CacheBackendRegistry
+from web_infra.capabilities.event.event_bus import EventBus
 from web_infra.capabilities.db import (
     SqliteSessionFactory,
     TenantQueryFilter,
@@ -132,6 +134,33 @@ def _resolve_registry(registry: Any, name: str, key: str) -> Any:
         )
 
 
+def _resolve_component(registry: Any, name: str, build_arg: Any, key: str) -> Any:
+    """按名解析组件：'ref:' 实例引用直接返回已注册实例，否则按工厂实例化（未注册抛 ConfigError）。
+
+    :param registry: 类级注册表（提供 get/get_instance/registered_names/registered_instance_names）
+    :param name: type 值（yml 配置，如 app.cache.type；'ref:xxx' 表示引用已注册实例）
+    :param build_arg: 传给工厂的装配入参（cache/storage/mq/registry 为 Settings；db/mongo 为参数字典）
+    :param key: 配置键（错误提示定位）
+    """
+    if isinstance(name, str) and name.startswith("ref:"):
+        try:
+            return registry.get_instance(name[4:])
+        except KeyError:
+            raise ConfigError(
+                f"{key}={name} 未注册实例（可用：{', '.join(registry.registered_instance_names())}）",
+                key=key,
+            )
+    try:
+        factory = registry.get(name)
+    except KeyError:
+        raise ConfigError(
+            f"{key}={name} 未注册组件实现（内置：{', '.join(registry.registered_names())}；"
+            "自定义实现经对应注册表 register 注册后装配）",
+            key=key,
+        )
+    return factory(build_arg)
+
+
 class Application:
     """应用启动器：配置驱动的组件自动装配（Spring Boot 风格）"""
 
@@ -168,7 +197,7 @@ class Application:
         return Settings(CompositeConfigSource(DictConfigSource(settings), Settings.default_source()))
 
     def build(self) -> FastAPI:
-        """装配应用：日志 -> 能力装配校验 -> 组件装配 -> Web 基础能力 -> 中间件 -> 多租户 -> 健康检查/指标端点。
+        """装配应用：日志 -> 能力装配校验 -> 组件装配 -> AOP 绑定 -> 事件总线 -> Web 基础能力 -> 中间件 -> 多租户 -> 健康检查/指标端点。
 
         组件先于中间件装配：依赖框架组件的中间件（如幂等存储复用 cache 组件 Redis 客户端）装配期可取已装配组件。
         扩展点在组件之后、中间件之前装配：插件 build 可复用已装配组件（ctx.components），
@@ -177,6 +206,9 @@ class Application:
         self._setup_logging()
         self._setup_capabilities()
         self._setup_components()
+        # AOP 组件访问器绑定：组件先装配才有值，绑定后 Advice 运行时可按名取 db/cache 等组件
+        bind_components(self._components)
+        self._setup_event()
         self._setup_extensions()
         self._setup_web()
         self._setup_tenant()
@@ -330,6 +362,20 @@ class Application:
             self._components["distributed_lock"] = self._build_lock()
             setattr(self.app.state, "distributed_lock", self._components["distributed_lock"])
 
+    def _setup_event(self) -> None:
+        """事件总线装配（app.event.enabled=true 时）：进程内解耦，区别于 MQ（跨服务）。
+
+        默认关闭（yml app.event.enabled=false）；fail_fast 由配置控制（单监听器异常是否阻断其余，
+        默认 false=记录日志继续）。enabled 时挂 app.state.event 供业务发布事件；
+        未启用时零装配零开销。监听器异步与否由 @event_listener(async_mode=...) 决定，装配层不感知。
+        """
+        if not self.settings.get_bool("app.event.enabled"):
+            return
+        event_bus = EventBus(
+            fail_fast=self.settings.get_bool("app.event.fail_fast", False),
+        )
+        self.app.state.event = event_bus
+
     def _setup_extensions(self) -> None:
         """扩展点装配（app.extensions.enabled，统一扩展注册器 ExtensionRegistry）。
 
@@ -476,7 +522,7 @@ class Application:
     def _build_cache(self) -> Any:
         """缓存组件：按 app.cache.type 经 CacheBackendRegistry 按名装配（内置 memory/redis，自定义经注册表接入）"""
         cache_type = self.settings.get("app.cache.type") or "memory"
-        return _resolve_registry(CacheBackendRegistry, cache_type, "app.cache.type")(self.settings)
+        return _resolve_component(CacheBackendRegistry, cache_type, self.settings, "app.cache.type")
 
     def _build_db(self) -> Any:
         """数据库组件（DatabaseFactoryInterface SPI，DatabaseRegistry 按名装配）：
@@ -497,7 +543,7 @@ class Application:
             return self._build_multi_datasource(legacy_instances)
         db_type = self.settings.get("app.db.type") or "mysql"
         params = self._db_params(db_type)
-        return _resolve_registry(DatabaseRegistry, db_type, "app.db.type")(params)
+        return _resolve_component(DatabaseRegistry, db_type, params, "app.db.type")
 
     def _build_named_datasources(self, datasources: dict[str, dict[str, Any]]) -> DatabaseManager:
         """按命名数据源池装配 DatabaseManager：default 指向默认数据源，按名取各自连接。
@@ -564,7 +610,7 @@ class Application:
         """
         mongo_type = self.settings.get("app.mongo.type") or "beanie"
         params = self._mongo_params()
-        return _resolve_registry(MongoDatabaseRegistry, mongo_type, "app.mongo.type")(params)
+        return _resolve_component(MongoDatabaseRegistry, mongo_type, params, "app.mongo.type")
 
     def _mongo_params(self) -> dict[str, Any]:
         """读取 app.mongo 段作为实例连接参数（排除 enabled/type 装配字段）"""
@@ -574,17 +620,17 @@ class Application:
     def _build_storage(self) -> Any:
         """对象存储组件：按 app.storage.type 经 ObjectStorageRegistry 按名装配（内置 local/minio，自定义经注册表接入）"""
         storage_type = self.settings.get("app.storage.type") or "local"
-        return _resolve_registry(ObjectStorageRegistry, storage_type, "app.storage.type")(self.settings)
+        return _resolve_component(ObjectStorageRegistry, storage_type, self.settings, "app.storage.type")
 
     def _build_mq(self) -> Any:
         """消息队列组件：按 app.mq.type 经 MessageQueueRegistry 按名装配（内置 memory/rocketmq，自定义经注册表接入）"""
         mq_type = self.settings.get("app.mq.type") or "memory"
-        return _resolve_registry(MessageQueueRegistry, mq_type, "app.mq.type")(self.settings)
+        return _resolve_component(MessageQueueRegistry, mq_type, self.settings, "app.mq.type")
 
     def _build_registry(self) -> Any:
         """服务注册发现组件：按 app.registry.type 经 ServiceDiscoveryRegistry 按名装配（内置 memory/nacos，自定义经注册表接入）"""
         registry_type = self.settings.get("app.registry.type") or "memory"
-        return _resolve_registry(ServiceDiscoveryRegistry, registry_type, "app.registry.type")(self.settings)
+        return _resolve_component(ServiceDiscoveryRegistry, registry_type, self.settings, "app.registry.type")
 
     def _build_ai(self) -> Any:
         """AI 组件：app.ai.enabled=true 时装配统一模型网关（AI 规范 §2.2/§17.4）。
