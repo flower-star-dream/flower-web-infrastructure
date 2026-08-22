@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from datetime import datetime
 from typing import Any, Coroutine, cast
 
@@ -70,7 +71,7 @@ class MysqlBinlogCdcSource:
         self._name = "mysql"
 
         self._handler: CdcEventHandler | None = None
-        self._stop_event = asyncio.Event()
+        self._stop_event = threading.Event()  # 跨线程安全：读线程判断、主协程 set（asyncio.Event 非线程安全）
         self._reader_task: asyncio.Task | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._log_file: str | None = None

@@ -82,6 +82,9 @@ from web_infra.infra.resilience import (
     RateLimitConfig,
     TokenBucketRateLimiter,
     DistributedLock,
+    DistributedLockInterface,
+    DistributedLockRegistry,
+    RedissonLock,
 )
 from web_infra.capabilities.ai import (
     ModelProviderInterface,
@@ -389,6 +392,7 @@ __all__ = [
     # 韧性
     "RetryConfig", "retry", "CircuitBreaker", "CircuitBreakerConfig", "CircuitBreakerState",
     "CircuitOpenError", "RateLimitConfig", "TokenBucketRateLimiter", "DistributedLock",
+    "DistributedLockInterface", "DistributedLockRegistry", "RedissonLock",
     # AI
     "ModelProviderInterface", "ModelProviderRegistry", "ChatRole", "FinishReason", "ChatMessage", "Usage",
     "ChatRequest", "ChatResponse", "ChatStreamChunk", "EmbeddingRequest", "EmbeddingResponse",

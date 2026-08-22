@@ -1513,6 +1513,8 @@ app:
   `op` 枚举 `CdcOp`（insert/update/delete），`document_id` 由主键按列序拼接（稳定幂等）。
 - 编排管道 `CdcSyncPipeline`（`cdc_sync_pipeline.py`）：订阅源事件 → 表白名单过滤 → 攒批（bulk_size/flush_interval）→
   目标写入（exponential backoff 重试）→ 成功后推进全局流位点（At-least-once，目标幂等兜底）；失败超限暂停消费。
+  写入失败时把**未成功写入的事件（失败批及之后）回填待写队列**（不丢批次）并置暂停标记（位点停留），
+  恢复后从回填批次重试，已成功写入的批不重复写。
 - 装配注册表 `CdcSyncRegistry`（`cdc_sync_registry.py`）：`register_source/register_target/register_offset_store`，
   内置 `redis`/`file` 位点条目，业务自定义实现 `register_*` 后按 `app.search.sync.source/target/offset_store` 接入，
   未注册抛 KeyError（装配期转 ConfigError）。

@@ -13,6 +13,9 @@ from web_infra.infra.resilience.circuit_breaker import CircuitBreaker
 from web_infra.infra.resilience.rate_limit_config import RateLimitConfig
 from web_infra.infra.resilience.token_bucket_rate_limiter import TokenBucketRateLimiter
 from web_infra.infra.resilience.distributed_lock import DistributedLock
+from web_infra.infra.resilience.distributed_lock_interface import DistributedLockInterface
+from web_infra.infra.resilience.distributed_lock_registry import DistributedLockRegistry
+from web_infra.infra.resilience.redisson_lock import RedissonLock
 
 __all__ = [
     "RetryConfig",
@@ -24,4 +27,7 @@ __all__ = [
     "RateLimitConfig",
     "TokenBucketRateLimiter",
     "DistributedLock",
+    "DistributedLockInterface",
+    "DistributedLockRegistry",
+    "RedissonLock",
 ]

@@ -168,7 +168,9 @@ class CdcSyncPipeline:
     async def _flush_pending(self) -> None:
         """冲刷待写事件：按表分批写目标 → 成功后推进流位点（全局末位点）。
 
-        目标写入失败：按表整批重试（指数退避）；超限暂停消费并置暂停指标（位点停留不推进）。
+        目标写入失败：由 `_write_batch` 回填未成功写入的事件到 `_pending[table]`（不丢批次），
+        此处置暂停指标并重新抛出（位点停留，恢复后重试），保证 At-least-once 语义——
+        位点只在全部写入成功后推进。
         """
         if not self._has_pending():
             return
@@ -177,8 +179,13 @@ class CdcSyncPipeline:
         for table, events in list(self._pending.items()):
             if not events:
                 continue
-            self._pending[table] = []  # 先取走待写（防重入），失败整体回滚重试
-            await self._write_batch(table, events)
+            self._pending[table] = []  # 先取走待写（防重入）；失败由 _write_batch 回填未写部分
+            try:
+                await self._write_batch(table, events)
+            except Exception:
+                if self._pending[table]:  # _write_batch 已回填未成功写入的事件
+                    SyncMetrics.set_suspended(self._source_name, 1)  # 暂停消费（位点停留，恢复后继续）
+                raise
             # 记录全局末位点（binlog 单一流位置，取本表末尾事件的 position）
             last_event = events[-1]
             if last_event.position:
@@ -191,10 +198,20 @@ class CdcSyncPipeline:
     async def _write_batch(self, table: str, events: list[CdcChangeEvent]) -> None:
         """分批写目标（按 bulk_size 切片），失败按指数退避重试，超限暂停消费。
 
+        逐批写入：某批重试超限抛异常前，把【未成功写入的事件】（失败批及之后所有批次）
+        回填到 `_pending[table]`，保证不丢批次（At-least-once）。已成功写入的批次不重复写。
+
         :raises Exception: 重试超限后抛出（消费循环记日志，暂停状态由指标反映）
         """
-        for batch in self._chunks(events, self._bulk_size):
-            await self._write_with_retry(table, batch)
+        chunks = self._chunks(events, self._bulk_size)
+        batch_size = self._bulk_size
+        for i, batch in enumerate(chunks):
+            try:
+                await self._write_with_retry(table, batch)
+            except Exception:
+                # P2：未成功写入的事件 = 从当前失败批开始到末尾的所有事件，回填待重试
+                self._pending[table] = events[i * batch_size:]
+                raise
 
     def _chunks(self, items: list[CdcChangeEvent], size: int) -> list[list[CdcChangeEvent]]:
         """将事件列表按 size 切分为批量块"""

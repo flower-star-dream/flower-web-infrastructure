@@ -96,6 +96,19 @@ app:
       health_check_interval: 30
       retry_on_timeout: true
 
+  # 分布式锁（DistributedLockRegistry 按 type 装配：内置 redisson/redis；默认关闭，对齐 ai/mongo/capacity 惯例）。
+  # 默认不装配锁（create_app 不加配置即可启动，不强制 Redis）；业务显式启用并配置 Redis 后才装配。
+  # Redis 客户端优先复用 cache 组件（cache.type=redis 时），否则需独立 app.lock.redis 连接段。
+  # 装配结果挂 app.state.distributed_lock（统一锁工厂 (key, lease_time) -> 锁实例）。
+  lock:
+    enabled: false             # 分布式锁默认不装配（默认关闭）；业务显式开启需配 Redis 客户端
+    type: redisson             # 分布式锁实现：redisson（默认，看门狗续期+可重入）/ redis（静态租约）
+    cache_max_size: 10000      # 锁实例缓存上限（方案甲按 Key 复用实例）：超出按 LRU 淘汰最久未用，防锁 Key 无限增长内存泄漏
+    # redis:                  # 未启用 cache.type=redis 时，独立 Redis 连接（锁复用 cache 客户端则无需配置）
+    #   host: 127.0.0.1
+    #   port: 6379
+    #   db: 0
+
   # 数据库（DatabaseFactoryInterface SPI，DatabaseRegistry 按 type 装配：内置 mysql/sqlite，
   # 自定义如 PostgreSQL 经 DatabaseRegistry.register 注册后接入；未注册的 type 启动期快速失败（ConfigError））。
   # 推荐以「命名数据源池」（app.db.datasources）为配置主体：default 指向默认数据源，业务 db 无参取它、

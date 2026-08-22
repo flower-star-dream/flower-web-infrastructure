@@ -14,6 +14,8 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import threading
+from collections import OrderedDict
 from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator, Callable
 
@@ -52,6 +54,8 @@ from web_infra.capabilities.mq.message_queue_registry import MessageQueueRegistr
 from web_infra.capabilities.storage.object_storage_registry import ObjectStorageRegistry
 from web_infra.capabilities.registry.service_discovery_registry import ServiceDiscoveryRegistry
 from web_infra.infra.web.diagnostic_access import DiagnosticAccessGuard
+from web_infra.infra.constants import CacheKeyBuilder
+from web_infra.infra.resilience.distributed_lock_registry import DistributedLockRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -287,6 +291,13 @@ class Application:
             setattr(self.app.state, name, component)
         # 配置挂载到 app.state.settings（业务/组件装配期读取统一配置，如 app.mq.outbox）
         self.app.state.settings = self.settings
+        # 分布式锁（app.lock.enabled，默认关闭，对齐 ai/mongo/capacity 惯例）：
+        # 默认不装配（create_app 不加配置即可启动，不强制 Redis）；业务显式
+        # app.lock.enabled: true 并配置 Redis（cache.type=redis 或 app.lock.redis）才装配，
+        # 挂 app.state.distributed_lock（统一锁工厂）。
+        if self.settings.get_bool("app.lock.enabled"):
+            self._components["distributed_lock"] = self._build_lock()
+            setattr(self.app.state, "distributed_lock", self._components["distributed_lock"])
 
     def _setup_extensions(self) -> None:
         """扩展点装配（app.extensions.enabled，统一扩展注册器 ExtensionRegistry）。
@@ -647,6 +658,71 @@ class Application:
             key="app.ai.store.type",
         )
 
+    def _build_lock(self) -> Callable[[str], Any]:
+        """分布式锁工厂装配（app.lock.type：redisson 默认 / redis；注册表按名取工厂）。
+
+        返回统一工厂 `(key: str, lease_time: int = 30) -> 锁实例`（可重入/看门狗由实现决定）。
+        复用 cache 组件的 Redis 客户端（cache.type=redis 时），否则按 app.lock.redis 独立构建；
+        未注册的 lock.type 启动期快速失败（ConfigError，避免拼写错误静默回落）。
+
+        **方案甲（同一锁 Key 复用同一实例）**：工厂内部按完整锁 Key 缓存 RedissonLock 实例，
+        保证同一业务锁 Key 多个调用方拿到同一锁对象——这是可重入判定（_is_reentrant 的
+        `owner == self._lock_key` 主判定）成立的前提，从根源消除"同 Key 多实例"歧义。
+        """
+        lock_type = self.settings.get("app.lock.type") or "redisson"
+        factory = DistributedLockRegistry.get(lock_type)  # 未注册抛 KeyError
+        redis_client = self._resolve_lock_redis()
+        if redis_client is None:
+            raise ConfigError(
+                "app.lock 需要 Redis 客户端：请启用 cache.type=redis 或配置 app.lock.redis 连接",
+                key="app.lock",
+            )
+
+        cache: OrderedDict[str, Any] = OrderedDict()
+        cache_lock = threading.Lock()
+        cache_max_size = int(self.settings.get("app.lock.cache_max_size") or 10000) or 0
+
+        def _lock_factory(key: str, lease_time: int = 30) -> Any:
+            # 方案甲：按完整锁 Key（含前缀/版本）缓存实例，同 Key 复用，避免多实例导致可重入误判。
+            # LRU 淘汰（TODO 加固 P1）：缓存 max_size 上限，超出淘汰最久未用条目，防锁 Key 无限增长导致内存泄漏。
+            full_key = CacheKeyBuilder.build(CacheKeyBuilder.DISTRIBUTED_LOCK, key=key)
+            with cache_lock:
+                lock = cache.get(full_key)
+                if lock is not None:
+                    cache.move_to_end(full_key)  # 命中即置为最近使用（LRU 语义）
+                    return lock
+                lock = factory(redis_client, key=key, lease_time=lease_time)
+                cache[full_key] = lock
+                if cache_max_size > 0 and len(cache) > cache_max_size:
+                    cache.popitem(last=False)  # 淘汰最久未用的首项
+                return lock
+
+        return _lock_factory
+
+    def _resolve_lock_redis(self) -> Any | None:
+        """解析锁使用的 Redis 客户端：`cache.type=redis` 时复用其 RedisConfig.client()；
+        否则需显式配置 `app.lock.redis` 连接段。两者皆无时返回 None（由 _build_lock 快速失败）。
+
+        快速失败依据：默认 `cache.type=memory`（无 Redis 客户端）且未配置 `app.lock.redis`
+        时锁无法工作，应启动期即抛 ConfigError 提示配置，而非静默创建一个指向 localhost 的
+        默认 RedisConfig（避免运行时才因连接失败而暴露）。
+        """
+        cache = self._components.get("cache")
+        config = getattr(cache, "config", None)
+        from web_infra.capabilities.db.redis_config import RedisConfig
+
+        if config is not None and hasattr(config, "client") and isinstance(config, RedisConfig):
+            # cache.type=redis：复用其 Redis 客户端，避免重复建连
+            return config.client()
+        lock_redis = self.settings.get("app.lock.redis") or {}
+        # 仅当显式配置了实际连接段（如 host）时才独立构建 RedisConfig，否则返回 None 走快速失败
+        if lock_redis:
+            redis_config = RedisConfig(
+                **{k: v for k, v in lock_redis.items() if v is not None}
+            )
+            return redis_config.client()
+        return None
+
     # ------------------------------------------------------------------
     # 内部：生命周期（优雅停机，规范 §19.6）
     # ------------------------------------------------------------------
@@ -665,6 +741,10 @@ class Application:
         yield
         await self._stop_capacity_sampler()
         await self._run_extension_shutdowns()
+        # 清理残留的分布式锁看门狗任务（避免孤儿续期 / Task was destroyed 警告）
+        from web_infra.infra.resilience.redisson_lock import shutdown_all_watchdogs
+
+        await shutdown_all_watchdogs()
         await self._shutdown()
 
     async def _run_extension_startups(self) -> None:
