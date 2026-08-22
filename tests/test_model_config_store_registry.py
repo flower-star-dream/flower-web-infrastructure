@@ -42,10 +42,11 @@ def _fake_factory(store_name: str):
 @pytest.fixture
 def clean_store_registry():
     """测试后清理全局 store 注册表（保留内置 yml 条目）"""
-    before = dict(ModelConfigStoreRegistry._factories)
+    before = {ns: dict(entries) for ns, entries in ModelConfigStoreRegistry._store().items()}
     yield
-    ModelConfigStoreRegistry._factories.clear()
-    ModelConfigStoreRegistry._factories.update(before)
+    store = ModelConfigStoreRegistry._store()
+    store.clear()
+    store.update(before)
 
 
 def _ai_settings(store_type: str) -> dict:
@@ -89,7 +90,7 @@ def test_register_and_create_custom(clean_store_registry):
 def test_register_overwrite(clean_store_registry):
     """同名注册覆盖旧工厂（配置刷新语义）"""
     ModelConfigStoreRegistry.register("cfg", _fake_factory("a"))
-    ModelConfigStoreRegistry.register("cfg", _fake_factory("b"))
+    ModelConfigStoreRegistry.register("cfg", _fake_factory("b"), overwrite=True)
     store = ModelConfigStoreRegistry.create("cfg")
     assert "b" in store._configs
 

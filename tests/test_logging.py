@@ -157,7 +157,7 @@ def test_configure_logging_custom_sink_spi():
         logging.getLogger("web_infra.test.sink").info("sink hello")
         assert any("sink hello" in r.getMessage() for r in recording[0].records)
     finally:
-        LogSinkRegistry._factories.pop("recording", None)
+        LogSinkRegistry.unregister("recording")
 
 
 def test_configure_logging_unknown_sink_raises():

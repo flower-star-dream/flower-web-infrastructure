@@ -35,10 +35,11 @@ from web_infra.capabilities.db.mongo_database import MongoDatabase
 @pytest.fixture
 def clean_registry():
     """测试后清理全局 MongoDB 注册表（保留内置条目）"""
-    before = dict(MongoDatabaseRegistry._factories)
+    before = {ns: dict(entries) for ns, entries in MongoDatabaseRegistry._store().items()}
     yield
-    MongoDatabaseRegistry._factories.clear()
-    MongoDatabaseRegistry._factories.update(before)
+    store = MongoDatabaseRegistry._store()
+    store.clear()
+    store.update(before)
 
 
 class _FakeMongoDatabase:
@@ -111,7 +112,7 @@ def test_builtin_beanie_registered(clean_registry):
 def test_register_overwrite_and_unregister(clean_registry):
     """同名覆盖 + 注销（不存在时静默），未注册 get 抛 KeyError"""
     MongoDatabaseRegistry.register("fake", lambda p: _FakeMongoDatabase({"v": 1}))
-    MongoDatabaseRegistry.register("fake", lambda p: _FakeMongoDatabase({"v": 2}))
+    MongoDatabaseRegistry.register("fake", lambda p: _FakeMongoDatabase({"v": 2}), overwrite=True)
     assert MongoDatabaseRegistry.create("fake", {}).params["v"] == 2
 
     MongoDatabaseRegistry.unregister("fake")

@@ -7,15 +7,16 @@
               内置 console（控制台）/ file（文件，按天轮转 + 保留天数）通道；
               用户自定义通道（远端日志平台、消息队列等）经 register 注册后，
               在 app.logging.sinks 配置中声明即启用，未注册的名称配置期快速失败。
+              继承 SpiRegistry 基类：内置默认落框架命名空间（受保护）。
 """
 from __future__ import annotations
 
 import logging
 import os
 from logging.handlers import TimedRotatingFileHandler
-from threading import Lock
-from typing import Any, Callable, ClassVar
+from typing import Any, Callable
 
+from web_infra.core.spi import SpiRegistry
 from web_infra.infra.logging.log_sink_interface import LogSinkInterface
 
 #: 日志通道工厂签名：入参通道配置（app.logging.sinks.<name> 或内置通道解析出的选项），返回日志通道实现
@@ -48,45 +49,13 @@ class FileLogSink:
         return TimedRotatingFileHandler(log_file, when="midnight", backupCount=retention_days, encoding="utf-8")
 
 
-class LogSinkRegistry:
+class LogSinkRegistry(SpiRegistry):
     """日志输出通道注册表（类级注册，全局装配；同名覆盖）"""
-
-    _factories: ClassVar[dict[str, LogSinkFactory]] = {}
-    _lock = Lock()
-
-    @classmethod
-    def register(cls, name: str, factory: LogSinkFactory) -> None:
-        """注册日志通道工厂（同名覆盖内置/已注册通道）。
-
-        :param name: 通道名（与配置 app.logging.sinks 的 key 匹配）
-        :param factory: 工厂，入参通道配置（options dict），返回 LogSinkInterface 实现
-        """
-        with cls._lock:
-            cls._factories[name] = factory
-
-    @classmethod
-    def get(cls, name: str) -> LogSinkFactory:
-        """按名查询工厂；未注册抛 KeyError"""
-        with cls._lock:
-            factory = cls._factories.get(name)
-        if factory is None:
-            raise KeyError(name)
-        return factory
 
     @classmethod
     def create(cls, name: str, options: dict[str, Any] | None = None) -> LogSinkInterface:
         """按名实例化日志通道；未注册抛 KeyError（配置期由 configure_logging 捕获转明确报错）"""
-        with cls._lock:
-            factory = cls._factories.get(name)
-        if factory is None:
-            raise KeyError(name)
-        return factory(options)
-
-    @classmethod
-    def registered_names(cls) -> list[str]:
-        """已注册通道名清单"""
-        with cls._lock:
-            return list(cls._factories)
+        return cls.get(name)(options)
 
 
 def _console_factory(options: dict[str, Any] | None = None) -> LogSinkInterface:
@@ -98,5 +67,5 @@ def _file_factory(options: dict[str, Any] | None = None) -> LogSinkInterface:
 
 
 # 内置通道条目（模块导入即注册，幂等）
-LogSinkRegistry.register("console", _console_factory)
-LogSinkRegistry.register("file", _file_factory)
+LogSinkRegistry.register("console", _console_factory, namespace=LogSinkRegistry.FRAMEWORK_NAMESPACE)
+LogSinkRegistry.register("file", _file_factory, namespace=LogSinkRegistry.FRAMEWORK_NAMESPACE)
