@@ -103,6 +103,8 @@
 | 默认实现 | 每个扩展点必须提供默认实现，核心功能不因扩展缺失而失效 |
 | 命名空间 | SPI 注册表按 `framework`（框架内置）/ `user`（业务自定义）隔离；框架默认同名覆盖默认拒绝（`register(..., overwrite=True)` 才允许），业务同名注册走 `user` 命名空间实现装配覆盖而不破坏框架实现 |
 | 优先级 | 同命名空间内按 `priority` 解析（越大越先命中），为多实现竞争同一接口预留，默认 0 |
+| 实例引用 | `register_instance(name, instance)` 直挂已实例化对象，`resolve` 的 `ref:` 前缀直接返回实例（不调用工厂）；同名可在 `framework` / `user` 各注册不同实例（代码共享、实例隔离） |
+| 运行时切换 | `activate(name, target)` / `deactivate(name)` 不重启更换实现；仅影响纯名解析，显式 `ns:name` 绕过；`fallback(primary, fallback)` 主策略失效自动回退 |
 | 接口类型 | `Protocol`（结构子类型，无需继承即可满足）或 `ABC`（需继承实现），见各接口说明 |
 
 ### 1.2 两种接入方式
@@ -164,6 +166,14 @@
 | payment | `PaymentCallbackHandler` | ABC | 无（业务必选） | 支付/退款回调业务处理 |
 | logging | `LogSinkInterface` | Protocol | `ConsoleLogSink` / `FileLogSink`（`LogSinkRegistry` 按 `app.logging.sinks` 装配） | 远端日志平台/消息队列等自定义通道 |
 | search | `SearchEngineInterface` | Protocol | `InMemorySearchEngine`（`SearchEngineRegistry` 按 `app.search.type` 装配） | Elasticsearch（es extra）/自研（register 接入） |
+| search | `CdcSourceInterface` | Protocol | `MysqlBinlogCdcSource`（[cdc] extra 延迟导入） | 其他 CDC 数据源（Debezium/WAL 等） |
+| search | `CdcSyncTargetInterface` | Protocol | `EsCdcSyncTarget`（包装 `SearchEngineInterface`） | OpenSearch/自研目标 |
+| search | `CdcOffsetStoreInterface` | Protocol | `RedisOffsetStore`（默认）/ `FileOffsetStore` / `MysqlOffsetStore` | 共享位点存储 |
+| state_machine | `StateMachineEngine` | Protocol | `StateMachine`（引擎实例缓存） | 第三方状态机库（`StateMachineRegistry.register_engine_factory` 接入） |
+| payment | `PaymentChannelTemplate` | ABC | `InMemoryPaymentGateway`（骨架化）/ `WeChatPayProvider` | 微信/支付宝等渠道 |
+| payment | `ReconciliationAuditStoreInterface` | Protocol | `InMemoryReconciliationAuditStore` | MySQL 审计表 |
+| payment | `PaymentAuditStoreInterface` | Protocol | `InMemoryPaymentAuditStore` | MySQL 审计表 |
+| security | `OAuth2ClientRegistry` | Protocol | `InMemoryOAuth2ClientRegistry` | DB 持久化客户端注册表 |
 
 ## 3. 配置模块（config）
 
