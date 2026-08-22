@@ -71,7 +71,7 @@ class SessionScopeMixin(ABC):
         return raw  # type: ignore[return-value]
 
     async def _finalize_commit(self, raw: Any, frame: Any) -> None:
-        """owner 提交路径收尾：先校验 rollback-only，再提交；子类可重写追加监控钩子。
+        """owner 提交路径收尾：先校验 rollback-only，再提交；提交成功后触发 after_commit 回调，子类可重写追加监控钩子。
 
         注意：rollback-only 冲突时不在此处自行回滚，而是抛 TransactionPropagationError，
         由 _tx_scope 的 except 分支统一回滚一次（避免重复 rollback）。
@@ -81,6 +81,9 @@ class SessionScopeMixin(ABC):
                 "事务传播冲突：内层事务失败，外层事务已标记 rollback-only，强制回滚"
             )
         await raw.commit()
+        from web_infra.capabilities.db.transaction_synchronization import trigger_after_commit
+
+        await trigger_after_commit()
 
     async def _rollback(self, raw: Any) -> None:
         """回滚（raw 需支持异步 commit/rollback/close 语义）"""

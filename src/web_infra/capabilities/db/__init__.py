@@ -38,6 +38,7 @@ from web_infra.capabilities.db.transaction_propagation import (
     Propagation,
     TransactionPropagationError,
 )
+from web_infra.capabilities.db.transactional import register_tx_aspect, transactional
 
 if TYPE_CHECKING:
     from web_infra.capabilities.db.mysql_base import Base
@@ -104,6 +105,8 @@ __all__ = [
     "Propagation",
     "IsolationLevel",
     "TransactionPropagationError",
+    # 声明式事务（无第三方依赖，可安全导入 *）
+    "transactional",
     # MySQL 连接配置（仅依赖核心 pydantic，可安全导入 *）
     "MySQLConnectionSettings",
     # 会话工具
@@ -158,3 +161,6 @@ def _extend_all_with_installed() -> None:
 
 
 _extend_all_with_installed()
+
+# 注册事务切面占位（幂等；@transactional 实际织入在装饰器内完成，此处仅登记切面语义，便于追溯与扩展）
+register_tx_aspect()

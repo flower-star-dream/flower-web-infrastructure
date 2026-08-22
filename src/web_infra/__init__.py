@@ -376,6 +376,44 @@ from web_infra.infra.utils import (
 )
 from web_infra.core.application import Application, create_app
 
+# 进程内事件总线（对标 Spring ApplicationEvent / @EventListener；默认关闭 app.event.enabled）
+from web_infra.capabilities.event import (
+    ApplicationEvent,
+    EventListener,
+    EventListenerRegistry,
+    event_listener,
+    EventPublisher,
+    EventBus,
+    EventErrorCode,
+)
+# AOP 声明式横切（切点/通知/切面/织入；供声明式事务与缓存统一织入）
+from web_infra.core.aop import (
+    Aspect,
+    AspectRegistry,
+    Pointcut,
+    Advice,
+    AdviceType,
+    AspectWeaver,
+    aspect,
+    bind_components,
+    get_component,
+    all_components,
+)
+# 声明式事务（依赖 core.aop，无第三方依赖；不进入 _LAZY_DB_EXPORTS）
+from web_infra.capabilities.db import transactional
+# 声明式缓存（普通装饰器，不参与切面 order）
+from web_infra.capabilities.cache import cacheable, cache_evict
+# 测试切片（轻量测试上下文装配/组件替身注入/自动回滚）
+from web_infra.testing import (
+    web_test_context,
+    mock_component,
+    auto_rollback,
+    get_context,
+    clear_cache,
+    TestContext,
+    bind_test_components,
+)
+
 __version__ = "1.0.2"
 
 __all__ = [
@@ -484,6 +522,17 @@ __all__ = [
     "record_ai_tokens", "record_ai_cost",
     "DateUtil", "TimezoneConfig", "SnowflakeUtil", "snowflake_id", "FileLock",
     "DataUtil", "MathUtil", "TokenCounter", "count_tokens", "PdfRenderer",
+    # 进程内事件总线（对标 Spring ApplicationEvent / @EventListener；无第三方依赖）
+    "ApplicationEvent", "EventListener", "EventListenerRegistry", "event_listener",
+    "EventPublisher", "EventBus", "EventErrorCode",
+    # AOP 声明式横切（切点/通知/切面/织入；无第三方依赖）
+    "Aspect", "AspectRegistry", "Pointcut", "Advice", "AdviceType", "AspectWeaver",
+    "aspect", "bind_components", "get_component", "all_components",
+    # 声明式事务 / 声明式缓存（无第三方依赖）
+    "transactional", "cacheable", "cache_evict",
+    # 测试切片（轻量测试上下文装配/组件替身注入/自动回滚）
+    "web_test_context", "mock_component", "auto_rollback", "get_context",
+    "clear_cache", "TestContext", "bind_test_components",
     # 应用启动器
     "Application", "create_app",
 ]

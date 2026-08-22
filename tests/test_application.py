@@ -218,3 +218,31 @@ def test_application_logging_unknown_sink_raises():
     """app.logging.sinks 声明未注册通道：ConfigError 快速失败"""
     with pytest.raises(ConfigError):
         create_app({"app": {"logging": {"sinks": {"no-such-sink": {}}}}})
+
+
+# ---------------------------------------------------------------------------
+# 事件总线装配（app.event.enabled）与 AOP 组件访问器绑定
+# ---------------------------------------------------------------------------
+
+
+def test_application_event_component_disabled_by_default():
+    """app.event.enabled 缺省 false：不装配 event"""
+    app = create_app({"app.name": "test-app"})
+    assert not hasattr(app.state, "event")
+
+
+def test_application_event_component_enabled():
+    """app.event.enabled=true：装配 EventBus 到 app.state.event"""
+    app = create_app({"app.name": "test-app", "app.event.enabled": True})
+    from web_infra.capabilities.event import EventBus
+
+    assert isinstance(app.state.event, EventBus)
+
+
+def test_application_binds_components_to_aop_accessor():
+    """Application.build 后，AOP 组件访问器可取到 db/cache"""
+    app = create_app({"app.name": "test-app"})
+    from web_infra.core.aop import get_component
+
+    assert get_component("db") is app.state.db
+    assert get_component("cache") is app.state.cache

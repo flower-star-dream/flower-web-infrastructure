@@ -13,8 +13,9 @@ from web_infra.capabilities.cache.cache_backend_interface import CacheBackendInt
 from web_infra.capabilities.cache.cache_config import CacheConfig
 from web_infra.capabilities.cache.memory_cache_backend import MemoryCacheBackend
 from web_infra.capabilities.cache.cache_backend_registry import CacheBackendRegistry
+from web_infra.capabilities.cache.cacheable import cacheable, cache_evict
 
 __all__ = [
     "KeyBuilder", "TenantKeyBuilder", "CacheBackendInterface", "CacheConfig", "MemoryCacheBackend",
-    "CacheBackendRegistry",
+    "CacheBackendRegistry", "cacheable", "cache_evict",
 ]

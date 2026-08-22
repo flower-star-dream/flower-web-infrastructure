@@ -108,6 +108,10 @@ class SqliteSessionFactory:
                     "事务传播冲突：内层事务失败，外层事务已标记 rollback-only，强制回滚"
                 )
             conn.commit()
+            from web_infra.capabilities.db.transaction_synchronization import trigger_after_commit_sync
+
+            # SQLite 为同步参考实现：同步触发 after_commit（回调为 awaitable 时同步执行）
+            trigger_after_commit_sync()
         except Exception:
             conn.rollback()
             raise

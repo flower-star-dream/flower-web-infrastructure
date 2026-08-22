@@ -116,7 +116,7 @@ class MySQLDatabase(SessionScopeMixin):
         await frame.savepoint_tx.rollback()
 
     async def _finalize_commit(self, raw: Any, frame: TransactionFrame) -> None:
-        """owner 提交收尾：rollback-only 校验 + 提交 + 长事务审计（规范 §10.4）。
+        """owner 提交收尾：rollback-only 校验 + 提交 + 提交成功后触发 after_commit + 长事务审计（规范 §10.4）。
 
         rollback-only 冲突时不在此处自行回滚，而是抛 TransactionPropagationError，
         由 _tx_scope 的 except 分支统一回滚一次（避免重复 rollback）。
@@ -126,6 +126,9 @@ class MySQLDatabase(SessionScopeMixin):
                 "事务传播冲突：内层事务失败，外层事务已标记 rollback-only，强制回滚"
             )
         await raw.commit()
+        from web_infra.capabilities.db.transaction_synchronization import trigger_after_commit
+
+        await trigger_after_commit()
         elapsed = time.perf_counter() - frame.entered_at
         if elapsed >= self._long_transaction_threshold_seconds:
             datasource = getattr(self._config, "datasource_name", "default")
