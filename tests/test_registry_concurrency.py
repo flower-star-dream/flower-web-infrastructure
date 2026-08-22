@@ -16,9 +16,14 @@ from web_infra.capabilities.cache import CacheBackendRegistry
 from web_infra.capabilities.db.redis_config import RedisConfig
 
 
+def _reg_snapshot() -> dict:
+    """浅拷贝当前缓存注册表命名空间存储（供用例后恢复）"""
+    return {ns: dict(entries) for ns, entries in CacheBackendRegistry._store().items()}
+
+
 def test_registry_concurrent_register_and_iterate():
     """多线程并发 register/unregister/registered_names：锁保证迭代与写入不交错（不抛 RuntimeError）"""
-    before = dict(CacheBackendRegistry._factories)
+    before = _reg_snapshot()
     try:
         def worker(i: int) -> None:
             if i % 2 == 0:
@@ -30,13 +35,14 @@ def test_registry_concurrent_register_and_iterate():
         with ThreadPoolExecutor(max_workers=16) as executor:
             list(executor.map(worker, range(200)))
     finally:
-        CacheBackendRegistry._factories.clear()
-        CacheBackendRegistry._factories.update(before)
+        _store = CacheBackendRegistry._store()
+        _store.clear()
+        _store.update(before)
 
 
 def test_registry_concurrent_get_and_unregister():
     """多线程并发 get（含未注册 KeyError 路径）与 unregister：不抛 RuntimeError（KeyError 属预期）"""
-    before = dict(CacheBackendRegistry._factories)
+    before = _reg_snapshot()
     try:
         CacheBackendRegistry.register("concurrent-get", lambda settings: None)
 
@@ -54,8 +60,9 @@ def test_registry_concurrent_get_and_unregister():
             list(executor.map(worker, range(100)))
             list(executor.map(unregisterer, range(100)))
     finally:
-        CacheBackendRegistry._factories.clear()
-        CacheBackendRegistry._factories.update(before)
+        _store = CacheBackendRegistry._store()
+        _store.clear()
+        _store.update(before)
 
 
 def test_redis_config_client_concurrent_singleton():

@@ -30,11 +30,12 @@ def clean_registries():
         MessageQueueRegistry,
         ServiceDiscoveryRegistry,
     )
-    before = [dict(r._factories) for r in registries]
+    before = {r: {ns: dict(entries) for ns, entries in r._store().items()} for r in registries}
     yield
-    for registry, snapshot in zip(registries, before):
-        registry._factories.clear()
-        registry._factories.update(snapshot)
+    for registry in registries:
+        store = registry._store()
+        store.clear()
+        store.update(before[registry])
 
 
 # ------------------------------------------------------------------
@@ -53,7 +54,7 @@ def test_builtin_entries_registered(clean_registries):
 def test_register_overwrite_and_unregister(clean_registries):
     """同名覆盖 + 注销（不存在时静默），未注册 get 抛 KeyError"""
     CacheBackendRegistry.register("custom", lambda s: MemoryCacheBackend(CacheConfig(max_size=1)))
-    CacheBackendRegistry.register("custom", lambda s: MemoryCacheBackend(CacheConfig(max_size=2)))
+    CacheBackendRegistry.register("custom", lambda s: MemoryCacheBackend(CacheConfig(max_size=2)), overwrite=True)
     store = CacheBackendRegistry.create("custom", None)  # 工厂忽略 settings
     assert store.config.max_size == 2
 
